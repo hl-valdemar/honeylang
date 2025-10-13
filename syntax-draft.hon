@@ -1,0 +1,59 @@
+# comments like this
+
+# compile time definition
+SOME_NAME : f32 :: some_value # explicit type
+SOME_NAME :: some_value # automatic type resolution
+
+# function declarations
+some_function :: func(param_1 : some_type, parem_2 : some_type) : return_type { }
+
+# variable declaration (runtime operation)
+some_constant : f32 = 2.3 # constant (default)
+var some_var : f32 = 2.3 # mutable
+
+something := 2.3 # shorthand (automatic type resolution)
+
+# if statements
+if some_boolean_expr { }
+
+# labeled blocks (runtime operation)
+some_block : {
+  break some_block
+}
+
+# labeled blocks with return value (runtime operation)
+block_return_value := some_block: {
+  break some_block return_value
+}
+
+# multiline string literals (zig inspired)
+some_string := \this is
+               \a multiline
+               \string literal.
+
+# multiline statements (encapsulate otherwise ambiguous code in parentheses)
+some_big_expression := 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 11 + 12 + 13
+some_multiline_expression := (1 + 2 + 3 + 4 + 5 + 6 + 7
+                              + 8 + 9 + 10 + 11 + 12 + 13)
+# maybe not even necessary as any expression would emply an operation between
+# terms, so it should be parsable either way, even if the line was broken up
+
+# types
+unsigned integers: u8, u16, u32, u64
+signed integers: i8, i16, i32, i64
+floats: f32, f64
+references: {
+  some_value : u8 = 10
+  some_reference : &u8 = &some_value
+  some_other_value := some_reference^ # deference using postfix '^'
+}
+arrays: {
+  [_]u8      # inferred size array (type resolution)
+  [16]u8     # explicit size array
+  []u8       # slice (must not outlive referenced data)
+  []const u8 # slice of constant characters (perfect for strings - thanks zig)
+}
+anytype: any value of the standard types
+
+# meta types
+type: any standard type (e.g. u16)
