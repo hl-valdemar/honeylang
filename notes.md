@@ -1,7 +1,17 @@
-# Things I like in programming languages
+# Notes
+
+## Todo
+
+- [ ] Implement binary operations (for arithmetic and comparisons)
+- [ ] Function calls
+- [ ] Local variables (requires stack frames)
+- [ ] Conditional control flow (e.g. if statements)
+
+## Things I like in Programming
 
 - Strong typing!
 - Type reflection!
+- C interop!
 - Generics defined as functions that return a result type given a backing type
 - Errors as values (error unions)
 - Tagged unions

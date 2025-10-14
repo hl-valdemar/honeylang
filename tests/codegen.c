@@ -1,5 +1,5 @@
 #include <honey/ast.h>
-#include <honey/codegen.h>
+#include <honey/codegen/arm64.h>
 #include <honey/lexer.h>
 #include <honey/log.h>
 #include <honey/parser.h>
@@ -8,6 +8,10 @@
 #include <stdlib.h>
 
 const char* test_program = "SOME_VALUE :: 42\n"
+                           "\n"
+                           "f : func(x: i32, y: i32) : i32 :: {\n"
+                           "  return 2\n"
+                           "}\n"
                            "\n"
                            "main : func : i32 :: {\n"
                            "  return SOME_VALUE\n"

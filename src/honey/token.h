@@ -21,6 +21,10 @@ enum honey_token_kind
   HONEY_TOKEN_LPAREN, // (
   HONEY_TOKEN_RPAREN, // )
   HONEY_TOKEN_COMMA,  // ,
+
+  // binary operators
+  HONEY_TOKEN_PLUS,
+  HONEY_TOKEN_STAR,
 };
 
 const char*
