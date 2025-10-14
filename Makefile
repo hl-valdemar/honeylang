@@ -44,4 +44,4 @@ run:
 	./$(BUILD_DIR)/honey
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) output.s output.o honey_prog

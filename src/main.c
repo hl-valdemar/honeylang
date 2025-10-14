@@ -26,21 +26,29 @@ main(void)
 
   // Step 2: Parsing
   printf("=== Parsing ===\n");
-  struct honey_ast_node* ast = honey_parse(honey_ctx);
-  if (!ast) {
+  int ast_count = 0;
+  struct honey_ast_node** declarations = honey_parse(honey_ctx, &ast_count);
+  if (!declarations) {
     fprintf(stderr, "Parsing failed\n");
     honey_destroy_context(honey_ctx);
     return 1;
   }
-  honey_ast_print(ast, 0);
+
+  printf("Parsed %d declarations:\n", ast_count);
+  for (int i = 0; i < ast_count; i++) {
+    honey_ast_print(declarations[i], 0);
+  }
   printf("\n");
 
   // Step 3: Semantic Analysis
   printf("=== Semantic Analysis ===\n");
   struct honey_symbol_table symtab = { 0 };
-  if (!honey_analyze(ast, &symtab)) {
+  if (!honey_analyze(declarations, ast_count, &symtab)) {
     fprintf(stderr, "Semantic analysis failed\n");
-    honey_ast_destroy(ast);
+    for (int i = 0; i < ast_count; i++) {
+      honey_ast_destroy(declarations[i]);
+    }
+    free(declarations);
     honey_destroy_context(honey_ctx);
     return 1;
   }
@@ -52,7 +60,10 @@ main(void)
   const char* asm_path = "output.s";
   if (!honey_codegen_arm64(&symtab, asm_path)) {
     fprintf(stderr, "Code generation failed\n");
-    honey_ast_destroy(ast);
+    for (int i = 0; i < ast_count; i++) {
+      honey_ast_destroy(declarations[i]);
+    }
+    free(declarations);
     honey_destroy_context(honey_ctx);
     return 1;
   }
@@ -67,10 +78,13 @@ main(void)
 
   // Step 6: Run and check result
   printf("=== Running Program ===\n");
-  int result = system("./honey_prog; echo \"Exit code: $?\"");
+  system("./honey_prog; echo \"Exit code: $?\"");
 
   // Cleanup
-  honey_ast_destroy(ast);
+  for (int i = 0; i < ast_count; i++) {
+    honey_ast_destroy(declarations[i]);
+  }
+  free(declarations);
   honey_destroy_context(honey_ctx);
 
   return 0;

@@ -12,9 +12,9 @@ struct honey_parser
   bool had_error;
 };
 
-// parse the entire token stream
-// returns null on error
-struct honey_ast_node*
-honey_parse(struct honey_context* ctx);
+// parse the entire token stream into a list of declarations
+// returns an array of AST nodes (caller must free)
+struct honey_ast_node**
+honey_parse(struct honey_context* ctx, int* out_count);
 
 #endif

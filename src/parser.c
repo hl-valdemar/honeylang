@@ -401,8 +401,8 @@ parse_declaration(struct honey_parser* p)
   return NULL;
 }
 
-struct honey_ast_node*
-honey_parse(struct honey_context* ctx)
+struct honey_ast_node**
+honey_parse(struct honey_context* ctx, int* out_count)
 {
   struct honey_parser parser = {
     .ctx = ctx,
@@ -410,12 +410,35 @@ honey_parse(struct honey_context* ctx)
     .had_error = false,
   };
 
-  struct honey_ast_node* ast = parse_declaration(&parser);
+  // parse all top-level declarations
+  int capacity = 0;
+  struct honey_ast_node** declarations =
+    malloc(sizeof(struct honey_ast_node*) * capacity);
+  int count = 0;
 
-  if (parser.had_error) {
-    honey_ast_destroy(ast);
-    return NULL;
+  while (!check(&parser, HONEY_TOKEN_EOF)) {
+    struct honey_ast_node* decl = parse_declaration(&parser);
+    if (!decl) {
+      // clean up on error
+      for (int i = 0; i < count; i++) {
+        honey_ast_destroy(declarations[i]);
+      }
+      free(declarations);
+      *out_count = 0;
+      return NULL;
+    }
+
+    // grow array if needed
+    if (count >= capacity) {
+      capacity *= 2;
+      declarations =
+        realloc(declarations, sizeof(struct honey_ast_node*) * capacity);
+    }
+
+    declarations[count] = decl;
+    count += 1;
   }
 
-  return ast;
+  *out_count = count;
+  return declarations;
 }

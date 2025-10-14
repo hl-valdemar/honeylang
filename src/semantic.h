@@ -68,7 +68,9 @@ struct honey_symbol_table
 
 // analyze the ast and build symbol table
 bool
-honey_analyze(struct honey_ast_node* ast, struct honey_symbol_table* symtab);
+honey_analyze(struct honey_ast_node** declarations,
+              int count,
+              struct honey_symbol_table* symtab);
 
 void
 honey_symbol_table_print(struct honey_symbol_table* symtab);

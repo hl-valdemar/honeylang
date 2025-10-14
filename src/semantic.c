@@ -191,26 +191,35 @@ analyze_func_decl(struct honey_ast_node* node,
 }
 
 bool
-honey_analyze(struct honey_ast_node* ast, struct honey_symbol_table* symtab)
+honey_analyze(struct honey_ast_node** declarations,
+              int count,
+              struct honey_symbol_table* symtab)
 {
   symtab->count = 0;
 
-  if (!ast) {
+  if (!declarations) {
     honey_error("null AST");
     return false;
   }
 
-  switch (ast->kind) {
-    case AST_COMPTIME_DECL:
-      return analyze_comptime_decl(ast, symtab);
+  // process all declarations
+  for (int i = 0; i < count; i++) {
+    struct honey_ast_node* ast = declarations[i];
 
-    case AST_FUNC_DECL:
-      return analyze_func_decl(ast, symtab);
+    switch (ast->kind) {
+      case AST_COMPTIME_DECL:
+        return analyze_comptime_decl(ast, symtab);
 
-    default:
-      honey_error("unexpected AST node kind");
-      return false;
+      case AST_FUNC_DECL:
+        return analyze_func_decl(ast, symtab);
+
+      default:
+        honey_error("unexpected AST node kind");
+        return false;
+    }
   }
+
+  return true;
 }
 
 void
