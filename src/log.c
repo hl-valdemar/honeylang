@@ -10,6 +10,7 @@ honey_log_init()
   // NOTE: for eventual file logging setup
   return true;
 }
+
 void
 honey_log_shutdown()
 {
@@ -34,7 +35,7 @@ honey_log(enum honey_log_level level, const char* msg, ...)
   FILE* out = (level == LOG_LEVEL_WARN) ? stdout : stderr;
 
   fprintf(out,
-          "[%s%s%s] %s(pine)%s: ",
+          "[%s%s%s] %s(honey)%s: ",
           level_colors[level],
           level_names[level],
           ANSI_COLOR_RESET,

@@ -1,4 +1,5 @@
 #include "honey.h"
+#include "log.h"
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -78,7 +79,7 @@ static void
 add_token(struct honey_context* ctx, struct honey_token token)
 {
   if (ctx->next_token_idx >= HONEY_MAX_TOKEN_COUNT) {
-    fprintf(stderr, "Error: too many tokens\n");
+    honey_error("too many tokens");
     return;
   }
 
@@ -157,7 +158,7 @@ scan_number(struct honey_context* ctx)
       advance_char(ctx);
       len += 1;
     } else if (c == '.' && !has_decimal) {
-      // Check that next char is a digit (avoid "10." being treated as float)
+      // check that next char is a digit (avoid "10." being treated as float)
       char next = peek_char_offset(ctx, 1);
       if (isdigit(next)) {
         has_decimal = true;
@@ -213,17 +214,22 @@ honey_scan(struct honey_context* ctx, const char* src)
       advance_char(ctx);
       advance_char(ctx);
     }
-    // unknown character
+    // unknown character (warn and skip)
     else {
-      fprintf(stderr,
-              "Warning: unknown character '%c' at line %d, column %d\n",
-              c,
-              ctx->current_line,
-              ctx->current_column);
+      honey_warn("unknown character '%s%c%s' at %sline %d%s, %scolumn %d%s",
+                 ANSI_COLOR_RED,
+                 c,
+                 ANSI_COLOR_RESET,
+                 ANSI_COLOR_RED,
+                 ctx->current_line,
+                 ANSI_COLOR_RESET,
+                 ANSI_COLOR_RED,
+                 ctx->current_column,
+                 ANSI_COLOR_RESET);
       advance_char(ctx);
     }
   }
 
-  // Add EOF token
+  // at last, add eof token
   add_token(ctx, make_simple_token(HONEY_TOKEN_EOF));
 }
