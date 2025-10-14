@@ -1,10 +1,9 @@
-#include "honey/ast.h"
-#include "honey/codegen.h"
-#include "honey/context.h"
-#include "honey/lexer.h"
-#include "honey/log.h"
-#include "honey/parser.h"
-#include "honey/semantic.h"
+#include <honey/ast.h>
+#include <honey/codegen.h>
+#include <honey/lexer.h>
+#include <honey/log.h>
+#include <honey/parser.h>
+#include <honey/semantic.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -54,46 +53,6 @@ main(void)
     honey_ast_print(declarations[i], 0);
     printf("\n");
   }
-
-  // semantic analysis
-  printf("=== Semantic Analysis ===\n");
-  struct honey_symbol_table symtab = { 0 };
-  if (!honey_analyze(declarations, ast_count, &symtab)) {
-    honey_error("semantic analysis failed");
-    for (int i = 0; i < ast_count; i++) {
-      honey_ast_destroy(declarations[i]);
-    }
-    free(declarations);
-    honey_context_destroy(honey_ctx);
-    return 1;
-  }
-  honey_symbol_table_print(&symtab);
-  printf("\n");
-
-  // code generation
-  printf("=== Code Generation ===\n");
-  const char* asm_path = "output.s";
-  if (!honey_codegen_arm64(&symtab, asm_path)) {
-    honey_error("code generation failed");
-    for (int i = 0; i < ast_count; i++) {
-      honey_ast_destroy(declarations[i]);
-    }
-    free(declarations);
-    honey_context_destroy(honey_ctx);
-    return 1;
-  }
-  printf("generated arm64 assembly: %s\n\n", asm_path);
-
-  // assemble and link
-  printf("=== Assembling and Linking ===\n");
-  system("as output.s -o output.o");
-  system("ld output.o -o honey_prog -lSystem -syslibroot `xcrun -sdk macosx "
-         "--show-sdk-path` -e _main -arch arm64");
-  printf("created executable: honey_prog\n\n");
-
-  // run and check result
-  printf("=== Running Program ===\n");
-  system("./honey_prog; echo \"exit code: $?\"");
 
   // cleanup
   for (int i = 0; i < ast_count; i++) {

@@ -1,10 +1,9 @@
-#include "honey/ast.h"
-#include "honey/codegen.h"
-#include "honey/context.h"
-#include "honey/lexer.h"
-#include "honey/log.h"
-#include "honey/parser.h"
-#include "honey/semantic.h"
+#include <honey/ast.h>
+#include <honey/codegen.h>
+#include <honey/lexer.h>
+#include <honey/log.h>
+#include <honey/parser.h>
+#include <honey/semantic.h>
 #include <stdio.h>
 #include <stdlib.h>
 

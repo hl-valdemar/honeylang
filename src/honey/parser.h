@@ -2,7 +2,6 @@
 #define HONEY_PARSER_H
 
 #include "ast.h"
-#include "honey.h"
 #include <stdbool.h>
 
 struct honey_parser

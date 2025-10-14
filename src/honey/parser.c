@@ -1,4 +1,5 @@
 #include "parser.h"
+#include "context.h"
 #include "log.h"
 #include <stdio.h>
 #include <stdlib.h>

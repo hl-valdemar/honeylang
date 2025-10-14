@@ -1,5 +1,5 @@
-#ifndef HONEY_H
-#define HONEY_H
+#ifndef HONEY_CONTEXT_H
+#define HONEY_CONTEXT_H
 
 #include "token.h"
 
@@ -17,13 +17,10 @@ struct honey_context
   int current_column;
 };
 
-void
-honey_scan(struct honey_context* ctx, const char* src);
-
 struct honey_context*
-honey_create_context();
+honey_context_create();
 
 void
-honey_destroy_context(struct honey_context* ctx);
+honey_context_destroy(struct honey_context* lexer);
 
 #endif
