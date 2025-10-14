@@ -7,12 +7,11 @@ SOME_NAME: f32 :: some_value # explicit type
 SOME_NAME :: some_value # automatic type resolution
 
 # function declarations
-some_function: func(param_1: some_type, parem_2: some_type): return_type :: { }
-function_wo_params: func: return_type:: { }
-function_wo_return: func :: { }
+some_function :: func(param_1: some_type, parem_2: some_type) return_type :: { }
+function_wo_params :: func() return_type { }
 
 # error unions (like zig, but opposite because it's more intuitive)
-fallible_function: func: i32!error.SomeError :: { }
+fallible_function :: func() i32!error.SomeError { }
 
 # pseudo code implementation (draft)
 struct {
@@ -28,7 +27,7 @@ union(enum) {
   error: some_error,
 };
 # making it generic
-error_union: func(comptime v: type, comptime e: type): type :: {
+error_union :: func(comptime v: type, comptime e: type) type {
   return union(enum){
     value: v,
     error: e,
@@ -37,7 +36,7 @@ error_union: func(comptime v: type, comptime e: type): type :: {
 
 # local variables (runtime operation)
 some_constant: f32 = 2.3 # constant (default)
-mut some_var: f32 = 2.3 # mutable (maybe declare by `mut` instead)
+mut some_var: f32 = 2.3 # mutable (explicitly stated)
 
 something := 2.3 # shorthand declaration (automatic type resolution)
 
@@ -46,7 +45,7 @@ some_block: {
   break some_block
 }
 
-# labeled blocks with return value (runtime operation)
+# labeled blocks with return value, possibly runtime dependent (can be folded in comptime in this case)
 block_return_value := some_block: {
   break some_block return_value
 }
@@ -161,13 +160,13 @@ a == b and (c == d or e == f)
 
 # CLOSURES (captures environment of scope)
 
-# comptime closures
-some_closure: closure(param: some_type): return_type :: { 
+# comptime closures (only possible if not runtime dependent)
+some_closure :: closure(param: some_type) return_type { 
   # ...
 }
 
 # runtime closures
-some_closure: closure(param: some_type): return_type = { 
+some_closure : closure(param: some_type): return_type = { 
   # ...
 }
 
@@ -208,7 +207,7 @@ HatBrand :: enum {
   luis_vuitton,
 }
 
-main: func :: {
+main :: func() void {
   # or, mut crows : Crows = { ... }
   mut crows := Crows{} # default: zero initialize
   
