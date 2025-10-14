@@ -205,17 +205,25 @@ honey_analyze(struct honey_ast_node** declarations,
   // process all declarations
   for (int i = 0; i < count; i++) {
     struct honey_ast_node* ast = declarations[i];
+    bool success = false;
 
     switch (ast->kind) {
       case AST_COMPTIME_DECL:
-        return analyze_comptime_decl(ast, symtab);
+        success = analyze_comptime_decl(ast, symtab);
+        break;
 
       case AST_FUNC_DECL:
-        return analyze_func_decl(ast, symtab);
+        success = analyze_func_decl(ast, symtab);
+        break;
 
       default:
         honey_error("unexpected AST node kind");
         return false;
+    }
+
+    // only return on error
+    if (!success) {
+      return false;
     }
   }
 

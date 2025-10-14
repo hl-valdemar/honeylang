@@ -411,7 +411,7 @@ honey_parse(struct honey_context* ctx, int* out_count)
   };
 
   // parse all top-level declarations
-  int capacity = 0;
+  int capacity = 8;
   struct honey_ast_node** declarations =
     malloc(sizeof(struct honey_ast_node*) * capacity);
   int count = 0;
