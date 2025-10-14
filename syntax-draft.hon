@@ -37,7 +37,7 @@ error_union: func(comptime v: type, comptime e: type): type :: {
 
 # local variables (runtime operation)
 some_constant: f32 = 2.3 # constant (default)
-var some_var: f32 = 2.3 # mutable (maybe declare by `mut` instead)
+mut some_var: f32 = 2.3 # mutable (maybe declare by `mut` instead)
 
 something := 2.3 # shorthand declaration (automatic type resolution)
 
@@ -143,16 +143,8 @@ for val, idx in some_int_array {
   print("value = {d} at index {d}\n", {val, idx});
 }
 
-# maybe we could support for loops over "zipped" values like so?
-for val_a, val_b, val_c in a_array, b_array, c_array {
-  # note: a good case for parentheses, as this would otherwise be a bit harder to parse
-  if (val_a == val_b and val_b == val_c) print("it's a miracle!");
-  # but, could also just as well do it without parentheses (the expression is just as valid)
-  if val_a == val_b and val_b == val_c print("it's a miracle!");
-}
-
 # while loops (zig inspired)
-var i: i32 = 0 # or mut instead maybe
+mut i: i32 = 0 # or mut instead maybe
 while i < some_ceil : i += 2 { }
 
 # do while loops
@@ -175,9 +167,18 @@ some_closure: closure(param: some_type): return_type :: {
 }
 
 # runtime closures
-some_closure: closure(): return_type = { 
+some_closure: closure(param: some_type): return_type = { 
   # ...
 }
+
+# TUPLES
+
+# declarations
+some_tuple: {i32, []const u8} :: { 0, "hello?" } # (comptime)
+some_tuple: {i32, []const u8} = { 0, "hello?" } # (runtime)
+
+# destructuring
+{ first: i32, second: []const u8 } = some_tuple
 
 ######################
 # Illustrative Example
@@ -208,8 +209,8 @@ HatBrand :: enum {
 }
 
 main: func :: {
-  # or, var crows : Crows = { ... }
-  var crows := Crows{} # default: zero initialize
+  # or, mut crows : Crows = { ... }
+  mut crows := Crows{} # default: zero initialize
   
   # struct field access
   crow_names := crows.names
@@ -241,12 +242,12 @@ main: func :: {
   }
 
   # mutable array iteration
-  for var name in crows.names { # get reference to value (maybe declare by `mut` instead)
+  for &name in crows.names { # get reference to value
     name = "bird" # set all bird names to "bird"
   }
 
   # ...
-  var ragnarok := RagnarokState{
+  mut ragnarok := RagnarokState{
     crows = crows,
   }
 }

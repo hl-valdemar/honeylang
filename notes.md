@@ -2,7 +2,8 @@
 
 ## Todo
 
-- [ ] Implement binary operations (for arithmetic and comparisons)
+- [ ] Defer statements (affect code generation significantly - need to track scope exits)
+- [ ] Binary operations (for arithmetic and comparisons)
 - [ ] Function calls
 - [ ] Local variables (requires stack frames)
 - [ ] Conditional control flow (e.g. if statements)
