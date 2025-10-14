@@ -18,6 +18,20 @@ honey_token_kind_to_text(enum honey_token_kind kind)
       return "HONEY_TOKEN_FLOAT";
     case HONEY_TOKEN_EOF:
       return "HONEY_TOKEN_EOF";
+    case HONEY_TOKEN_FUNC:
+      return "HONEY_TOKEN_FUNC";
+    case HONEY_TOKEN_RETURN:
+      return "HONEY_TOKEN_RETURN";
+    case HONEY_TOKEN_LBRACE:
+      return "HONEY_TOKEN_LBRACE";
+    case HONEY_TOKEN_RBRACE:
+      return "HONEY_TOKEN_RBRACE";
+    case HONEY_TOKEN_LPAREN:
+      return "HONEY_TOKEN_LPAREN";
+    case HONEY_TOKEN_RPAREN:
+      return "HONEY_TOKEN_RPAREN";
+    case HONEY_TOKEN_COMMA:
+      return "HONEY_TOKEN_COMMA";
   }
   return "UNKNOWN";
 }

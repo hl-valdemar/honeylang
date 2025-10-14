@@ -5,7 +5,9 @@ SOME_NAME : f32 :: some_value # explicit type
 SOME_NAME :: some_value # automatic type resolution
 
 # function declarations
-some_function :: func(param_1 : some_type, parem_2 : some_type) : return_type { }
+some_function : func(param_1 : some_type, parem_2 : some_type) : return_type :: { }
+function_wo_params : func : return_type :: { }
+function_wo_return : func :: { }
 
 # variable declaration (runtime operation)
 some_constant : f32 = 2.3 # constant (default)

@@ -1,0 +1,133 @@
+#include "ast.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+struct honey_ast_node*
+honey_ast_create(enum honey_ast_kind kind)
+{
+  struct honey_ast_node* node = calloc(1, sizeof(struct honey_ast_node));
+  node->kind = kind;
+  return node;
+}
+
+void
+honey_ast_destroy(struct honey_ast_node* node)
+{
+  if (!node)
+    return;
+
+  switch (node->kind) {
+    case AST_COMPTIME_DECL:
+      free(node->data.comptime_decl.name);
+      free(node->data.comptime_decl.explicit_type);
+      honey_ast_destroy(node->data.comptime_decl.value);
+      break;
+
+    case AST_FUNC_DECL:
+      free(node->data.func_decl.name);
+      free(node->data.func_decl.return_type);
+      for (int i = 0; i < node->data.func_decl.param_count; i++) {
+        honey_ast_destroy(node->data.func_decl.params[i]);
+      }
+      free(node->data.func_decl.params);
+      honey_ast_destroy(node->data.func_decl.body);
+      break;
+
+    case AST_BLOCK:
+      for (int i = 0; i < node->data.block.statement_count; i++) {
+        honey_ast_destroy(node->data.block.statements[i]);
+      }
+      free(node->data.block.statements);
+      break;
+
+    case AST_RETURN_STMT:
+      honey_ast_destroy(node->data.return_stmt.value);
+      break;
+
+    case AST_NAME:
+      free(node->data.name.identifier);
+      free(node->data.name.type);
+      break;
+
+    case AST_LITERAL_INT:
+    case AST_LITERAL_FLOAT:
+      // no heap data to free
+      break;
+  }
+
+  free(node);
+}
+
+void
+honey_ast_print(struct honey_ast_node* node, int indent)
+{
+  if (!node)
+    return;
+
+  for (int i = 0; i < indent; i++)
+    printf("  ");
+
+  switch (node->kind) {
+    case AST_COMPTIME_DECL:
+      printf("comptime_decl: %s", node->data.comptime_decl.name);
+      if (node->data.comptime_decl.explicit_type) {
+        printf(" : %s", node->data.comptime_decl.explicit_type);
+      }
+      printf("\n");
+      honey_ast_print(node->data.comptime_decl.value, indent + 1);
+      break;
+
+    case AST_FUNC_DECL:
+      printf("func_decl: %s\n", node->data.func_decl.name);
+
+      for (int i = 0; i < indent + 1; i++)
+        printf("  ");
+      printf("params:\n");
+      for (int i = 0; i < node->data.func_decl.param_count; i++) {
+        honey_ast_print(node->data.func_decl.params[i], indent + 2);
+      }
+
+      if (node->data.func_decl.return_type) {
+        for (int i = 0; i < indent + 1; i++)
+          printf("  ");
+        printf("return_type: %s\n", node->data.func_decl.return_type);
+      }
+
+      for (int i = 0; i < indent + 1; i++)
+        printf("  ");
+      printf("body:\n");
+      honey_ast_print(node->data.func_decl.body, indent + 2);
+      break;
+
+    case AST_BLOCK:
+      printf("block:\n");
+      for (int i = 0; i < node->data.block.statement_count; i++) {
+        honey_ast_print(node->data.block.statements[i], indent + 1);
+      }
+      break;
+
+    case AST_RETURN_STMT:
+      printf("return:\n");
+      if (node->data.return_stmt.value) {
+        honey_ast_print(node->data.return_stmt.value, indent + 1);
+      }
+      break;
+
+    case AST_LITERAL_INT:
+      printf("int_literal: %lld\n", node->data.int_literal);
+      break;
+
+    case AST_LITERAL_FLOAT:
+      printf("float_literal: %f\n", node->data.float_literal);
+      break;
+
+    case AST_NAME:
+      printf("name: %s", node->data.name.identifier);
+      if (node->data.name.type) {
+        printf(" : %s", node->data.name.type);
+      }
+      printf("\n");
+      break;
+  }
+}

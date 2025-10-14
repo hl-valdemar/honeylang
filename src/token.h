@@ -10,6 +10,17 @@ enum honey_token_kind
   HONEY_TOKEN_INT,
   HONEY_TOKEN_FLOAT,
   HONEY_TOKEN_EOF,
+
+  // keywords
+  HONEY_TOKEN_FUNC,
+  HONEY_TOKEN_RETURN,
+
+  // delimiters
+  HONEY_TOKEN_LBRACE, // {
+  HONEY_TOKEN_RBRACE, // }
+  HONEY_TOKEN_LPAREN, // (
+  HONEY_TOKEN_RPAREN, // )
+  HONEY_TOKEN_COMMA,  // ,
 };
 
 const char*

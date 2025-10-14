@@ -114,6 +114,17 @@ make_value_token(enum honey_token_kind kind, const char* start, int len)
   return token;
 }
 
+static enum honey_token_kind
+check_keyword(const char* name)
+{
+  if (strcmp(name, "func") == 0)
+    return HONEY_TOKEN_FUNC;
+  if (strcmp(name, "return") == 0)
+    return HONEY_TOKEN_RETURN;
+
+  return HONEY_TOKEN_NAME;
+}
+
 static void
 scan_name(struct honey_context* ctx)
 {
@@ -139,7 +150,16 @@ scan_name(struct honey_context* ctx)
     len += 1;
   }
 
+  // start with raw name and check if keyword
   struct honey_token token = make_value_token(HONEY_TOKEN_NAME, start, len);
+  token.kind = check_keyword(token.data.value);
+
+  // no need to store value keyword
+  if (token.kind != HONEY_TOKEN_NAME) {
+    free(token.data.value);
+    token.data.value = NULL;
+  }
+
   add_token(ctx, token);
 }
 
@@ -212,6 +232,31 @@ honey_scan(struct honey_context* ctx, const char* src)
     else if (c == ':' && peek_char_offset(ctx, 1) == ':') {
       add_token(ctx, make_simple_token(HONEY_TOKEN_DOUBLE_COLON));
       advance_char(ctx);
+      advance_char(ctx);
+    }
+    // left brace
+    else if (c == '{') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_LBRACE));
+      advance_char(ctx);
+    }
+    // right brace
+    else if (c == '}') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_RBRACE));
+      advance_char(ctx);
+    }
+    // left paren
+    else if (c == '(') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_LPAREN));
+      advance_char(ctx);
+    }
+    // right paren
+    else if (c == ')') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_RPAREN));
+      advance_char(ctx);
+    }
+    // comma
+    else if (c == ',') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_COMMA));
       advance_char(ctx);
     }
     // unknown character (warn and skip)
