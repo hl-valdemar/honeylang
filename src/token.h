@@ -6,8 +6,10 @@ enum honey_token_kind
   HONEY_TOKEN_UNKNOWN,
   HONEY_TOKEN_NAME,
   HONEY_TOKEN_DOUBLE_COLON,
+  HONEY_TOKEN_COLON,
   HONEY_TOKEN_INT,
   HONEY_TOKEN_FLOAT,
+  HONEY_TOKEN_EOF,
 };
 
 const char*
@@ -20,6 +22,10 @@ struct honey_token
   {
     char* value;
   } data;
+
+  // for better error reporting
+  int line;
+  int column;
 };
 
 #endif

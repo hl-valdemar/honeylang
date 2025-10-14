@@ -1,104 +1,229 @@
 #include "honey.h"
 #include <ctype.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 struct honey_context*
 honey_create_context()
 {
-  static struct honey_context honey_ctx = { 0 };
-  return &honey_ctx;
+  struct honey_context* ctx = calloc(1, sizeof(struct honey_context));
+  ctx->current_line = 1;
+  ctx->current_column = 1;
+  return ctx;
 }
 
 void
 honey_destroy_context(struct honey_context* ctx)
 {
-  for (int i = 0; i < HONEY_MAX_TOKEN_COUNT; i += 1) {
+  if (!ctx)
+    return;
+
+  for (int i = 0; i < ctx->next_token_idx; i += 1) {
     free(ctx->tokens[i].data.value);
   }
+  free(ctx);
+}
+
+static inline char
+peek_char(struct honey_context* ctx)
+{
+  return ctx->src[ctx->next_src_idx];
+}
+
+static inline char
+peek_char_offset(struct honey_context* ctx, int offset)
+{
+  return ctx->src[ctx->next_src_idx + offset];
+}
+
+static void
+advance_char(struct honey_context* ctx)
+{
+  if (peek_char(ctx) == '\n') {
+    ctx->current_line += 1;
+    ctx->current_column = 1;
+  } else {
+    ctx->current_column += 1;
+  }
+  ctx->next_src_idx += 1;
+}
+
+static void
+skip_whitespace_and_comments(struct honey_context* ctx)
+{
+  while (true) {
+    char c = peek_char(ctx);
+
+    // skip whitespace
+    if (isspace(c)) {
+      advance_char(ctx);
+      continue;
+    }
+
+    // skip comments (# to end of line)
+    if (c == '#') {
+      while (peek_char(ctx) != '\0' && peek_char(ctx) != '\n') {
+        advance_char(ctx);
+      }
+      continue;
+    }
+
+    break;
+  }
+}
+
+static void
+add_token(struct honey_context* ctx, struct honey_token token)
+{
+  if (ctx->next_token_idx >= HONEY_MAX_TOKEN_COUNT) {
+    fprintf(stderr, "Error: too many tokens\n");
+    return;
+  }
+
+  token.line = ctx->current_line;
+  token.column = ctx->current_column;
+  ctx->tokens[ctx->next_token_idx] = token;
+  ctx->next_token_idx += 1;
+}
+
+static struct honey_token
+make_simple_token(enum honey_token_kind kind)
+{
+  return (struct honey_token){
+    .kind = kind,
+    .data.value = NULL,
+  };
+}
+
+static struct honey_token
+make_value_token(enum honey_token_kind kind, const char* start, int len)
+{
+  struct honey_token token = {
+    .kind = kind,
+    .data.value = malloc(len + 1),
+  };
+
+  if (token.data.value) {
+    strncpy(token.data.value, start, len);
+    token.data.value[len] = '\0';
+  }
+
+  return token;
+}
+
+static void
+scan_name(struct honey_context* ctx)
+{
+  const char* start = &ctx->src[ctx->next_src_idx];
+  int len = 0;
+
+  // first char must be alpha or underscore
+  // then can be alphanumeric or underscore
+  while (true) {
+    char c = peek_char(ctx);
+    if (c == '\0')
+      break;
+
+    if (len == 0) {
+      if (!isalpha(c) && c != '_')
+        break;
+    } else {
+      if (!isalnum(c) && c != '_')
+        break;
+    }
+
+    advance_char(ctx);
+    len += 1;
+  }
+
+  struct honey_token token = make_value_token(HONEY_TOKEN_NAME, start, len);
+  add_token(ctx, token);
+}
+
+static void
+scan_number(struct honey_context* ctx)
+{
+  const char* start = &ctx->src[ctx->next_src_idx];
+  int len = 0;
+  bool has_decimal = false;
+  enum honey_token_kind kind = HONEY_TOKEN_INT;
+
+  while (true) {
+    char c = peek_char(ctx);
+
+    if (isdigit(c)) {
+      advance_char(ctx);
+      len += 1;
+    } else if (c == '.' && !has_decimal) {
+      // Check that next char is a digit (avoid "10." being treated as float)
+      char next = peek_char_offset(ctx, 1);
+      if (isdigit(next)) {
+        has_decimal = true;
+        kind = HONEY_TOKEN_FLOAT;
+        advance_char(ctx);
+        len += 1;
+      } else {
+        break;
+      }
+    } else {
+      break;
+    }
+  }
+
+  struct honey_token token = make_value_token(kind, start, len);
+  add_token(ctx, token);
 }
 
 void
 honey_scan(struct honey_context* ctx, const char* src)
 {
-  for (ctx->next_src_idx = 0; src[ctx->next_src_idx] != '\0';
-       ctx->next_src_idx += 1) {
-    if (isalpha(src[ctx->next_src_idx]) != 0) {
-      struct honey_token name_token = { 0 };
-      honey_parse_name(ctx, src, &name_token);
-      ctx->tokens[ctx->next_token_idx] = name_token;
-      ctx->next_token_idx += 1;
-    } else if (src[ctx->next_src_idx] == ':') {
-      if (src[ctx->next_src_idx + 1] == ':') {
-        ctx->next_src_idx += 1; // step
-        ctx->tokens[ctx->next_token_idx] = (struct honey_token){
-          .kind = HONEY_TOKEN_DOUBLE_COLON,
-        };
-        ctx->next_token_idx += 1;
-      }
-    } else if (isdigit(src[ctx->next_src_idx]) != 0) {
-      struct honey_token number_token = { 0 };
-      honey_parse_number(ctx, src, &number_token);
-      ctx->tokens[ctx->next_token_idx] = number_token;
-      ctx->next_token_idx += 1;
+  ctx->src = src;
+  ctx->next_src_idx = 0;
+  ctx->next_token_idx = 0;
+  ctx->current_line = 1;
+  ctx->current_column = 1;
+
+  while (peek_char(ctx) != '\0') {
+    skip_whitespace_and_comments(ctx);
+
+    char c = peek_char(ctx);
+
+    if (c == '\0') {
+      break;
+    }
+
+    // identifiers and keywords
+    if (isalpha(c) || c == '_') {
+      scan_name(ctx);
+    }
+    // numbers
+    else if (isdigit(c)) {
+      scan_number(ctx);
+    }
+    // single colon
+    else if (c == ':' && peek_char_offset(ctx, 1) != ':') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_COLON));
+      advance_char(ctx);
+    }
+    // double colon
+    else if (c == ':' && peek_char_offset(ctx, 1) == ':') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_DOUBLE_COLON));
+      advance_char(ctx);
+      advance_char(ctx);
+    }
+    // unknown character
+    else {
+      fprintf(stderr,
+              "Warning: unknown character '%c' at line %d, column %d\n",
+              c,
+              ctx->current_line,
+              ctx->current_column);
+      advance_char(ctx);
     }
   }
-}
 
-// caller owns allocated token.data.name
-void
-honey_parse_name(struct honey_context* ctx,
-                 const char* src,
-                 struct honey_token* out)
-{
-  // find the bounds of the name
-  int start = ctx->next_src_idx;
-  int next = ctx->next_src_idx;
-  while (src[next] != ' ') {
-    next += 1;
-  }
-
-  // copy over the name
-  out->kind = HONEY_TOKEN_NAME;
-  int len = next - start;
-  out->data.value = malloc(len + 1); // +1 for null terminator
-  strncpy(out->data.value, src + start, len);
-  out->data.value[len] = '\0';
-
-  // update the current position for the lexer
-  ctx->next_src_idx = next;
-  ctx->next_src_idx =
-    next - 1; // point to the last char (scan function increments)
-}
-
-// caller owns allocated token.data.name
-void
-honey_parse_number(struct honey_context* ctx,
-                   const char* src,
-                   struct honey_token* out)
-{
-  bool has_decimal = false;
-  int start = ctx->next_src_idx;
-  int next = ctx->next_src_idx;
-  while (isdigit(src[next]) != 0 || src[next] == '.') {
-    if (src[next] == '.')
-      has_decimal = true;
-    next += 1;
-  }
-
-  if (has_decimal)
-    out->kind = HONEY_TOKEN_FLOAT;
-  else
-    out->kind = HONEY_TOKEN_INT;
-
-  // copy over the number
-  int len = next - start;
-  out->data.value = malloc(len + 1); // +1 for null terminator
-  strncpy(out->data.value, src + start, len);
-  out->data.value[len] = '\0';
-
-  // update the current position
-  ctx->next_src_idx =
-    next - 1; // point to the last char (scan function increments)
+  // Add EOF token
+  add_token(ctx, make_simple_token(HONEY_TOKEN_EOF));
 }

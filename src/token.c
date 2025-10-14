@@ -10,10 +10,14 @@ honey_token_kind_to_text(enum honey_token_kind kind)
       return "HONEY_TOKEN_NAME";
     case HONEY_TOKEN_DOUBLE_COLON:
       return "HONEY_TOKEN_DOUBLE_COLON";
+    case HONEY_TOKEN_COLON:
+      return "HONEY_TOKEN_COLON";
     case HONEY_TOKEN_INT:
       return "HONEY_TOKEN_INT";
     case HONEY_TOKEN_FLOAT:
       return "HONEY_TOKEN_FLOAT";
+    case HONEY_TOKEN_EOF:
+      return "HONEY_TOKEN_EOF";
   }
+  return "UNKNOWN";
 }
-
