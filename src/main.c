@@ -1,6 +1,7 @@
 #include "ast.h"
 #include "codegen.h"
 #include "honey.h"
+#include "log.h"
 #include "parser.h"
 #include "semantic.h"
 #include <stdio.h>
@@ -18,33 +19,33 @@ main(void)
   printf("=== Source Code ===\n");
   printf("%s\n", test_program);
 
-  // Step 1: Lexing
+  // lexing
   printf("=== Lexing ===\n");
   struct honey_context* honey_ctx = honey_create_context();
   honey_scan(honey_ctx, test_program);
-  printf("Generated %d tokens\n\n", honey_ctx->next_token_idx);
+  printf("generated %d tokens\n\n", honey_ctx->next_token_idx);
 
-  // Step 2: Parsing
+  // parsing
   printf("=== Parsing ===\n");
   int ast_count = 0;
   struct honey_ast_node** declarations = honey_parse(honey_ctx, &ast_count);
   if (!declarations) {
-    fprintf(stderr, "Parsing failed\n");
+    honey_error("parsing failed");
     honey_destroy_context(honey_ctx);
     return 1;
   }
 
-  printf("Parsed %d declarations:\n", ast_count);
+  printf("parsed %d declarations:\n", ast_count);
   for (int i = 0; i < ast_count; i++) {
     honey_ast_print(declarations[i], 0);
   }
   printf("\n");
 
-  // Step 3: Semantic Analysis
+  // semantic analysis
   printf("=== Semantic Analysis ===\n");
   struct honey_symbol_table symtab = { 0 };
   if (!honey_analyze(declarations, ast_count, &symtab)) {
-    fprintf(stderr, "Semantic analysis failed\n");
+    honey_error("semantic analysis failed");
     for (int i = 0; i < ast_count; i++) {
       honey_ast_destroy(declarations[i]);
     }
@@ -55,11 +56,11 @@ main(void)
   honey_symbol_table_print(&symtab);
   printf("\n");
 
-  // Step 4: Code Generation
+  // code generation
   printf("=== Code Generation ===\n");
   const char* asm_path = "output.s";
   if (!honey_codegen_arm64(&symtab, asm_path)) {
-    fprintf(stderr, "Code generation failed\n");
+    honey_error("code generation failed");
     for (int i = 0; i < ast_count; i++) {
       honey_ast_destroy(declarations[i]);
     }
@@ -67,20 +68,20 @@ main(void)
     honey_destroy_context(honey_ctx);
     return 1;
   }
-  printf("Generated ARM64 assembly: %s\n\n", asm_path);
+  printf("generated arm64 assembly: %s\n\n", asm_path);
 
-  // Step 5: Assemble and Link
+  // assemble and link
   printf("=== Assembling and Linking ===\n");
   system("as output.s -o output.o");
   system("ld output.o -o honey_prog -lSystem -syslibroot `xcrun -sdk macosx "
          "--show-sdk-path` -e _main -arch arm64");
-  printf("Created executable: honey_prog\n\n");
+  printf("created executable: honey_prog\n\n");
 
-  // Step 6: Run and check result
+  // run and check result
   printf("=== Running Program ===\n");
-  system("./honey_prog; echo \"Exit code: $?\"");
+  system("./honey_prog; echo \"exit code: $?\"");
 
-  // Cleanup
+  // cleanup
   for (int i = 0; i < ast_count; i++) {
     honey_ast_destroy(declarations[i]);
   }
