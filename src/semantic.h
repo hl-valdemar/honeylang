@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum honey_type
+enum honey_type_kind
 {
   TYPE_I8,
   TYPE_I16,
@@ -17,21 +17,45 @@ enum honey_type
   TYPE_U64,
   TYPE_F32,
   TYPE_F64,
+  TYPE_VOID,
+  TYPE_FUNCTION,
   TYPE_UNKNOWN,
+};
+
+struct honey_type
+{
+  enum honey_type_kind kind;
+
+  // for function types
+  struct
+  {
+    struct honey_type* return_type;
+    struct honey_type** param_types;
+    int param_count;
+  } func;
+};
+
+enum honey_symbol_kind
+{
+  SYMBOL_COMPTIME,
+  SYMBOL_FUNCTION,
 };
 
 struct honey_symbol
 {
   char* name;
-  enum honey_type type;
+  enum honey_symbol_kind kind;
+  struct honey_type type;
 
-  // compile-time constant value
-  bool is_comptime;
+  // for constants
   union
   {
     int64_t int_value;
     double float_value;
   } comptime_value;
+
+  // for functions, keep reference to ast node
+  struct honey_ast_node* func_node;
 };
 
 #define HONEY_MAX_SYMBOLS 256
@@ -48,5 +72,12 @@ honey_analyze(struct honey_ast_node* ast, struct honey_symbol_table* symtab);
 
 void
 honey_symbol_table_print(struct honey_symbol_table* symtab);
+
+// helper to resolve type names
+enum honey_type_kind
+honey_resolve_type_name(const char* name);
+
+const char*
+honey_type_kind_to_string(enum honey_type_kind kind);
 
 #endif
