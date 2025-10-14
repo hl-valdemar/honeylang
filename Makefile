@@ -4,6 +4,8 @@ ANSI_COLOR_RESET = \x1b[0m
 # project structure
 SRC_DIR = src
 BUILD_DIR = build
+BIN_DIR = $(BUILD_DIR)/bin
+TEST_DIR = $(BUILD_DIR)/test
 EXAMPLES_DIR = examples
 
 # compiler and flags
@@ -26,13 +28,21 @@ OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 all: honey $(BUILD_DIR)/$(LIB_NAME)
 
-honey: $(BUILD_DIR) $(OBJECTS)
-	$(CC) -o $(BUILD_DIR)/$@ $(OBJECTS)
-	@echo "$(ANSI_COLOR_GREEN)Honey built$(ANSI_COLOR_RESET): $(BUILD_DIR)/honey\n"
+honey: $(BUILD_DIR) $(BIN_DIR) $(OBJECTS)
+	$(CC) -o $(BIN_DIR)/$@ $(OBJECTS)
+	@echo "$(ANSI_COLOR_GREEN)Honey built$(ANSI_COLOR_RESET): $(BIN_DIR)/honey\n"
 
 # create build directory structure mirroring src/
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
+
+# create bin directory
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
+
+# create test directory
+$(TEST_DIR):
+	mkdir -p $(TEST_DIR)
 
 # compile c sources (maintain directory structure)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(MODE_FILE)
@@ -44,18 +54,13 @@ $(BUILD_DIR)/$(LIB_NAME): $(OBJECTS)
 	ar rcs $@ $(OBJECTS)
 	@echo "$(ANSI_COLOR_GREEN)Library built$(ANSI_COLOR_RESET): $(BUILD_DIR)/$(LIB_NAME)\n"
 
-# build examples - using external flags (only public api visible)
-# examples: $(BUILD_DIR)/$(LIB_NAME)
-# 	$(CC) $(EXTERNAL_CFLAGS) $(EXAMPLES_DIR)/basic-window.c -L$(BUILD_DIR) -lhoney $(LDFLAGS) -o $(BUILD_DIR)/basic-window
-# 	@echo "$(ANSI_COLOR_GREEN)Example built$(ANSI_COLOR_RESET): $(BUILD_DIR)/basic-window\n"
-
 # build tests
-tests: $(BUILD_DIR)/$(LIB_NAME)
-	$(CC) $(CFLAGS) tests/parser.c -L$(BUILD_DIR) -lhoney $(LDFLAGS) -o $(BUILD_DIR)/parser
-	@echo "$(ANSI_COLOR_GREEN)Test built$(ANSI_COLOR_RESET): $(BUILD_DIR)/parser\n"
+tests: $(BUILD_DIR)/$(LIB_NAME) $(TEST_DIR)
+	$(CC) $(CFLAGS) tests/parser.c -L$(BUILD_DIR) -lhoney $(LDFLAGS) -o $(TEST_DIR)/parser
+	@echo "$(ANSI_COLOR_GREEN)Test built$(ANSI_COLOR_RESET): $(TEST_DIR)/parser\n"
 
-	$(CC) $(CFLAGS) tests/codegen.c -L$(BUILD_DIR) -lhoney $(LDFLAGS) -o $(BUILD_DIR)/codegen
-	@echo "$(ANSI_COLOR_GREEN)Test built$(ANSI_COLOR_RESET): $(BUILD_DIR)/codegen\n"
+	$(CC) $(CFLAGS) tests/codegen.c -L$(BUILD_DIR) -lhoney $(LDFLAGS) -o $(TEST_DIR)/codegen
+	@echo "$(ANSI_COLOR_GREEN)Test built$(ANSI_COLOR_RESET): $(TEST_DIR)/codegen\n"
 
 clean:
 	rm -rf $(BUILD_DIR) output.s output.o honey_prog
