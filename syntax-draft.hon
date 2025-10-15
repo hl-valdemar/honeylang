@@ -10,8 +10,16 @@ SOME_NAME :: some_value # automatic type resolution
 some_function :: func(param_1: some_type, parem_2: some_type) return_type :: { }
 function_wo_params :: func() return_type { }
 
-# error unions (like zig, but opposite because it's more intuitive)
+# error types (enum-like - zig inspired)
+SomeError :: error{
+  something_happened,
+  something_else_happend,
+}
+
+# error unions (like zig, but reversed because it's more intuitive, i.e. succes!error)
 fallible_function :: func() i32!error.SomeError { }
+fallible_function :: func() i32!error.any { } # allow any error
+fallible_function :: func() i32! { } # inferred error type
 
 # pseudo code implementation (draft)
 struct {
@@ -38,7 +46,7 @@ error_union :: func(comptime v: type, comptime e: type) type {
 some_constant: f32 = 2.3 # constant (default)
 mut some_var: f32 = 2.3 # mutable (explicitly stated)
 
-something := 2.3 # shorthand declaration (automatic type resolution)
+something := 2.3 # shorthand declaration (automatic type resolution) (immutable, as not prefixed with `mut`)
 
 # labeled blocks (runtime operation)
 some_block: {
@@ -79,7 +87,7 @@ string literals: []const u8 = "Hi :)"; # static lifetime (symtable), utf-8 encod
 arrays: {
   [_]u8      # inferred size array (type resolution)
   [16]u8     # explicit size array
-  []u8       # slice (must not outlive referenced data)
+  []u8       # slice (must not outlive referenced data - this is on the programmer)
   []const u8 # slice of constant characters (perfect for strings - thanks zig)
 } 
 initializing arrays: {
@@ -87,7 +95,7 @@ initializing arrays: {
   comptime_array (symtable): [_]u8 :: { 1, 2, 3, 4, 5 } # (symtable) only comptime knowable values available
 }
 optional types: ?some_type, e.g. ?f32, ?[]const u8 # default initialized to `nil`
-anytype: any value of the standard types
+anytype: any value of the standard types # like zig's comptime polymorphism
 
 # meta types
 enums: some_enum :: enum {
@@ -151,9 +159,6 @@ do { } while i < some_ceil : i += 2
 
 # BOOLEAN OPERATORS AND EXPRESSIONS
 
-# transitive boolean expression?
-a == b == c # would this be nice? (heavily depends on how hard it is to parse)
-
 # and/or (like in zig)
 a == b and c == d or e == f
 a == b and (c == d or e == f)
@@ -178,6 +183,12 @@ some_tuple: {i32, []const u8} = { 0, "hello?" } # (runtime)
 
 # destructuring
 { first: i32, second: []const u8 } = some_tuple
+
+# IMPORTING FILES (aliasing scopes) (comptime) (like zig)
+# undecided, TODO
+
+# Declaring numbers
+1000000 = 1_000_000 # use underscores to break up numbers for easier visual parsing
 
 ######################
 # Illustrative Example
