@@ -2,8 +2,8 @@
 
 ## Todo
 
-- [ ] Figure out how imports should work (more like zig (verbose), rust (less verbose), or odin (minimally verbose, but also a bit opaque)?)
 - [ ] Defer statements (affect code generation significantly - need to track scope exits)
+- [ ] Figure out how imports should work (more like zig (verbose), rust (less verbose), or odin (minimally verbose, but also a bit opaque)?)
 - [ ] Binary operations (for arithmetic and comparisons)
 - [ ] Function calls
 - [ ] Local variables (requires stack frames)
@@ -39,7 +39,7 @@
 
 - `defer`s! (defer expression to end of scope)
 
-- const pointers (can't be used to modify value it points to)
+- const references (can't be used to modify value it points to)
 
 - Test scopes! (like in zig)
 
@@ -87,7 +87,6 @@ Core principles:
 Basic usage:
 
 ```honey
-mem :: import("std/mem")
 heap :: import("std/mem").heap
 
 process_data :: func(data: []u8) []u8 {
@@ -176,7 +175,9 @@ setup_allocators :: func() void {
     alignment = 16,
     track_allocations = DEBUG, # only in debug mode
   }
-  mem.heap.configure(heap_config) # QUESTION: (thread-local) global for heap allocators?
+
+  # QUESTION: (thread-local) global for heap allocators? if so, probably best to only allow in build script (trouble if changing config when allocations exist)
+  mem.heap.configure(heap_config)
 
   # or create a custom heap instance (requires explicit dependency injection where needed though... breaks with philosophy a bit)
   my_heap := mem.heap_create_with(heap_config)

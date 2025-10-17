@@ -7,7 +7,7 @@ SOME_NAME: f32 :: some_value # explicit type
 SOME_NAME :: some_value # automatic type resolution
 
 # function declarations
-some_function :: func(param_1: some_type, parem_2: some_type) return_type :: { }
+some_function :: func(param_1: some_type, parem_2: some_type) return_type { }
 function_wo_params :: func() return_type { }
 
 # error types (enum-like - zig inspired)
@@ -64,7 +64,7 @@ some_string := \this is
                \string literal.
 
 # multiline expressions
-some_big_expression := 1 + 2 + 3 + 4 + 5 + 6 + 7 
+some_big_expression := 1 + 2 + 3 + 4 + 5 + 6 + 7
                        + 8 + 9 + 10 + 11 + 12 + 13
 
 # TYPES (memory should ALWAYS be zero initialized, no matter if heap or stack)
@@ -74,11 +74,11 @@ booleans: true, false
 unsigned integers: u8, u16, u32, u64
 signed integers: i8, i16, i32, i64
 floats: f32, f64
-references/pointers: {
-  @u8       # pointer to a u8 (can be used to modify value)
-  const @u8 # const pointer to a u8 (can't be used to modify value)
+references: {
+  @u8       # reference to a u8 (can be used to modify value)
+  const @u8 # const reference to a u8 (can't be used to modify value)
 } # (`@` as in "at some_type", or "address of some_type")
-working with references/pointers: {
+working with references: {
   some_value: u8 = 10
   some_reference: @u8 = &some_value # use `&` for "address of"
   some_other_value:= some_reference^ # deference using postfix '^'
@@ -133,13 +133,13 @@ if (some_boolean_expr) { } # this may be nice in cases where parsing visually be
 
 # match statements
 match some_type {
-  some_value > print("got some value\n"),
-  else > print("got something else\n"),
+  some_value: print("got some value\n"),
+  else: print("got something else\n"),
 }
 match some_wrapped_type {
   # unwrap value
-  some_value > |val| print("got some value: {s}\n", {val}),
-  else > print("got something else\n"),
+  some_value: |val : val > 5| print("got some value: {s}\n", {val}),
+  else: print("got something else\n"),
 }
 
 # for loops
@@ -187,8 +187,17 @@ some_tuple: {i32, []const u8} = { 0, "hello?" } # (runtime)
 # IMPORTING FILES (aliasing scopes) (comptime) (like zig)
 # undecided, TODO
 
-# Declaring numbers
+# declaring numbers
 1000000 = 1_000_000 # use underscores to break up numbers for easier visual parsing
+
+# declaring public/private
+pub some_func :: func() void {
+  # part of the public api
+}
+
+some_func :: func() void {
+  # private by default
+}
 
 ######################
 # Illustrative Example
@@ -246,7 +255,7 @@ main :: func() void {
     hat := crows.hats[idx]
 
     # unwrap multiple optionals (maybe with support for boolean operations on the unwrapped values)
-    if name? and hat? |n, h : n == "Huginn" and h.brand == "Gucchi"| {
+    if (name? and hat?) |n, h : n == "Huginn" and h.brand == "Gucchi"| {
       print("{s}'s got that drip\n", {n})
     }
   }

@@ -9,7 +9,7 @@
 
 const char* test_program = "SOME_VALUE :: 42\n"
                            "\n"
-                           "main : func : i32 :: {\n"
+                           "main :: func() i32 {\n"
                            "  return SOME_VALUE\n"
                            "}\n";
 

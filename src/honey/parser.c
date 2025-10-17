@@ -220,8 +220,8 @@ parse_statement(struct honey_parser* p)
 }
 
 // parse function declaration
-// name :: func(params) : type { body }
-// name :: func : type { body }
+// name :: func(params) type { body }
+// name :: func() type { body }
 // name :: func { body }
 static struct honey_ast_node*
 parse_func_decl(struct honey_parser* p)
@@ -236,8 +236,8 @@ parse_func_decl(struct honey_parser* p)
   }
   node->data.func_decl.name = strdup(name_tok->data.value);
 
-  // expect : (type annotation)
-  if (!expect(p, HONEY_TOKEN_COLON, "expected \":\"")) {
+  // expect :: (assignment)
+  if (!expect(p, HONEY_TOKEN_DOUBLE_COLON, "expected \"::\"")) {
     honey_ast_destroy(node);
     return NULL;
   }
@@ -248,77 +248,72 @@ parse_func_decl(struct honey_parser* p)
     return NULL;
   }
 
-  // parse parameters if present: (param : type, ...)
+  // parse parameters if present: (param: type, ...)
   node->data.func_decl.params = NULL;
   node->data.func_decl.param_count = 0;
 
-  if (match(p, HONEY_TOKEN_LPAREN)) {
-    // parse parameter list
-    int capacity = 4;
-    node->data.func_decl.params =
-      malloc(sizeof(struct honey_ast_node*) * capacity);
-
-    if (!check(p, HONEY_TOKEN_RPAREN)) {
-      do {
-        // expect param_name : type
-        struct honey_token* param_name = current_token(p);
-        if (!expect(p, HONEY_TOKEN_NAME, "expected parameter name")) {
-          honey_ast_destroy(node);
-          return NULL;
-        }
-
-        if (!expect(
-              p, HONEY_TOKEN_COLON, "expected \":\" after parameter name")) {
-          honey_ast_destroy(node);
-          return NULL;
-        }
-
-        struct honey_token* param_type = current_token(p);
-        if (!expect(p, HONEY_TOKEN_NAME, "expected parameter type")) {
-          honey_ast_destroy(node);
-          return NULL;
-        }
-
-        // create parameter node
-        struct honey_ast_node* param = honey_ast_create(AST_NAME);
-        param->data.name.identifier = strdup(param_name->data.value);
-        param->data.name.type = strdup(param_type->data.value);
-
-        // grow array if needed
-        if (node->data.func_decl.param_count >= capacity) {
-          capacity *= 2;
-          node->data.func_decl.params =
-            realloc(node->data.func_decl.params,
-                    sizeof(struct honey_ast_node*) * capacity);
-        }
-
-        node->data.func_decl.params[node->data.func_decl.param_count++] = param;
-
-      } while (match(p, HONEY_TOKEN_COMMA));
-    }
-
-    if (!expect(p, HONEY_TOKEN_RPAREN, "expected \")\"")) {
-      honey_ast_destroy(node);
-      return NULL;
-    }
-  }
-
-  // parse return type if present: : return_type
-  node->data.func_decl.return_type = NULL;
-  if (match(p, HONEY_TOKEN_COLON)) {
-    struct honey_token* ret_type = current_token(p);
-    if (!expect(p, HONEY_TOKEN_NAME, "expected return type")) {
-      honey_ast_destroy(node);
-      return NULL;
-    }
-    node->data.func_decl.return_type = strdup(ret_type->data.value);
-  }
-
-  // expect :: (assignment)
-  if (!expect(p, HONEY_TOKEN_DOUBLE_COLON, "expected \"::\"")) {
+  if (!expect(p, HONEY_TOKEN_LPAREN, "expected \"(\"")) {
     honey_ast_destroy(node);
     return NULL;
   }
+
+  // parse parameter list
+  int capacity = 4;
+  node->data.func_decl.params =
+    malloc(sizeof(struct honey_ast_node*) * capacity);
+
+  if (!check(p, HONEY_TOKEN_RPAREN)) {
+    do {
+      // expect param_name : type
+      struct honey_token* param_name = current_token(p);
+      if (!expect(p, HONEY_TOKEN_NAME, "expected parameter name")) {
+        honey_ast_destroy(node);
+        return NULL;
+      }
+
+      if (!expect(
+            p, HONEY_TOKEN_COLON, "expected \":\" after parameter name")) {
+        honey_ast_destroy(node);
+        return NULL;
+      }
+
+      struct honey_token* param_type = current_token(p);
+      if (!expect(p, HONEY_TOKEN_NAME, "expected parameter type")) {
+        honey_ast_destroy(node);
+        return NULL;
+      }
+
+      // create parameter node
+      struct honey_ast_node* param = honey_ast_create(AST_NAME);
+      param->data.name.identifier = strdup(param_name->data.value);
+      param->data.name.type = strdup(param_type->data.value);
+
+      // grow array if needed
+      if (node->data.func_decl.param_count >= capacity) {
+        capacity *= 2;
+        node->data.func_decl.params =
+          realloc(node->data.func_decl.params,
+                  sizeof(struct honey_ast_node*) * capacity);
+      }
+
+      node->data.func_decl.params[node->data.func_decl.param_count++] = param;
+
+    } while (match(p, HONEY_TOKEN_COMMA));
+  }
+
+  if (!expect(p, HONEY_TOKEN_RPAREN, "expected \")\"")) {
+    honey_ast_destroy(node);
+    return NULL;
+  }
+
+  // parse return type (must be present)
+  node->data.func_decl.return_type = NULL;
+  struct honey_token* ret_type = current_token(p);
+  if (!expect(p, HONEY_TOKEN_NAME, "expected return type")) {
+    honey_ast_destroy(node);
+    return NULL;
+  }
+  node->data.func_decl.return_type = strdup(ret_type->data.value);
 
   // parse function body
   node->data.func_decl.body = parse_block(p);
@@ -385,7 +380,7 @@ parse_declaration(struct honey_parser* p)
 
   // check for function: name : func
   if (tok && tok->kind == HONEY_TOKEN_NAME && next &&
-      next->kind == HONEY_TOKEN_COLON && next2 &&
+      next->kind == HONEY_TOKEN_DOUBLE_COLON && next2 &&
       next2->kind == HONEY_TOKEN_FUNC) {
     return parse_func_decl(p);
   }

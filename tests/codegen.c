@@ -9,11 +9,11 @@
 
 const char* test_program = "SOME_VALUE :: 42\n"
                            "\n"
-                           "f : func(x: i32, y: i32) : i32 :: {\n"
+                           "f :: func(x: i32, y: i32) i32 {\n"
                            "  return 2\n"
                            "}\n"
                            "\n"
-                           "main : func : i32 :: {\n"
+                           "main :: func() i32 {\n"
                            "  return SOME_VALUE\n"
                            "}\n";
 
