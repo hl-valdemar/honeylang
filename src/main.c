@@ -13,9 +13,8 @@ const char* test_program = "FIRST :: 10\n"
                            "THIRD :: 30\n"
                            "\n"
                            "main :: func() i32 {\n"
-                           "  defer return FIRST\n"
-                           "  defer return SECOND\n"
-                           "  return THIRD\n"
+                           "  defer return THIRD\n"
+                           "  return FIRST + SECOND\n"
                            "}\n";
 
 int

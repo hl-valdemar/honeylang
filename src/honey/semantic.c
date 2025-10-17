@@ -7,6 +7,8 @@
 enum honey_type_kind
 honey_resolve_type_name(const char* name)
 {
+  if (strcmp(name, "void") == 0)
+    return TYPE_VOID;
   if (strcmp(name, "i8") == 0)
     return TYPE_I8;
   if (strcmp(name, "i16") == 0)
@@ -27,8 +29,6 @@ honey_resolve_type_name(const char* name)
     return TYPE_F32;
   if (strcmp(name, "f64") == 0)
     return TYPE_F64;
-  if (strcmp(name, "void") == 0)
-    return TYPE_VOID;
 
   return TYPE_UNKNOWN;
 }
@@ -84,7 +84,6 @@ analyze_comptime_decl(struct honey_ast_node* node,
   // infer or check type from value
   if (node->data.comptime_decl.value->kind == AST_LITERAL_INT) {
     // if explicit type given, use it; otherwise default to i64
-    // TODO: default to the smallest size able to hold the data
     if (node->data.comptime_decl.explicit_type) {
       sym->type.kind =
         honey_resolve_type_name(node->data.comptime_decl.explicit_type);

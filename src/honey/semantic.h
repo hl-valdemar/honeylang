@@ -7,6 +7,7 @@
 
 enum honey_type_kind
 {
+  TYPE_VOID,
   TYPE_I8,
   TYPE_I16,
   TYPE_I32,
@@ -17,7 +18,6 @@ enum honey_type_kind
   TYPE_U64,
   TYPE_F32,
   TYPE_F64,
-  TYPE_VOID,
   TYPE_FUNCTION,
   TYPE_UNKNOWN,
 };
