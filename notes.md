@@ -3,9 +3,9 @@
 ## Todo
 
 - [x] Defer statements (affect code generation significantly - need to track scope exits)
-- [ ] Figure out how imports should work (more like zig (verbose), rust (less verbose), or odin (minimally verbose, but also a bit opaque)?)
 - [x] Binary operations (for arithmetic and comparisons)
-- [ ] Function calls
+- [ ] Function calls (and ensure that function return values align with the return type!)
+- [ ] Figure out how imports should work (more like zig (verbose), rust (less verbose), or odin (minimally verbose, but also a bit opaque)?)
 - [ ] Local variables (requires stack frames)
 - [ ] Conditional control flow (e.g. if statements)
 

@@ -55,23 +55,14 @@ $(BUILD_DIR)/$(LIB_NAME): $(OBJECTS)
 	@echo "$(ANSI_COLOR_GREEN)Library built$(ANSI_COLOR_RESET): $(BUILD_DIR)/$(LIB_NAME)\n"
 
 # build tests
-tests: $(BUILD_DIR)/$(LIB_NAME) $(TEST_DIR)
-	$(CC) $(CFLAGS) tests/parser.c -L$(BUILD_DIR) -lhoney $(LDFLAGS) -o $(TEST_DIR)/parser
-	@echo "$(ANSI_COLOR_GREEN)Test built$(ANSI_COLOR_RESET): $(TEST_DIR)/parser\n"
-
-	$(CC) $(CFLAGS) tests/codegen.c -L$(BUILD_DIR) -lhoney $(LDFLAGS) -o $(TEST_DIR)/codegen
-	@echo "$(ANSI_COLOR_GREEN)Test built$(ANSI_COLOR_RESET): $(TEST_DIR)/codegen\n"
-
-	$(CC) $(CFLAGS) tests/defer_statements.c -L$(BUILD_DIR) -lhoney $(LDFLAGS) -o $(TEST_DIR)/defer_statements
-	@echo "$(ANSI_COLOR_GREEN)Test built$(ANSI_COLOR_RESET): $(TEST_DIR)/codegen\n"
-
-	$(CC) $(CFLAGS) tests/binary_operations.c -L$(BUILD_DIR) -lhoney $(LDFLAGS) -o $(TEST_DIR)/binary_operations
-	@echo "$(ANSI_COLOR_GREEN)Test built$(ANSI_COLOR_RESET): $(TEST_DIR)/codegen\n"
+test: $(BUILD_DIR)/$(LIB_NAME) $(TEST_DIR)
+	$(CC) $(CFLAGS) test/honey-test.c -L$(BUILD_DIR) -lhoney $(LDFLAGS) -o $(TEST_DIR)/honey-test
+	@echo "$(ANSI_COLOR_GREEN)Test built$(ANSI_COLOR_RESET): $(TEST_DIR)/honey-test\n"
 
 clean:
 	rm -rf $(BUILD_DIR) output.s output.o honey_prog
 
 # generate compile_commands.json for lsp
 compdb:
-	bear -- make clean all tests
+	bear -- make clean all test
 	@echo "compile_commands.json generated\n"

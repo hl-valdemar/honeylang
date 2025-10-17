@@ -8,26 +8,57 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-const char* test_program = "FIRST :: 10\n"
-                           "SECOND :: 20\n"
-                           "THIRD :: 30\n"
-                           "\n"
-                           "main :: func() i32 {\n"
-                           "  defer return FIRST\n"
-                           "  defer return SECOND\n"
-                           "  return THIRD\n"
-                           "}\n";
+static char*
+read_file(const char* path)
+{
+  FILE* f = fopen(path, "rb");
+  if (!f) {
+    honey_error("could not open file: %s", path);
+    return NULL;
+  }
+
+  // get file size
+  fseek(f, 0, SEEK_END);
+  long size = ftell(f);
+  fseek(f, 0, SEEK_SET);
+
+  // allocate buffer and read
+  char* buffer = malloc(size + 1);
+  if (!buffer) {
+    honey_error("could not allocate memory for file");
+    fclose(f);
+    return NULL;
+  }
+
+  size_t bytes_read = fread(buffer, 1, size, f);
+  buffer[bytes_read] = '\0';
+
+  fclose(f);
+  return buffer;
+}
 
 int
-main(void)
+main(int argc, char** argv)
 {
+  if (argc < 2) {
+    honey_error("usage: %s <sauce.hon>", argv[0]);
+    return 1;
+  }
+
+  const char* source_path = argv[1];
+  char* source_code = read_file(source_path);
+  if (!source_code) {
+    return 1;
+  }
+
+  // lexing
   printf("=== Source Code ===\n");
-  printf("%s\n", test_program);
+  printf("%s\n", source_code);
 
   // lexing
   printf("=== Lexing ===\n");
   struct honey_context* honey_ctx = honey_context_create();
-  honey_scan(honey_ctx, test_program);
+  honey_scan(honey_ctx, source_code);
   printf("generated %d tokens:\n\n", honey_ctx->next_token_idx);
   for (int j = 0; j < honey_ctx->next_token_idx; j++) {
     struct honey_token* tok = &honey_ctx->tokens[j];
@@ -105,6 +136,5 @@ main(void)
   }
   free(declarations);
   honey_context_destroy(honey_ctx);
-
   return 0;
 }

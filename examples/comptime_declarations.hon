@@ -1,0 +1,5 @@
+PI :: 3.14
+
+main :: func() f32 {
+  return PI
+}
