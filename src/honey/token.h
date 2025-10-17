@@ -30,7 +30,9 @@ enum honey_token_kind
 
   // binary operators
   HONEY_TOKEN_PLUS, // +
+  HONEY_TOKEN_MINUS, // -
   HONEY_TOKEN_STAR, // *
+  HONEY_TOKEN_SLASH, // /
 };
 
 const char*

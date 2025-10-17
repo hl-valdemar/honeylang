@@ -36,8 +36,12 @@ honey_token_kind_to_text(enum honey_token_kind kind)
       return "HONEY_TOKEN_COMMA";
     case HONEY_TOKEN_PLUS:
       return "HONEY_TOKEN_PLUS";
+    case HONEY_TOKEN_MINUS:
+      return "HONEY_TOKEN_MINUS";
     case HONEY_TOKEN_STAR:
       return "HONEY_TOKEN_STAR";
+    case HONEY_TOKEN_SLASH:
+      return "HONEY_TOKEN_SLASH";
   }
   return "UNKNOWN";
 }

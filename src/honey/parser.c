@@ -123,6 +123,20 @@ parse_primary(struct honey_parser* p)
       break;
     }
 
+    // parenthesized expression
+    case HONEY_TOKEN_LPAREN: {
+      advance_token(p);
+      node = parse_expression(p);
+      if (!node) {
+        return NULL;
+      }
+      if (!expect(p, HONEY_TOKEN_RPAREN, "expected \")\"")) {
+        honey_ast_destroy(node);
+        return NULL;
+      }
+      break;
+    }
+
     default:
       parser_error(p, "expected expression");
       return NULL;
@@ -131,12 +145,60 @@ parse_primary(struct honey_parser* p)
   return node;
 }
 
+// parse multiplication and division (higher precedence)
+static struct honey_ast_node*
+parse_term(struct honey_parser* p)
+{
+  struct honey_ast_node* left = parse_primary(p);
+  if (!left)
+    return NULL;
+
+  while (check(p, HONEY_TOKEN_STAR)) {
+    advance_token(p);
+
+    struct honey_ast_node* right = parse_primary(p);
+    if (!right) {
+      honey_ast_destroy(left);
+      return NULL;
+    }
+
+    struct honey_ast_node* binary = honey_ast_create(AST_BINARY_OP);
+    binary->data.binary_op.op = BINARY_OP_MUL;
+    binary->data.binary_op.left = left;
+    binary->data.binary_op.right = right;
+
+    left = binary;
+  }
+
+  return left;
+}
+
+// parse addition and subtraction (lower precedence)
 static struct honey_ast_node*
 parse_expression(struct honey_parser* p)
 {
-  // for now, just parse primary expressions
-  // later: handle binary operators, function calls, etc.
-  return parse_primary(p);
+  struct honey_ast_node* left = parse_term(p);
+  if (!left)
+    return NULL;
+
+  while (check(p, HONEY_TOKEN_PLUS)) {
+    advance_token(p);
+
+    struct honey_ast_node* right = parse_term(p);
+    if (!right) {
+      honey_ast_destroy(left);
+      return NULL;
+    }
+
+    struct honey_ast_node* binary = honey_ast_create(AST_BINARY_OP);
+    binary->data.binary_op.op = BINARY_OP_ADD;
+    binary->data.binary_op.left = left;
+    binary->data.binary_op.right = right;
+
+    left = binary;
+  }
+
+  return left;
 }
 
 // parse a block: { statement* }

@@ -14,6 +14,15 @@ enum honey_ast_kind
   AST_BLOCK,         // { statements }
   AST_RETURN_STMT,   // return expr
   AST_DEFER_STMT,    // defer statement
+  AST_BINARY_OP,     // binary operation
+};
+
+enum honey_binary_op_kind
+{
+  BINARY_OP_ADD, // +
+  BINARY_OP_SUB, // -
+  BINARY_OP_MUL, // *
+  BINARY_OP_DIV, // /
 };
 
 struct honey_ast_node
@@ -68,6 +77,14 @@ struct honey_ast_node
     {
       struct honey_ast_node* statement; // statement to defer
     } defer_stmt;
+
+    // binary operation
+    struct
+    {
+      enum honey_binary_op_kind op;
+      struct honey_ast_node* left;
+      struct honey_ast_node* right;
+    } binary_op;
 
     // integer literal
     int64_t int_literal;

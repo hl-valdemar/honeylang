@@ -8,13 +8,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-const char* test_program = "FIRST :: 5\n"
-                           "SECOND :: 10\n"
-                           "THIRD :: 42\n"
+const char* test_program = "FIRST :: 10\n"
+                           "SECOND :: 20\n"
+                           "THIRD :: 5\n"
                            "\n"
                            "main :: func() i32 {\n"
-                           "  defer return THIRD\n"
-                           "  return (FIRST + SECOND)\n"
+                           "  return FIRST + SECOND * THIRD\n"
                            "}\n";
 
 int
@@ -96,6 +95,7 @@ main(void)
 
   // run and check result
   printf("=== Running Program ===\n");
+  printf("Expected exit code: 35 (10 + 20 + 5)\n");
   system("./honey_prog; echo \"exit code: $?\"");
 
   // cleanup

@@ -15,6 +15,20 @@ find_symbol(struct honey_symbol_table* symtab, const char* name)
   return NULL;
 }
 
+// simple stack-based approach for expression evaluation
+// result always ends up in x0
+static void
+push_register(FILE* f)
+{
+  fprintf(f, "    str x0, [sp, #-16]!\n"); // push x0 to stack
+}
+
+static void
+pop_register(FILE* f, const char* reg)
+{
+  fprintf(f, "    ldr %s, [sp], #16\n", reg); // pop from stack to reg
+}
+
 static bool
 codegen_expression(FILE* f,
                    struct honey_ast_node* expr,
@@ -42,6 +56,46 @@ codegen_expression(FILE* f,
 
       // load comptime value
       fprintf(f, "    mov x0, #%lld\n", sym->comptime_value.int_value);
+      return true;
+    }
+
+    case AST_BINARY_OP: {
+      // evaluate left operand (result in x0)
+      if (!codegen_expression(f, expr->data.binary_op.left, symtab)) {
+        return false;
+      }
+
+      // save left result on stack
+      push_register(f);
+
+      // evaluate right operand (result in x0)
+      if (!codegen_expression(f, expr->data.binary_op.right, symtab)) {
+        return false;
+      }
+
+      // pop left operand into x1
+      pop_register(f, "x1");
+
+      // now: x1 = left, x0 = right
+      // perform operation and store result in x0
+      switch (expr->data.binary_op.op) {
+        case BINARY_OP_ADD:
+          fprintf(f, "    add x0, x1, x0\n");
+          break;
+        case BINARY_OP_SUB:
+          fprintf(f, "    sub x0, x1, x0\n");
+          break;
+        case BINARY_OP_MUL:
+          fprintf(f, "    mul x0, x1, x0\n");
+          break;
+        case BINARY_OP_DIV:
+          fprintf(f, "    sdiv x0, x1, x0\n"); // signed division
+          break;
+        default:
+          honey_error("unsupported binary operation");
+          return false;
+      }
+
       return true;
     }
 
@@ -115,7 +169,7 @@ codegen_block(FILE* f,
     }
   }
 
-  // reached end of block without returning, execute deferred statements
+  // reached end of block, execute deferred statements
   for (int i = block->data.block.deferred_count - 1; i >= 0; i -= 1) {
     struct honey_ast_node* deferred = block->data.block.deferred[i];
     if (!codegen_statement(f, deferred->data.defer_stmt.statement, symtab)) {
@@ -138,8 +192,9 @@ codegen_function(FILE* f,
   fprintf(f, ".align 2\n");
   fprintf(f, "_%s:\n", sym->name);
 
-  // function prologue (simple version, no stack frame)
-  // for now, don't save/restore registers since we're not using any
+  // function prologue - allocate space for stack operations
+  // we'll use a simple fixed frame for now
+  fprintf(f, "    sub sp, sp, #64\n"); // allocate 64 bytes on stack
 
   // generate function body
   if (!codegen_block(f, func->data.func_decl.body, symtab)) {
@@ -147,6 +202,7 @@ codegen_function(FILE* f,
   }
 
   // function epilogue
+  fprintf(f, "    add sp, sp, #64\n"); // deallocate stack space
   fprintf(f, "    ret\n");
   fprintf(f, "\n");
 

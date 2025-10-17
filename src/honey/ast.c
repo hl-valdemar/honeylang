@@ -3,6 +3,25 @@
 #include <stdlib.h>
 #include <string.h>
 
+const char*
+binary_op_kind_to_text(enum honey_binary_op_kind kind)
+{
+  switch (kind) {
+    case BINARY_OP_ADD:
+      return "BINARY_OP_ADD";
+      break;
+    case BINARY_OP_SUB:
+      return "BINARY_OP_SUB";
+      break;
+    case BINARY_OP_MUL:
+      return "BINARY_OP_MUL";
+      break;
+    case BINARY_OP_DIV:
+      return "BINARY_OP_DIV";
+      break;
+  }
+}
+
 struct honey_ast_node*
 honey_ast_create(enum honey_ast_kind kind)
 {
@@ -45,6 +64,11 @@ honey_ast_destroy(struct honey_ast_node* node)
         honey_ast_destroy(node->data.block.deferred[i]);
       }
       free(node->data.block.deferred);
+      break;
+
+    case AST_BINARY_OP:
+      honey_ast_destroy(node->data.binary_op.left);
+      honey_ast_destroy(node->data.binary_op.right);
       break;
 
     case AST_RETURN_STMT:
@@ -139,6 +163,21 @@ honey_ast_print(struct honey_ast_node* node, int indent)
       if (node->data.defer_stmt.statement) {
         honey_ast_print(node->data.defer_stmt.statement, indent + 1);
       }
+      break;
+
+    case AST_BINARY_OP:
+      printf("binary op: %s\n",
+             binary_op_kind_to_text(node->data.binary_op.op));
+
+      for (int i = 0; i < indent + 1; i += 1)
+        printf("  ");
+      printf("left:\n");
+      honey_ast_print(node->data.binary_op.left, indent + 2);
+
+      for (int i = 0; i < indent + 1; i += 1)
+        printf("  ");
+      printf("right:\n");
+      honey_ast_print(node->data.binary_op.right, indent + 2);
       break;
 
     case AST_LITERAL_INT:

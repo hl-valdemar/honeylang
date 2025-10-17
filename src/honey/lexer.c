@@ -246,6 +246,21 @@ honey_scan(struct honey_context* ctx, const char* src)
       add_token(ctx, make_simple_token(HONEY_TOKEN_PLUS));
       advance_char(ctx);
     }
+    // minus
+    else if (c == '-') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_MINUS));
+      advance_char(ctx);
+    }
+    // multiplication
+    else if (c == '*') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_STAR));
+      advance_char(ctx);
+    }
+    // division
+    else if (c == '/') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_SLASH));
+      advance_char(ctx);
+    }
     // unknown character (warn and skip)
     else {
       honey_warn("unknown character '%s%c%s' at %sline %d%s, %scolumn %d%s",

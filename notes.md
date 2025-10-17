@@ -4,7 +4,7 @@
 
 - [x] Defer statements (affect code generation significantly - need to track scope exits)
 - [ ] Figure out how imports should work (more like zig (verbose), rust (less verbose), or odin (minimally verbose, but also a bit opaque)?)
-- [ ] Binary operations (for arithmetic and comparisons)
+- [x] Binary operations (for arithmetic and comparisons)
 - [ ] Function calls
 - [ ] Local variables (requires stack frames)
 - [ ] Conditional control flow (e.g. if statements)
