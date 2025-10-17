@@ -199,6 +199,12 @@ some_func :: func() void {
   # private by default
 }
 
+# test scopes for unit tests (like zig)
+some_test :: test {
+  # run the test here
+  # collected and executed in test builds/runs, excluded from binary otherwise
+}
+
 ######################
 # Illustrative Example
 

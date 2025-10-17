@@ -58,7 +58,7 @@ skip_whitespace_and_comments(struct honey_context* ctx)
 static void
 add_token(struct honey_context* ctx, struct honey_token token)
 {
-  if (ctx->next_token_idx >= HONEY_MAX_TOKEN_COUNT) {
+  if (ctx->next_token_idx >= HONEY_MAX_TOKENS) {
     honey_error("too many tokens");
     return;
   }

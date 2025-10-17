@@ -39,6 +39,7 @@ enum honey_symbol_kind
 {
   SYMBOL_COMPTIME,
   SYMBOL_FUNCTION,
+  SYMBOL_TEST,
 };
 
 struct honey_symbol
@@ -56,6 +57,9 @@ struct honey_symbol
 
   // for functions, keep reference to ast node
   struct honey_ast_node* func_node;
+
+  // for test scopes, keep reference to ast node
+  struct honey_ast_node* test_node;
 };
 
 #define HONEY_MAX_SYMBOLS 256

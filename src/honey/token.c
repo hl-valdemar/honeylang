@@ -20,6 +20,8 @@ honey_token_kind_to_text(enum honey_token_kind kind)
       return "HONEY_TOKEN_EOF";
     case HONEY_TOKEN_FUNC:
       return "HONEY_TOKEN_FUNC";
+    case HONEY_TOKEN_TEST:
+      return "HONEY_TOKEN_TEST";
     case HONEY_TOKEN_DEFER:
       return "HONEY_TOKEN_DEFER";
     case HONEY_TOKEN_RETURN:

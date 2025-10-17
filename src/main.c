@@ -7,6 +7,7 @@
 #include "honey/semantic.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static char*
 read_file(const char* path)
@@ -40,12 +41,24 @@ read_file(const char* path)
 int
 main(int argc, char** argv)
 {
+  bool test_mode = false;
+  const char* source_path = NULL;
+
+  // check for args
   if (argc < 2) {
     honey_error("usage: %s <sauce.hon>", argv[0]);
     return 1;
   }
 
-  const char* source_path = argv[1];
+  // parse args
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--test") == 0) {
+      test_mode = true;
+    } else {
+      source_path = argv[i];
+    }
+  }
+
   char* source_code = read_file(source_path);
   if (!source_code) {
     return 1;
@@ -69,7 +82,7 @@ main(int argc, char** argv)
   struct honey_symbol_table symtab = { 0 };
   if (!honey_analyze(declarations, ast_count, &symtab)) {
     honey_error("semantic analysis failed");
-    for (int i = 0; i < ast_count; i++) {
+    for (int i = 0; i < ast_count; i += 1) {
       honey_ast_destroy(declarations[i]);
     }
     free(declarations);
@@ -80,9 +93,9 @@ main(int argc, char** argv)
 
   // code generation
   const char* asm_path = "output.s";
-  if (!honey_codegen_arm64(&symtab, asm_path)) {
+  if (!honey_codegen_arm64(&symtab, asm_path, test_mode)) {
     honey_error("code generation failed");
-    for (int i = 0; i < ast_count; i++) {
+    for (int i = 0; i < ast_count; i += 1) {
       honey_ast_destroy(declarations[i]);
     }
     free(declarations);
@@ -92,12 +105,25 @@ main(int argc, char** argv)
   }
 
   // assemble and link
-  system("as output.s -o output.o");
-  system("ld output.o -o honey_prog -lSystem -syslibroot `xcrun -sdk macosx "
-         "--show-sdk-path` -e _main -arch arm64");
+  if (test_mode) {
+    // test build (link with test runner as entry point)
+    system("as output.s -o output.o");
+    system("ld output.o -o honey_test "
+           "-lSystem -syslibroot `xcrun -sdk macosx --show-sdk-path` "
+           "-e _test_runner -arch arm64");
+
+    // run tests
+    int result = system("./honey_test");
+    return result;
+  } else {
+    // normal build
+    system("as output.s -o output.o");
+    system("ld output.o -o honey_prog -lSystem -syslibroot `xcrun -sdk macosx "
+           "--show-sdk-path` -e _main -arch arm64");
+  }
 
   // cleanup
-  for (int i = 0; i < ast_count; i++) {
+  for (int i = 0; i < ast_count; i += 1) {
     honey_ast_destroy(declarations[i]);
   }
   free(declarations);

@@ -7,6 +7,7 @@
 #include "honey/semantic.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static char*
 read_file(const char* path)
@@ -40,12 +41,24 @@ read_file(const char* path)
 int
 main(int argc, char** argv)
 {
+  bool test_mode = false;
+  const char* source_path = NULL;
+
+  // check for args
   if (argc < 2) {
     honey_error("usage: %s <sauce.hon>", argv[0]);
     return 1;
   }
 
-  const char* source_path = argv[1];
+  // parse args
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--test") == 0) {
+      test_mode = true;
+    } else {
+      source_path = argv[i];
+    }
+  }
+
   char* source_code = read_file(source_path);
   if (!source_code) {
     return 1;
@@ -60,7 +73,7 @@ main(int argc, char** argv)
   struct honey_context* honey_ctx = honey_context_create();
   honey_scan(honey_ctx, source_code);
   printf("generated %d tokens:\n\n", honey_ctx->next_token_idx);
-  for (int j = 0; j < honey_ctx->next_token_idx; j++) {
+  for (int j = 0; j < honey_ctx->next_token_idx; j += 1) {
     struct honey_token* tok = &honey_ctx->tokens[j];
     printf("[%d:%d] %s",
            tok->line,
@@ -85,7 +98,7 @@ main(int argc, char** argv)
   }
 
   printf("parsed %d declarations:\n\n", ast_count);
-  for (int i = 0; i < ast_count; i++) {
+  for (int i = 0; i < ast_count; i += 1) {
     honey_ast_print(declarations[i], 0);
     printf("\n");
   }
@@ -95,7 +108,7 @@ main(int argc, char** argv)
   struct honey_symbol_table symtab = { 0 };
   if (!honey_analyze(declarations, ast_count, &symtab)) {
     honey_error("semantic analysis failed");
-    for (int i = 0; i < ast_count; i++) {
+    for (int i = 0; i < ast_count; i += 1) {
       honey_ast_destroy(declarations[i]);
     }
     free(declarations);
@@ -108,9 +121,9 @@ main(int argc, char** argv)
   // code generation
   printf("=== Code Generation ===\n");
   const char* asm_path = "output.s";
-  if (!honey_codegen_arm64(&symtab, asm_path)) {
+  if (!honey_codegen_arm64(&symtab, asm_path, test_mode)) {
     honey_error("code generation failed");
-    for (int i = 0; i < ast_count; i++) {
+    for (int i = 0; i < ast_count; i += 1) {
       honey_ast_destroy(declarations[i]);
     }
     free(declarations);
@@ -131,7 +144,7 @@ main(int argc, char** argv)
   system("./honey_prog; echo \"exit code: $?\"");
 
   // cleanup
-  for (int i = 0; i < ast_count; i++) {
+  for (int i = 0; i < ast_count; i += 1) {
     honey_ast_destroy(declarations[i]);
   }
   free(declarations);

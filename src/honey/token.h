@@ -20,6 +20,7 @@ enum honey_token_kind
   HONEY_TOKEN_FUNC,
   HONEY_TOKEN_RETURN,
   HONEY_TOKEN_DEFER,
+  HONEY_TOKEN_TEST,
 
   // delimiters
   HONEY_TOKEN_LBRACE, // {

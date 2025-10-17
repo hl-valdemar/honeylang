@@ -46,21 +46,26 @@ honey_ast_destroy(struct honey_ast_node* node)
     case AST_FUNC_DECL:
       free(node->data.func_decl.name);
       free(node->data.func_decl.return_type);
-      for (int i = 0; i < node->data.func_decl.param_count; i++) {
+      for (int i = 0; i < node->data.func_decl.param_count; i += 1) {
         honey_ast_destroy(node->data.func_decl.params[i]);
       }
       free(node->data.func_decl.params);
       honey_ast_destroy(node->data.func_decl.body);
       break;
 
+    case AST_TEST_DECL:
+      free(node->data.test_decl.name);
+      honey_ast_destroy(node->data.test_decl.body);
+      break;
+
     case AST_BLOCK:
       // regular statements
-      for (int i = 0; i < node->data.block.statement_count; i++) {
+      for (int i = 0; i < node->data.block.statement_count; i += 1) {
         honey_ast_destroy(node->data.block.statements[i]);
       }
       free(node->data.block.statements);
       // defer statements
-      for (int i = 0; i < node->data.block.deferred_count; i++) {
+      for (int i = 0; i < node->data.block.deferred_count; i += 1) {
         honey_ast_destroy(node->data.block.deferred[i]);
       }
       free(node->data.block.deferred);
@@ -99,7 +104,7 @@ honey_ast_print(struct honey_ast_node* node, int indent)
   if (!node)
     return;
 
-  for (int i = 0; i < indent; i++)
+  for (int i = 0; i < indent; i += 1)
     printf("  ");
 
   switch (node->kind) {
@@ -115,37 +120,45 @@ honey_ast_print(struct honey_ast_node* node, int indent)
     case AST_FUNC_DECL:
       printf("func_decl: %s\n", node->data.func_decl.name);
 
-      for (int i = 0; i < indent + 1; i++)
+      for (int i = 0; i < indent + 1; i += 1)
         printf("  ");
       printf("params:\n");
-      for (int i = 0; i < node->data.func_decl.param_count; i++) {
+      for (int i = 0; i < node->data.func_decl.param_count; i += 1) {
         honey_ast_print(node->data.func_decl.params[i], indent + 2);
       }
 
       if (node->data.func_decl.return_type) {
-        for (int i = 0; i < indent + 1; i++)
+        for (int i = 0; i < indent + 1; i += 1)
           printf("  ");
         printf("return_type: %s\n", node->data.func_decl.return_type);
       }
 
-      for (int i = 0; i < indent + 1; i++)
+      for (int i = 0; i < indent + 1; i += 1)
         printf("  ");
       printf("body:\n");
       honey_ast_print(node->data.func_decl.body, indent + 2);
       break;
 
+    case AST_TEST_DECL:
+      printf("test_decl: %s", node->data.test_decl.name);
+      for (int i = 0; i < indent + 1; i += 1)
+        printf("  ");
+      printf("body:\n");
+      honey_ast_print(node->data.test_decl.body, indent + 2);
+      break;
+
     case AST_BLOCK:
       printf("block:\n");
       // regular statements
-      for (int i = 0; i < node->data.block.statement_count; i++) {
+      for (int i = 0; i < node->data.block.statement_count; i += 1) {
         honey_ast_print(node->data.block.statements[i], indent + 1);
       }
       // deferred statements
       if (node->data.block.deferred_count > 0) {
-        for (int i = 0; i < indent + 1; i++)
+        for (int i = 0; i < indent + 1; i += 1)
           printf("  ");
         printf("deferred:\n");
-        for (int i = 0; i < node->data.block.deferred_count; i++) {
+        for (int i = 0; i < node->data.block.deferred_count; i += 1) {
           honey_ast_print(node->data.block.deferred[i], indent + 2);
         }
       }

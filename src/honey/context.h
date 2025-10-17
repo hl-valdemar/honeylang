@@ -3,14 +3,14 @@
 
 #include "token.h"
 
-#define HONEY_MAX_TOKEN_COUNT 1024
+#define HONEY_MAX_TOKENS 1024
 
 struct honey_context
 {
   const char* src;
   int next_src_idx;
   int next_token_idx;
-  struct honey_token tokens[HONEY_MAX_TOKEN_COUNT];
+  struct honey_token tokens[HONEY_MAX_TOKENS];
 
   // for error reporting
   int current_line;

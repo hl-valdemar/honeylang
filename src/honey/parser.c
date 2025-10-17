@@ -1,5 +1,6 @@
 #include "parser.h"
 #include "context.h"
+#include "honey/ast.h"
 #include "log.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,7 +39,7 @@ static void
 advance_token(struct honey_parser* p)
 {
   if (p->current_token < p->ctx->next_token_idx)
-    p->current_token++;
+    p->current_token += 1;
 }
 
 static bool
@@ -399,7 +400,8 @@ parse_func_decl(struct honey_parser* p)
                   sizeof(struct honey_ast_node*) * capacity);
       }
 
-      node->data.func_decl.params[node->data.func_decl.param_count++] = param;
+      node->data.func_decl.params[node->data.func_decl.param_count] = param;
+      node->data.func_decl.param_count += 1;
 
     } while (match(p, HONEY_TOKEN_COMMA));
   }
@@ -409,7 +411,7 @@ parse_func_decl(struct honey_parser* p)
     return NULL;
   }
 
-  // parse return type (must be present)
+  // parse return type (must be present!)
   node->data.func_decl.return_type = NULL;
   struct honey_token* ret_type = current_token(p);
   if (!expect(p, HONEY_TOKEN_NAME, "expected return type")) {
@@ -420,6 +422,42 @@ parse_func_decl(struct honey_parser* p)
 
   // parse function body
   node->data.func_decl.body = parse_block(p);
+  if (!node->data.func_decl.body) {
+    honey_ast_destroy(node);
+    return NULL;
+  }
+
+  return node;
+}
+
+// parse: NAME :: test { ... }
+static struct honey_ast_node*
+parse_test_decl(struct honey_parser* p)
+{
+  struct honey_ast_node* node = honey_ast_create(AST_TEST_DECL);
+
+  // expect name
+  struct honey_token* name_tok = current_token(p);
+  if (!expect(p, HONEY_TOKEN_NAME, "expected test name")) {
+    honey_ast_destroy(node);
+    return NULL;
+  }
+  node->data.func_decl.name = strdup(name_tok->data.value);
+
+  // expect :: (assignment)
+  if (!expect(p, HONEY_TOKEN_DOUBLE_COLON, "expected \"::\"")) {
+    honey_ast_destroy(node);
+    return NULL;
+  }
+
+  // expect test keyword
+  if (!expect(p, HONEY_TOKEN_TEST, "expected \"test\"")) {
+    honey_ast_destroy(node);
+    return NULL;
+  }
+
+  // parse test body
+  node->data.test_decl.body = parse_block(p);
   if (!node->data.func_decl.body) {
     honey_ast_destroy(node);
     return NULL;
@@ -480,7 +518,7 @@ parse_declaration(struct honey_parser* p)
   struct honey_token* tok = current_token(p);
   struct honey_token* next = peek_token(p, 1);
 
-  // handle (name :: func(params...) type {})
+  // handle (name :: func(params...) type {...}) and (name :: test {...})
   if (tok && tok->kind == HONEY_TOKEN_NAME && next &&
       next->kind == HONEY_TOKEN_DOUBLE_COLON) {
 
@@ -488,6 +526,10 @@ parse_declaration(struct honey_parser* p)
     struct honey_token* after_colon = peek_token(p, 2);
     if (after_colon && after_colon->kind == HONEY_TOKEN_FUNC) {
       return parse_func_decl(p);
+    }
+    // peek for test keyword
+    else if (after_colon && after_colon->kind == HONEY_TOKEN_TEST) {
+      return parse_test_decl(p);
     }
   }
 
@@ -522,7 +564,7 @@ honey_parse(struct honey_context* ctx, int* out_count)
     struct honey_ast_node* decl = parse_declaration(&parser);
     if (!decl) {
       // clean up on error
-      for (int i = 0; i < count; i++) {
+      for (int i = 0; i < count; i += 1) {
         honey_ast_destroy(declarations[i]);
       }
       free(declarations);

@@ -8,6 +8,7 @@ enum honey_ast_kind
 {
   AST_COMPTIME_DECL, // NAME :: value
   AST_FUNC_DECL,     // NAME :: func(...) : type { ... }
+  AST_TEST_DECL,     // NAME :: test { ... }
   AST_LITERAL_INT,   // 10
   AST_LITERAL_FLOAT, // 3.14
   AST_NAME,          // identifier reference
@@ -54,6 +55,13 @@ struct honey_ast_node
       // function body (ast_block)
       struct honey_ast_node* body;
     } func_decl;
+
+    // test declaration
+    struct
+    {
+      char* name;                  // test name
+      struct honey_ast_node* body; // AST_BLOCK
+    } test_decl;
 
     // block statement
     struct

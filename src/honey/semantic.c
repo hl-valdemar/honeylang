@@ -1,5 +1,7 @@
 #include "semantic.h"
+#include "honey/ast.h"
 #include "log.h"
+#include <_string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -163,7 +165,7 @@ analyze_func_decl(struct honey_ast_node* node,
     sym->type.func.param_types =
       malloc(sizeof(struct honey_type*) * sym->type.func.param_count);
 
-    for (int i = 0; i < sym->type.func.param_count; i++) {
+    for (int i = 0; i < sym->type.func.param_count; i += 1) {
       struct honey_ast_node* param = node->data.func_decl.params[i];
 
       if (!param->data.name.type) {
@@ -190,6 +192,31 @@ analyze_func_decl(struct honey_ast_node* node,
 }
 
 bool
+analyze_test_decl(struct honey_ast_node* node,
+                  struct honey_symbol_table* symtab)
+{
+  if (symtab->count >= HONEY_MAX_SYMBOLS) {
+    honey_error("too many symbols");
+    return false;
+  }
+
+  struct honey_symbol* sym = &symtab->symbols[symtab->count];
+  symtab->count += 1;
+  sym->name = strdup(node->data.test_decl.name);
+  sym->kind = SYMBOL_TEST;
+  sym->test_node = node;
+
+  // tests are effectively void -> void functions
+  sym->type.kind = TYPE_FUNCTION;
+  sym->type.func.return_type = malloc(sizeof(struct honey_type));
+  sym->type.func.return_type->kind = TYPE_VOID;
+  sym->type.func.param_count = 0;
+  sym->type.func.param_types = NULL;
+
+  return true;
+}
+
+bool
 honey_analyze(struct honey_ast_node** declarations,
               int count,
               struct honey_symbol_table* symtab)
@@ -202,7 +229,7 @@ honey_analyze(struct honey_ast_node** declarations,
   }
 
   // process all declarations
-  for (int i = 0; i < count; i++) {
+  for (int i = 0; i < count; i += 1) {
     struct honey_ast_node* ast = declarations[i];
     bool success = false;
 
@@ -234,7 +261,7 @@ honey_symbol_table_print(struct honey_symbol_table* symtab)
 {
   printf("Symbol Table (%d symbols):\n", symtab->count);
 
-  for (int i = 0; i < symtab->count; i++) {
+  for (int i = 0; i < symtab->count; i += 1) {
     struct honey_symbol* sym = &symtab->symbols[i];
 
     printf("  [%d] %s: ", i, sym->name);
@@ -249,7 +276,7 @@ honey_symbol_table_print(struct honey_symbol_table* symtab)
       }
     } else if (sym->kind == SYMBOL_FUNCTION) {
       printf("func(");
-      for (int j = 0; j < sym->type.func.param_count; j++) {
+      for (int j = 0; j < sym->type.func.param_count; j += 1) {
         if (j > 0)
           printf(", ");
         printf("%s",
