@@ -3,17 +3,23 @@
 
 enum honey_token_kind
 {
+  // special tokens
   HONEY_TOKEN_UNKNOWN,
+  HONEY_TOKEN_EOF,
+
+  // assignment
   HONEY_TOKEN_NAME,
-  HONEY_TOKEN_DOUBLE_COLON,
-  HONEY_TOKEN_COLON,
+  HONEY_TOKEN_COLON,        // :
+  HONEY_TOKEN_DOUBLE_COLON, // ::
+
+  // types
   HONEY_TOKEN_INT,
   HONEY_TOKEN_FLOAT,
-  HONEY_TOKEN_EOF,
 
   // keywords
   HONEY_TOKEN_FUNC,
   HONEY_TOKEN_RETURN,
+  HONEY_TOKEN_DEFER,
 
   // delimiters
   HONEY_TOKEN_LBRACE, // {
@@ -23,8 +29,8 @@ enum honey_token_kind
   HONEY_TOKEN_COMMA,  // ,
 
   // binary operators
-  HONEY_TOKEN_PLUS,
-  HONEY_TOKEN_STAR,
+  HONEY_TOKEN_PLUS, // +
+  HONEY_TOKEN_STAR, // *
 };
 
 const char*

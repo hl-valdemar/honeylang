@@ -35,14 +35,24 @@ honey_ast_destroy(struct honey_ast_node* node)
       break;
 
     case AST_BLOCK:
+      // regular statements
       for (int i = 0; i < node->data.block.statement_count; i++) {
         honey_ast_destroy(node->data.block.statements[i]);
       }
       free(node->data.block.statements);
+      // defer statements
+      for (int i = 0; i < node->data.block.deferred_count; i++) {
+        honey_ast_destroy(node->data.block.deferred[i]);
+      }
+      free(node->data.block.deferred);
       break;
 
     case AST_RETURN_STMT:
       honey_ast_destroy(node->data.return_stmt.value);
+      break;
+
+    case AST_DEFER_STMT:
+      honey_ast_destroy(node->data.defer_stmt.statement);
       break;
 
     case AST_NAME:
@@ -111,6 +121,13 @@ honey_ast_print(struct honey_ast_node* node, int indent)
       printf("return:\n");
       if (node->data.return_stmt.value) {
         honey_ast_print(node->data.return_stmt.value, indent + 1);
+      }
+      break;
+
+    case AST_DEFER_STMT:
+      printf("defer:\n");
+      if (node->data.defer_stmt.statement) {
+        honey_ast_print(node->data.defer_stmt.statement, indent + 1);
       }
       break;
 

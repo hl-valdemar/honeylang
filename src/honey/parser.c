@@ -150,10 +150,16 @@ parse_block(struct honey_parser* p)
   struct honey_ast_node* block = honey_ast_create(AST_BLOCK);
 
   // dynamically grow statement list
-  int capacity = 8;
+  int capacity_statements = 8;
   block->data.block.statements =
-    malloc(sizeof(struct honey_ast_node*) * capacity);
+    malloc(sizeof(struct honey_ast_node*) * capacity_statements);
   block->data.block.statement_count = 0;
+
+  // initialize deferred list
+  int capacity_deferred = 4;
+  block->data.block.deferred =
+    malloc(sizeof(struct honey_ast_node*) * capacity_deferred);
+  block->data.block.deferred_count = 0;
 
   while (!check(p, HONEY_TOKEN_RBRACE) && !check(p, HONEY_TOKEN_EOF)) {
     struct honey_ast_node* stmt = parse_statement(p);
@@ -162,16 +168,32 @@ parse_block(struct honey_parser* p)
       return NULL;
     }
 
-    // grow array if needed
-    if (block->data.block.statement_count >= capacity) {
-      capacity *= 2;
-      block->data.block.statements =
-        realloc(block->data.block.statements,
-                sizeof(struct honey_ast_node*) * capacity);
-    }
+    // if defer statement, add to deferred list
+    if (stmt->kind == AST_DEFER_STMT) {
+      // grow if needed
+      if (block->data.block.deferred_count >= capacity_deferred) {
+        capacity_deferred *= 2;
+        block->data.block.deferred =
+          realloc(block->data.block.deferred,
+                  sizeof(struct honey_ast_node*) * capacity_deferred);
+      }
 
-    block->data.block.statements[block->data.block.statement_count] = stmt;
-    block->data.block.statement_count += 1;
+      // set data
+      block->data.block.deferred[block->data.block.deferred_count] = stmt;
+      block->data.block.deferred_count += 1;
+    } else { // regular statement
+      // grow if needed
+      if (block->data.block.statement_count >= capacity_statements) {
+        capacity_statements *= 2;
+        block->data.block.statements =
+          realloc(block->data.block.statements,
+                  sizeof(struct honey_ast_node*) * capacity_statements);
+      }
+
+      // set data
+      block->data.block.statements[block->data.block.statement_count] = stmt;
+      block->data.block.statement_count += 1;
+    }
   }
 
   if (!expect(p, HONEY_TOKEN_RBRACE, "expected \"}\"")) {
@@ -207,13 +229,33 @@ parse_return_stmt(struct honey_parser* p)
 }
 
 static struct honey_ast_node*
-parse_statement(struct honey_parser* p)
+parse_defer_stmt(struct honey_parser* p)
 {
-  if (check(p, HONEY_TOKEN_RETURN)) {
-    return parse_return_stmt(p);
+  if (!expect(p, HONEY_TOKEN_DEFER, "expected \"defer\"")) {
+    return NULL;
   }
 
-  // only return statements for now
+  struct honey_ast_node* defer_node = honey_ast_create(AST_DEFER_STMT);
+
+  // parse the statement to defer
+  defer_node->data.defer_stmt.statement = parse_statement(p);
+  if (!defer_node->data.defer_stmt.statement) {
+    honey_ast_destroy(defer_node);
+    return NULL;
+  }
+
+  return defer_node;
+}
+
+static struct honey_ast_node*
+parse_statement(struct honey_parser* p)
+{
+  if (check(p, HONEY_TOKEN_RETURN))
+    return parse_return_stmt(p);
+  if (check(p, HONEY_TOKEN_DEFER))
+    return parse_defer_stmt(p);
+
+  // only return and defer statements for now
   // later: variable declarations, if statements, etc...
   parser_error(p, "expected statement");
   return NULL;
@@ -222,7 +264,6 @@ parse_statement(struct honey_parser* p)
 // parse function declaration
 // name :: func(params) type { body }
 // name :: func() type { body }
-// name :: func { body }
 static struct honey_ast_node*
 parse_func_decl(struct honey_parser* p)
 {
@@ -326,7 +367,7 @@ parse_func_decl(struct honey_parser* p)
 }
 
 // parse: NAME :: expression
-// or:    NAME : type :: expression
+// or:    NAME: type :: expression
 static struct honey_ast_node*
 parse_comptime_decl(struct honey_parser* p)
 {
@@ -341,7 +382,7 @@ parse_comptime_decl(struct honey_parser* p)
   }
   node->data.comptime_decl.name = strdup(name_tok->data.value);
 
-  // check for explicit type: NAME : type :: value
+  // check for explicit type: (NAME: type :: value)
   if (match(p, HONEY_TOKEN_COLON)) {
     struct honey_token* type_tok = current_token(p);
     if (!expect(p, HONEY_TOKEN_NAME, "expected type name after \":\"")) {
@@ -376,16 +417,19 @@ parse_declaration(struct honey_parser* p)
 {
   struct honey_token* tok = current_token(p);
   struct honey_token* next = peek_token(p, 1);
-  struct honey_token* next2 = peek_token(p, 2);
 
-  // check for function: name : func
+  // handle (name :: func(params...) type {})
   if (tok && tok->kind == HONEY_TOKEN_NAME && next &&
-      next->kind == HONEY_TOKEN_DOUBLE_COLON && next2 &&
-      next2->kind == HONEY_TOKEN_FUNC) {
-    return parse_func_decl(p);
+      next->kind == HONEY_TOKEN_DOUBLE_COLON) {
+
+    // peek for func keyword
+    struct honey_token* after_colon = peek_token(p, 2);
+    if (after_colon && after_colon->kind == HONEY_TOKEN_FUNC) {
+      return parse_func_decl(p);
+    }
   }
 
-  // check for comptime declaration: NAME :: or NAME :
+  // handle (NAME: type :: value) (comptime with explicit type)
   if (tok && tok->kind == HONEY_TOKEN_NAME) {
     if ((next && next->kind == HONEY_TOKEN_DOUBLE_COLON) ||
         (next && next->kind == HONEY_TOKEN_COLON)) {

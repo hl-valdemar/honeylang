@@ -40,22 +40,6 @@
       "-std=c11",
       "-c",
       "-o",
-      "build/honey/codegen.o",
-      "src/honey/codegen.c"
-    ],
-    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
-    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/codegen.c",
-    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/honey/codegen.o"
-  },
-  {
-    "arguments": [
-      "/usr/bin/clang",
-      "-Wall",
-      "-Wextra",
-      "-Isrc",
-      "-std=c11",
-      "-c",
-      "-o",
       "build/honey/lexer.o",
       "src/honey/lexer.c"
     ],
@@ -78,6 +62,22 @@
     "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
     "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/token.c",
     "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/honey/token.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c11",
+      "-c",
+      "-o",
+      "build/honey/codegen/arm64.o",
+      "src/honey/codegen/arm64.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/codegen/arm64.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/honey/codegen/arm64.o"
   },
   {
     "arguments": [

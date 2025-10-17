@@ -13,6 +13,7 @@ enum honey_ast_kind
   AST_NAME,          // identifier reference
   AST_BLOCK,         // { statements }
   AST_RETURN_STMT,   // return expr
+  AST_DEFER_STMT,    // defer statement
 };
 
 struct honey_ast_node
@@ -50,6 +51,10 @@ struct honey_ast_node
     {
       struct honey_ast_node** statements;
       int statement_count;
+
+      // deferred statements (executed at end of block in reverse order)
+      struct honey_ast_node** deferred;
+      int deferred_count;
     } block;
 
     // return statement
@@ -57,6 +62,12 @@ struct honey_ast_node
     {
       struct honey_ast_node* value; // null for bare return
     } return_stmt;
+
+    // defer statement
+    struct
+    {
+      struct honey_ast_node* statement; // statement to defer
+    } defer_stmt;
 
     // integer literal
     int64_t int_literal;

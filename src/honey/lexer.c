@@ -101,6 +101,8 @@ check_keyword(const char* name)
     return HONEY_TOKEN_FUNC;
   if (strcmp(name, "return") == 0)
     return HONEY_TOKEN_RETURN;
+  if (strcmp(name, "defer") == 0)
+    return HONEY_TOKEN_DEFER;
 
   return HONEY_TOKEN_NAME;
 }
@@ -255,6 +257,6 @@ honey_scan(struct honey_context* ctx, const char* src)
     }
   }
 
-  // at last, add eof token
+  // at last, EOF
   add_token(ctx, make_simple_token(HONEY_TOKEN_EOF));
 }

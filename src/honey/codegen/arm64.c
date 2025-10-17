@@ -7,7 +7,7 @@
 static struct honey_symbol*
 find_symbol(struct honey_symbol_table* symtab, const char* name)
 {
-  for (int i = 0; i < symtab->count; i++) {
+  for (int i = 0; i < symtab->count; i += 1) {
     if (strcmp(symtab->symbols[i].name, name) == 0) {
       return &symtab->symbols[i];
     }
@@ -69,8 +69,14 @@ codegen_statement(FILE* f,
       }
       return true;
 
+    case AST_DEFER_STMT:
+      // defer statements are handled at block level, not individually
+      // this should not be reached during normal code generation
+      honey_error("defer statement should be handled at block level");
+      return false;
+
     default:
-      honey_error("unsupported statement type in codegen\n");
+      honey_error("unsupported statement type in codegen");
       return false;
   }
 }
@@ -85,8 +91,34 @@ codegen_block(FILE* f,
     return false;
   }
 
-  for (int i = 0; i < block->data.block.statement_count; i++) {
-    if (!codegen_statement(f, block->data.block.statements[i], symtab)) {
+  // generate code for regular statements
+  for (int i = 0; i < block->data.block.statement_count; i += 1) {
+    struct honey_ast_node* stmt = block->data.block.statements[i];
+
+    // if this is a return statement, execute deferred statements first
+    if (stmt->kind == AST_RETURN_STMT) {
+      // execute deferred statements in reverse order (lifo)
+      for (int j = block->data.block.deferred_count - 1; j >= 0; j -= 1) {
+        struct honey_ast_node* deferred = block->data.block.deferred[j];
+        // execute the deferred statement
+        if (!codegen_statement(
+              f, deferred->data.defer_stmt.statement, symtab)) {
+          return false;
+        }
+      }
+
+      // now execute the return
+      if (!codegen_statement(f, stmt, symtab)) {
+        return false;
+      }
+      return true;
+    }
+  }
+
+  // reached end of block without returning, execute deferred statements
+  for (int i = block->data.block.statement_count - 1; i >= 0; i -= 1) {
+    struct honey_ast_node* deferred = block->data.block.deferred[i];
+    if (!codegen_statement(f, deferred->data.defer_stmt.statement, symtab)) {
       return false;
     }
   }
@@ -135,7 +167,7 @@ honey_codegen_arm64(struct honey_symbol_table* symtab, const char* output_path)
   fprintf(f, ".text\n\n");
 
   // generate code for all functions
-  for (int i = 0; i < symtab->count; i++) {
+  for (int i = 0; i < symtab->count; i += 1) {
     struct honey_symbol* sym = &symtab->symbols[i];
 
     if (sym->kind == SYMBOL_FUNCTION) {
