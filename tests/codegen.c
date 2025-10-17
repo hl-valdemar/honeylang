@@ -27,10 +27,10 @@ main(void)
   printf("=== Lexing ===\n");
   struct honey_context* honey_ctx = honey_context_create();
   honey_scan(honey_ctx, test_program);
-  printf("generated %d tokens:\n", honey_ctx->next_token_idx);
+  printf("generated %d tokens:\n\n", honey_ctx->next_token_idx);
   for (int j = 0; j < honey_ctx->next_token_idx; j++) {
     struct honey_token* tok = &honey_ctx->tokens[j];
-    printf("  [%d:%d] %s",
+    printf("[%d:%d] %s",
            tok->line,
            tok->column,
            honey_token_kind_to_text(tok->kind));

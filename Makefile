@@ -62,6 +62,9 @@ tests: $(BUILD_DIR)/$(LIB_NAME) $(TEST_DIR)
 	$(CC) $(CFLAGS) tests/codegen.c -L$(BUILD_DIR) -lhoney $(LDFLAGS) -o $(TEST_DIR)/codegen
 	@echo "$(ANSI_COLOR_GREEN)Test built$(ANSI_COLOR_RESET): $(TEST_DIR)/codegen\n"
 
+	$(CC) $(CFLAGS) tests/defer_statements.c -L$(BUILD_DIR) -lhoney $(LDFLAGS) -o $(TEST_DIR)/defer_statements
+	@echo "$(ANSI_COLOR_GREEN)Test built$(ANSI_COLOR_RESET): $(TEST_DIR)/codegen\n"
+
 clean:
 	rm -rf $(BUILD_DIR) output.s output.o honey_prog
 

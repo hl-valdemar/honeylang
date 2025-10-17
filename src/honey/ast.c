@@ -112,8 +112,18 @@ honey_ast_print(struct honey_ast_node* node, int indent)
 
     case AST_BLOCK:
       printf("block:\n");
+      // regular statements
       for (int i = 0; i < node->data.block.statement_count; i++) {
         honey_ast_print(node->data.block.statements[i], indent + 1);
+      }
+      // deferred statements
+      if (node->data.block.deferred_count > 0) {
+        for (int i = 0; i < indent + 1; i++)
+          printf("  ");
+        printf("deferred:\n");
+        for (int i = 0; i < node->data.block.deferred_count; i++) {
+          honey_ast_print(node->data.block.deferred[i], indent + 2);
+        }
       }
       break;
 
