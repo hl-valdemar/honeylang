@@ -116,7 +116,7 @@ codegen_block(FILE* f,
   }
 
   // reached end of block without returning, execute deferred statements
-  for (int i = block->data.block.statement_count - 1; i >= 0; i -= 1) {
+  for (int i = block->data.block.deferred_count - 1; i >= 0; i -= 1) {
     struct honey_ast_node* deferred = block->data.block.deferred[i];
     if (!codegen_statement(f, deferred->data.defer_stmt.statement, symtab)) {
       return false;
