@@ -346,11 +346,30 @@ honey_codegen_arm64(struct honey_symbol_table* symtab,
   }
 
   // generate test runner if in test mode
-  if (include_tests && test_count > 0) {
+  if (include_tests) {
     if (!codegen_test_runner(f, tests, test_count)) {
       fclose(f);
       return false;
     }
+
+    // add test entry point
+    fprintf(f, "# program entry point wrapper\n");
+    fprintf(f, ".global _start\n");
+    fprintf(f, ".align 2\n");
+    fprintf(f, "_start:\n");
+    fprintf(f, "    bl _test_runner\n"); // call test_runner
+    fprintf(f, "    bl _exit\n");        // call exit() from libc
+    fprintf(f, "\n");
+  }
+  // add regular entry point
+  else {
+    fprintf(f, "# program entry point wrapper\n");
+    fprintf(f, ".global _start\n");
+    fprintf(f, ".align 2\n");
+    fprintf(f, "_start:\n");
+    fprintf(f, "    bl _main\n"); // call main
+    fprintf(f, "    bl _exit\n"); // call exit() from libc
+    fprintf(f, "\n");
   }
 
   fclose(f);

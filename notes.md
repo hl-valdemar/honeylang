@@ -67,6 +67,8 @@
 
 - Need a way to specify compile time code (or dependencies that need to be compile time known) (zig inspired)
 
+- Unused declarations should generate warnings (descend computation graph to check) and should not be part of the generated code
+
 ## Memory Allocation Design
 
 Philosophy:

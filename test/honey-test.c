@@ -146,7 +146,7 @@ main(int argc, char** argv)
   } else {
     system("as output.s -o output.o");
     system("ld output.o -o honey_prog -lSystem -syslibroot `xcrun -sdk macosx "
-           "--show-sdk-path` -e _main -arch arm64");
+           "--show-sdk-path` -e _start -arch arm64");
     printf("created executable: honey_prog\n\n");
 
     // run and check result
