@@ -13,7 +13,7 @@ static struct honey_ast_node*
 parse_expression(struct honey_parser* p);
 
 static struct honey_ast_node*
-parse_call_expr(struct honey_parser* p);
+parse_call_expr(struct honey_parser* p, char* function_name);
 
 static struct honey_ast_node*
 parse_statement(struct honey_parser* p);
@@ -126,10 +126,11 @@ parse_primary(struct honey_parser* p)
       // check if function call
       if (check(p, HONEY_TOKEN_LPAREN)) {
         advance_token(p); // consume "("
-        node = parse_call_expr(p);
-        free(name);
-        if (!node)
+        node = parse_call_expr(p, name);
+        if (!node) {
+          free(name);
           return NULL;
+        }
       }
       // just a name reference
       else {
@@ -484,17 +485,11 @@ parse_test_decl(struct honey_parser* p)
 }
 
 static struct honey_ast_node*
-parse_call_expr(struct honey_parser* p)
+parse_call_expr(struct honey_parser* p, char* function_name)
 {
   struct honey_ast_node* node = honey_ast_create(AST_CALL_EXPR);
 
-  // expect NAME
-  struct honey_token* name_tok = current_token(p);
-  if (!expect(p, HONEY_TOKEN_NAME, "expected identifier in call expression")) {
-    honey_ast_destroy(node);
-    return NULL;
-  }
-  node->data.call_expr.function_name = strdup(name_tok->data.value);
+  node->data.call_expr.function_name = function_name;
   node->data.call_expr.arguments = NULL;
   node->data.call_expr.argument_count = 0;
 
