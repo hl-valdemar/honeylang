@@ -49,7 +49,7 @@
 
 - Runtime bounds checking!
 
-- Null terminated data where applicable!
+- Null terminated data where possible! (ALWAYS)
 
 - Like in Zig, i want clear ownership by convention (clear ownership patterns)
 
