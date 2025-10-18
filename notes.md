@@ -69,6 +69,8 @@
 
 - Unused declarations should generate warnings (descend computation graph to check) and should not be part of the generated code
 
+- Should be able to write bare-metal executables
+
 ## Memory Allocation Design
 
 Philosophy:

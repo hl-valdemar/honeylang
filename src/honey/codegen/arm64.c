@@ -25,13 +25,15 @@ find_symbol(struct honey_symbol_table* symtab, const char* name)
 static void
 push_register(FILE* f)
 {
-  fprintf(f, "    str x0, [sp, #-16]!\n"); // push x0 to stack
+  // push x0 to stack
+  fprintf(f, "    str x0, [sp, #-16]!\n");
 }
 
 static void
 pop_register(FILE* f, const char* reg)
 {
-  fprintf(f, "    ldr %s, [sp], #16\n", reg); // pop from stack to reg
+  // pop from stack to reg
+  fprintf(f, "    ldr %s, [sp], #16\n", reg);
 }
 
 static bool
@@ -236,17 +238,24 @@ codegen_function(FILE* f,
 
   // function prologue - allocate space for stack operations
   // we'll use a simple fixed frame for now
-  fprintf(f, "    sub sp, sp, #64\n"); // allocate 64 bytes on stack
+  fprintf(f, "    sub sp, sp, #64\n");
 
   // generate function body
   if (!codegen_block(f, func->data.func_decl.body, symtab)) {
     return false;
   }
 
-  // function epilogue
-  fprintf(f, "    add sp, sp, #64\n"); // deallocate stack space
-  fprintf(f, "    ret\n");
-  fprintf(f, "\n");
+  // function epilogue (different for entry point "main")
+  if (strcmp(sym->name, "main") == 0) {
+    fprintf(f, "    add sp, sp, #64\n");
+    fprintf(f, "    mov x16, #1\n");
+    fprintf(f, "    svc #0\n");
+    fprintf(f, "\n");
+  } else { // regular function
+    fprintf(f, "    add sp, sp, #64\n");
+    fprintf(f, "    ret\n");
+    fprintf(f, "\n");
+  }
 
   return true;
 }
@@ -268,7 +277,7 @@ codegen_test(FILE* f,
     return false;
   }
 
-  fprintf(f, "    mov x0, #0\n"); // return 0 for success
+  fprintf(f, "    mov x0, #0\n");
   fprintf(f, "    add sp, sp, #64\n");
   fprintf(f, "    ret\n\n");
 
@@ -351,28 +360,36 @@ honey_codegen_arm64(struct honey_symbol_table* symtab,
       fclose(f);
       return false;
     }
+  }
 
-    // add test entry point
-    fprintf(f, "# program entry point wrapper\n");
-    fprintf(f, ".global _start\n");
-    fprintf(f, ".align 2\n");
-    fprintf(f, "_start:\n");
-    fprintf(f, "    bl _test_runner\n"); // call test_runner
-    fprintf(f, "    mov x16, #1\n"); // syscall number for exit
-    fprintf(f, "    svc #0x80\n");   // make syscall
-    fprintf(f, "\n");
-  }
-  // add regular entry point
-  else {
-    fprintf(f, "# program entry point wrapper\n");
-    fprintf(f, ".global _start\n");
-    fprintf(f, ".align 2\n");
-    fprintf(f, "_start:\n");
-    fprintf(f, "    bl _main\n");    // call main
-    fprintf(f, "    mov x16, #1\n"); // syscall number for exit
-    fprintf(f, "    svc #0x80\n");   // make syscall
-    fprintf(f, "\n");
-  }
+  // // generate test runner if in test mode
+  // if (include_tests) {
+  //   if (!codegen_test_runner(f, tests, test_count)) {
+  //     fclose(f);
+  //     return false;
+  //   }
+  //
+  //   // add test entry point
+  //   fprintf(f, "# program entry point wrapper\n");
+  //   fprintf(f, ".global _start\n");
+  //   fprintf(f, ".align 2\n");
+  //   fprintf(f, "_start:\n");
+  //   fprintf(f, "    bl _test_runner\n"); // call test_runner
+  //   fprintf(f, "    mov x16, #1\n");     // syscall number for exit
+  //   fprintf(f, "    svc #0\n");       // make syscall
+  //   fprintf(f, "\n");
+  // }
+  // // add regular entry point
+  // else {
+  //   fprintf(f, "# program entry point wrapper\n");
+  //   fprintf(f, ".global _start\n");
+  //   fprintf(f, ".align 2\n");
+  //   fprintf(f, "_start:\n");
+  //   fprintf(f, "    bl _main\n");    // call main
+  //   fprintf(f, "    mov x16, #1\n"); // syscall number for exit
+  //   fprintf(f, "    svc #0\n");   // make syscall
+  //   fprintf(f, "\n");
+  // }
 
   fclose(f);
   return true;
@@ -385,7 +402,7 @@ codegen_test_runner(FILE* f, struct honey_symbol** tests, int count)
   fprintf(f, ".align 2\n");
   fprintf(f, "_test_runner:\n");
   fprintf(f, "    sub sp, sp, #64\n");
-  fprintf(f, "    str x30, [sp, #56]\n"); // save return address
+  fprintf(f, "    str x30, [sp, #56]\n");
 
   // call each test
   for (int i = 0; i < count; i += 1) {
@@ -395,7 +412,7 @@ codegen_test_runner(FILE* f, struct honey_symbol** tests, int count)
     // TODO: check return value, accumulate failures
   }
 
-  fprintf(f, "\n    mov x0, #0\n"); // return success
+  fprintf(f, "\n    mov x0, #0\n");
   fprintf(f, "    ldr x30, [sp, #56]\n");
   fprintf(f, "    add sp, sp, #64\n");
   fprintf(f, "    ret\n\n");

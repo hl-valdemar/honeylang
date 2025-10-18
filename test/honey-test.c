@@ -136,22 +136,23 @@ main(int argc, char** argv)
   printf("=== Assembling and Linking ===\n");
   if (test_mode) {
     system("as output.s -o output.o");
-    system("ld output.o -o honey_test -lSystem -syslibroot `xcrun -sdk macosx "
-           "--show-sdk-path` -e _test_runner -arch arm64");
+    system(
+      "ld output.o -o test_program -lSystem -syslibroot `xcrun -sdk macosx "
+      "--show-sdk-path` -e _test_runner -arch arm64");
     printf("created executable: honey_test\n\n");
 
     // run and check result
     printf("=== Running Program ===\n");
-    system("./honey_test; echo \"exit code: $?\"");
+    system("./test_program; echo \"exit code: $?\"");
   } else {
     system("as output.s -o output.o");
-    system("ld output.o -o honey_prog -lSystem -syslibroot `xcrun -sdk macosx "
-           "--show-sdk-path` -e _start -arch arm64");
-    printf("created executable: honey_prog\n\n");
+    system("ld output.o -o program -lSystem -syslibroot `xcrun -sdk macosx "
+           "--show-sdk-path` -e _main -arch arm64");
+    printf("created executable: program\n\n");
 
     // run and check result
     printf("=== Running Program ===\n");
-    system("./honey_prog; echo \"exit code: $?\"");
+    system("./program; echo \"exit code: $?\"");
   }
 
   // cleanup
