@@ -442,7 +442,7 @@ parse_test_decl(struct honey_parser* p)
     honey_ast_destroy(node);
     return NULL;
   }
-  node->data.func_decl.name = strdup(name_tok->data.value);
+  node->data.test_decl.name = strdup(name_tok->data.value);
 
   // expect :: (assignment)
   if (!expect(p, HONEY_TOKEN_DOUBLE_COLON, "expected \"::\"")) {
@@ -458,7 +458,7 @@ parse_test_decl(struct honey_parser* p)
 
   // parse test body
   node->data.test_decl.body = parse_block(p);
-  if (!node->data.func_decl.body) {
+  if (!node->data.test_decl.body) {
     honey_ast_destroy(node);
     return NULL;
   }

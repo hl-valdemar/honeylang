@@ -140,7 +140,7 @@ honey_ast_print(struct honey_ast_node* node, int indent)
       break;
 
     case AST_TEST_DECL:
-      printf("test_decl: %s", node->data.test_decl.name);
+      printf("test_decl: %s\n", node->data.test_decl.name);
       for (int i = 0; i < indent + 1; i += 1)
         printf("  ");
       printf("body:\n");

@@ -99,6 +99,8 @@ check_keyword(const char* name)
 {
   if (strcmp(name, "func") == 0)
     return HONEY_TOKEN_FUNC;
+  if (strcmp(name, "test") == 0)
+    return HONEY_TOKEN_TEST;
   if (strcmp(name, "return") == 0)
     return HONEY_TOKEN_RETURN;
   if (strcmp(name, "defer") == 0)

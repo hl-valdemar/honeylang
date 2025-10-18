@@ -36,7 +36,7 @@ honey_resolve_type_name(const char* name)
 }
 
 const char*
-honey_type_kind_to_string(enum honey_type_kind kind)
+honey_type_kind_to_text(enum honey_type_kind kind)
 {
   switch (kind) {
     case TYPE_I8:
@@ -242,6 +242,10 @@ honey_analyze(struct honey_ast_node** declarations,
         success = analyze_func_decl(ast, symtab);
         break;
 
+      case AST_TEST_DECL:
+        success = analyze_test_decl(ast, symtab);
+        break;
+
       default:
         honey_error("unexpected AST node kind");
         return false;
@@ -267,7 +271,7 @@ honey_symbol_table_print(struct honey_symbol_table* symtab)
     printf("  [%d] %s: ", i, sym->name);
 
     if (sym->kind == SYMBOL_COMPTIME) {
-      printf("const %s = ", honey_type_kind_to_string(sym->type.kind));
+      printf("const %s = ", honey_type_kind_to_text(sym->type.kind));
 
       if (sym->type.kind >= TYPE_I8 && sym->type.kind <= TYPE_U64) {
         printf("%lld", sym->comptime_value.int_value);
@@ -280,10 +284,12 @@ honey_symbol_table_print(struct honey_symbol_table* symtab)
         if (j > 0)
           printf(", ");
         printf("%s",
-               honey_type_kind_to_string(sym->type.func.param_types[j]->kind));
+               honey_type_kind_to_text(sym->type.func.param_types[j]->kind));
       }
       printf(") : %s",
-             honey_type_kind_to_string(sym->type.func.return_type->kind));
+             honey_type_kind_to_text(sym->type.func.return_type->kind));
+    } else if (sym->kind == SYMBOL_TEST) {
+      printf("test");
     }
 
     printf("\n");

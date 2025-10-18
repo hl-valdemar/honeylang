@@ -3,3 +3,4 @@ build
 output.o
 output.s
 honey_prog
+honey_test

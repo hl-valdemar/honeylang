@@ -84,6 +84,6 @@ enum honey_type_kind
 honey_resolve_type_name(const char* name);
 
 const char*
-honey_type_kind_to_string(enum honey_type_kind kind);
+honey_type_kind_to_text(enum honey_type_kind kind);
 
 #endif
