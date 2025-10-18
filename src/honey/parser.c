@@ -13,6 +13,9 @@ static struct honey_ast_node*
 parse_expression(struct honey_parser* p);
 
 static struct honey_ast_node*
+parse_call_expr(struct honey_parser* p);
+
+static struct honey_ast_node*
 parse_statement(struct honey_parser* p);
 
 static struct honey_ast_node*
@@ -117,10 +120,24 @@ parse_primary(struct honey_parser* p)
     }
 
     case HONEY_TOKEN_NAME: {
-      node = honey_ast_create(AST_NAME);
-      node->data.name.identifier = strdup(tok->data.value);
-      node->data.name.type = NULL;
+      char* name = strdup(tok->data.value);
       advance_token(p);
+
+      // check if function call
+      if (check(p, HONEY_TOKEN_LPAREN)) {
+        advance_token(p); // consume "("
+        node = parse_call_expr(p);
+        free(name);
+        if (!node)
+          return NULL;
+      }
+      // just a name reference
+      else {
+        node = honey_ast_create(AST_NAME);
+        node->data.name.identifier = name;
+        node->data.name.type = NULL;
+      }
+
       break;
     }
 
@@ -459,6 +476,58 @@ parse_test_decl(struct honey_parser* p)
   // parse test body
   node->data.test_decl.body = parse_block(p);
   if (!node->data.test_decl.body) {
+    honey_ast_destroy(node);
+    return NULL;
+  }
+
+  return node;
+}
+
+static struct honey_ast_node*
+parse_call_expr(struct honey_parser* p)
+{
+  struct honey_ast_node* node = honey_ast_create(AST_CALL_EXPR);
+
+  // expect NAME
+  struct honey_token* name_tok = current_token(p);
+  if (!expect(p, HONEY_TOKEN_NAME, "expected identifier in call expression")) {
+    honey_ast_destroy(node);
+    return NULL;
+  }
+  node->data.call_expr.function_name = strdup(name_tok->data.value);
+  node->data.call_expr.arguments = NULL;
+  node->data.call_expr.argument_count = 0;
+
+  // parse arguments if present: (argument, ...)
+  int capacity = 4;
+  node->data.call_expr.arguments =
+    malloc(sizeof(struct honey_ast_node*) * capacity);
+
+  if (!check(p, HONEY_TOKEN_RPAREN)) {
+    do {
+      // parse argument as full expression
+      struct honey_ast_node* arg = parse_expression(p);
+      if (!arg) {
+        honey_ast_destroy(arg);
+        return NULL;
+      }
+
+      // grow array if needed
+      if (node->data.call_expr.argument_count >= capacity) {
+        capacity *= 2;
+        node->data.call_expr.arguments =
+          realloc(node->data.call_expr.arguments,
+                  sizeof(struct honey_ast_node*) * capacity);
+      }
+
+      // set data
+      node->data.call_expr.arguments[node->data.call_expr.argument_count] = arg;
+      node->data.call_expr.argument_count += 1;
+
+    } while (match(p, HONEY_TOKEN_COMMA));
+  }
+
+  if (!expect(p, HONEY_TOKEN_RPAREN, "expected \")\"")) {
     honey_ast_destroy(node);
     return NULL;
   }

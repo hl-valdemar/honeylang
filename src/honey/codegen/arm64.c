@@ -1,5 +1,6 @@
 #include "arm64.h"
 #include "../log.h"
+#include "honey/ast.h"
 #include "honey/semantic.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -100,6 +101,34 @@ codegen_expression(FILE* f,
           return false;
       }
 
+      return true;
+    }
+
+    case AST_CALL_EXPR: {
+      // simple case: 0-7 arguments - all fit in registers
+
+      // evaluate arguments right-to-left, pushing results to stack
+      for (int i = expr->data.call_expr.argument_count - 1; i >= 0; i -= 1) {
+        if (!codegen_expression(f, expr->data.call_expr.arguments[i], symtab))
+          return false;
+
+        // push result
+        if (i > 0)
+          push_register(f); // save result for later args
+      }
+
+      // pop arguments into register 0x-7x (in reverse order)
+      for (int i = 1; i < expr->data.call_expr.argument_count; i += 1) {
+        char reg[8];
+        snprintf(reg, sizeof(reg), "x%d", i);
+        pop_register(f, reg);
+      }
+      // x0 already has last evaluated argument
+
+      // call the function
+      fprintf(f, "    bl _%s\n", expr->data.call_expr.function_name);
+
+      // result in x0
       return true;
     }
 

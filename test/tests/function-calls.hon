@@ -1,0 +1,7 @@
+f :: func(val: i64) i64 {
+  return val
+}
+
+main :: func() i64 {
+  return f(42)
+}

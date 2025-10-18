@@ -16,6 +16,7 @@ enum honey_ast_kind
   AST_RETURN_STMT,   // return expr
   AST_DEFER_STMT,    // defer statement
   AST_BINARY_OP,     // binary operation
+  AST_CALL_EXPR,     // function call
 };
 
 enum honey_binary_op_kind
@@ -93,6 +94,13 @@ struct honey_ast_node
       struct honey_ast_node* left;
       struct honey_ast_node* right;
     } binary_op;
+
+    struct
+    {
+      char* function_name;
+      struct honey_ast_node** arguments;
+      int argument_count;
+    } call_expr;
 
     // integer literal
     int64_t int_literal;
