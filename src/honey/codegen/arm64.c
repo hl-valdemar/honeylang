@@ -358,7 +358,8 @@ honey_codegen_arm64(struct honey_symbol_table* symtab,
     fprintf(f, ".align 2\n");
     fprintf(f, "_start:\n");
     fprintf(f, "    bl _test_runner\n"); // call test_runner
-    fprintf(f, "    bl _exit\n");        // call exit() from libc
+    fprintf(f, "    mov x16, #1\n"); // syscall number for exit
+    fprintf(f, "    svc #0x80\n");   // make syscall
     fprintf(f, "\n");
   }
   // add regular entry point
@@ -367,8 +368,9 @@ honey_codegen_arm64(struct honey_symbol_table* symtab,
     fprintf(f, ".global _start\n");
     fprintf(f, ".align 2\n");
     fprintf(f, "_start:\n");
-    fprintf(f, "    bl _main\n"); // call main
-    fprintf(f, "    bl _exit\n"); // call exit() from libc
+    fprintf(f, "    bl _main\n");    // call main
+    fprintf(f, "    mov x16, #1\n"); // syscall number for exit
+    fprintf(f, "    svc #0x80\n");   // make syscall
     fprintf(f, "\n");
   }
 
