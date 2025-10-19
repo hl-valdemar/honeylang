@@ -170,7 +170,7 @@ main(int argc, char** argv)
   const char* link_cmd_test =
     "ld build/runtime/start_darwin_arm64.o output.o -o test_program "
     "-lSystem -syslibroot `xcrun -sdk macosx --show-sdk-path` "
-    "-e _test_runner -arch arm64";
+    "-e _test_start -arch arm64";
 
   // link with runtime for test mode
   if (test_mode) {

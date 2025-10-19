@@ -361,12 +361,9 @@ honey_emit_arm64(struct honey_symbol_table* symtab,
     }
   }
 
-  // generate test runner if in test mode
-  if (include_tests) {
-    if (!emit_test_runner(f, tests, test_count)) {
-      fclose(f);
-      return false;
-    }
+  if (!emit_test_runner(f, tests, test_count)) {
+    fclose(f);
+    return false;
   }
 
   fclose(f);
@@ -377,7 +374,7 @@ static bool
 emit_test_runner(FILE* f, struct honey_symbol** tests, int count)
 {
   fprintf(f, ".global _test_runner\n");
-  fprintf(f, ".align 2\n");
+  fprintf(f, ".align 2  ; 2^2 bytes = 4 bytes = 32 bit alignment\n");
   fprintf(f, "_test_runner:\n");
   fprintf(f, "    # function prologue start\n");
   fprintf(f, "    sub sp, sp, #64\n");
