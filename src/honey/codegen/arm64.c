@@ -231,7 +231,7 @@ emit_function(FILE* f,
 
   // function label (macOS requires _ prefix)
   fprintf(f, ".global _%s\n", sym->name);
-  fprintf(f, ".align 2\n");
+  fprintf(f, ".align 2  ; 2^2 bytes = 4 bytes = 32 bit alignment\n");
   fprintf(f, "_%s:\n", sym->name);
 
   // function prologue - allocate space for stack operations
@@ -267,17 +267,26 @@ emit_test(FILE* f, struct honey_symbol* sym, struct honey_symbol_table* symtab)
 
   // generate as normal function
   fprintf(f, ".global _%s\n", sym->name);
-  fprintf(f, ".align 2\n");
+  fprintf(f, ".align 2  ; 2^2 bytes = 4 bytes = 32 bit alignment\n");
   fprintf(f, "_%s:\n", sym->name);
+  fprintf(f, "    # function prologue start\n");
   fprintf(f, "    sub sp, sp, #64\n");
+  fprintf(f, "    str x30, [sp, #56]  ; save link register\n");
+  fprintf(f, "    # function prologue start\n\n");
 
+  fprintf(f, "    # function body start\n");
   if (!emit_block(f, test->data.test_decl.body, symtab)) {
     return false;
   }
+  fprintf(f, "    # function body end\n");
 
-  fprintf(f, "    mov x0, #0\n");
+  fprintf(f, "\n");
+  fprintf(f, "    # function epilogue start\n");
+  fprintf(f, "    ldr x30, [sp, #56]  ; load link register\n");
   fprintf(f, "    add sp, sp, #64\n");
-  fprintf(f, "    ret\n\n");
+  fprintf(f, "    # function epilogue end\n\n");
+  fprintf(f, "    ret\n");
+  fprintf(f, "\n");
 
   return true;
 }
@@ -302,7 +311,7 @@ honey_emit_arm64(struct honey_symbol_table* symtab,
     if (sym->kind == SYMBOL_COMPTIME) {
       if (!has_comptime_data) {
         fprintf(f, ".const\n");
-        fprintf(f, ".align 3\n\n");
+        fprintf(f, ".align 3  ; 2^8 bytes = 8 bytes = 64 bit alignment\n\n");
         has_comptime_data = true;
       }
 

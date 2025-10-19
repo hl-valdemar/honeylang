@@ -64,11 +64,6 @@ $(BUILD_DIR)/$(LIB_NAME): $(RUNTIME_OBJ) $(OBJECTS)
 	ar rcs $@ $(RUNTIME_OBJ) $(OBJECTS)
 	@echo "$(ANSI_COLOR_GREEN)Library built$(ANSI_COLOR_RESET): $(BUILD_DIR)/$(LIB_NAME)\n"
 
-# build tests
-test: $(BUILD_DIR)/$(LIB_NAME) $(TEST_DIR)
-	$(CC) $(CFLAGS) test/honey-test.c -L$(BUILD_DIR) -lhoney $(LDFLAGS) -o $(TEST_DIR)/honey-test
-	@echo "$(ANSI_COLOR_GREEN)Test built$(ANSI_COLOR_RESET): $(TEST_DIR)/honey-test\n"
-
 clean:
 	rm -rf $(BUILD_DIR) output.s output.o honey_prog program test_program
 
