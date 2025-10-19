@@ -22,8 +22,6 @@ _start:
   # function epilogue start
   # function epilogue end
 
-  ret  ; just return
-  
-  ;# exit with the return code from main
-  ;mov x16, #1   ; syscall number for exit
-  ;svc #0        ; trigger syscall
+  # exit with the return code from main
+  mov x16, #1   ; syscall number for exit
+  svc #0        ; trigger syscall

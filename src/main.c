@@ -145,10 +145,14 @@ main(int argc, char** argv)
     return 1;
   }
 
-  printf("=== Assembling and Linking ===\n");
+  if (dump_info) {
+    printf("=== Code Emission ===\n");
+    system("cat output.s");
+  }
 
   // assemble generated code
-  if (system("as output.s -o output.o") != 0) {
+  const char* assemble_cmd = "as output.s -o output.o";
+  if (system(assemble_cmd) != 0) {
     honey_error("assembly failed");
     for (int i = 0; i < ast_count; i += 1) {
       honey_ast_destroy(declarations[i]);
@@ -159,14 +163,18 @@ main(int argc, char** argv)
     return 1;
   }
 
+  const char* link_cmd_normal =
+    "ld build/runtime/start_darwin_arm64.o output.o -o program "
+    "-lSystem -syslibroot `xcrun -sdk macosx --show-sdk-path` "
+    "-e _start -arch arm64";
+  const char* link_cmd_test =
+    "ld build/runtime/start_darwin_arm64.o output.o -o test_program "
+    "-lSystem -syslibroot `xcrun -sdk macosx --show-sdk-path` "
+    "-e _test_runner -arch arm64";
+
   // link with runtime for test mode
   if (test_mode) {
-    const char* link_cmd =
-      "ld build/runtime/start_darwin_arm64.o output.o -o test_program "
-      "-lSystem -syslibroot `xcrun -sdk macosx --show-sdk-path` "
-      "-e _test_runner -arch arm64";
-
-    if (system(link_cmd) != 0) {
+    if (system(link_cmd_test) != 0) {
       honey_error("linking failed");
       for (int i = 0; i < ast_count; i += 1) {
         honey_ast_destroy(declarations[i]);
@@ -176,20 +184,10 @@ main(int argc, char** argv)
       honey_context_destroy(honey_ctx);
       return 1;
     }
-
-    printf("created executable: test_program\n\n");
-
-    printf("=== Running Tests ===\n");
-    system("./test_program; echo \"exit code: $?\"");
   }
   // link with runtime for normal mode
   else {
-    const char* link_cmd =
-      "ld build/runtime/start_darwin_arm64.o output.o -o program "
-      "-lSystem -syslibroot `xcrun -sdk macosx --show-sdk-path` "
-      "-e _start -arch arm64";
-
-    if (system(link_cmd) != 0) {
+    if (system(link_cmd_normal) != 0) {
       honey_error("linking failed");
       for (int i = 0; i < ast_count; i += 1) {
         honey_ast_destroy(declarations[i]);
@@ -199,11 +197,22 @@ main(int argc, char** argv)
       honey_context_destroy(honey_ctx);
       return 1;
     }
+  }
 
-    printf("created executable: program\n\n");
+  if (dump_info) {
+    printf("=== Assembly and Linking ===\n");
 
-    printf("=== Running Program ===\n");
-    system("./program; echo \"exit code: $?\"");
+    if (test_mode) {
+      printf("created executable: test_program\n\n");
+
+      printf("=== Running Program ===\n");
+      system("./test_program; echo \"exit code: $?\"");
+    } else {
+      printf("created executable: program\n\n");
+
+      printf("=== Running Program ===\n");
+      system("./program; echo \"exit code: $?\"");
+    }
   }
 
   // cleanup

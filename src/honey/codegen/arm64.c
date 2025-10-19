@@ -236,32 +236,32 @@ emit_function(FILE* f,
 
   // function prologue - allocate space for stack operations
   // we'll use a simple fixed frame for now
+  fprintf(f, "    # function prologue start\n");
   fprintf(f, "    sub sp, sp, #64\n");
+  fprintf(f, "    str x30, [sp, #56]  ; save link register\n");
+  fprintf(f, "    # function prologue start\n\n");
 
   // generate function body
+  fprintf(f, "    # function body start\n");
   if (!emit_block(f, func->data.func_decl.body, symtab)) {
     return false;
   }
+  fprintf(f, "    # function body end\n");
 
   // function epilogue (different for entry point "main")
-  if (strcmp(sym->name, "main") == 0) {
-    fprintf(f, "    add sp, sp, #64\n");
-    fprintf(f, "    mov x16, #1\n");
-    fprintf(f, "    svc #0\n");
-    fprintf(f, "\n");
-  } else { // regular function
-    fprintf(f, "    add sp, sp, #64\n");
-    fprintf(f, "    ret\n");
-    fprintf(f, "\n");
-  }
+  fprintf(f, "\n");
+  fprintf(f, "    # function epilogue start\n");
+  fprintf(f, "    ldr x30, [sp, #56]  ; load link register\n");
+  fprintf(f, "    add sp, sp, #64\n");
+  fprintf(f, "    # function epilogue end\n\n");
+  fprintf(f, "    ret\n");
+  fprintf(f, "\n");
 
   return true;
 }
 
 static bool
-emit_test(FILE* f,
-             struct honey_symbol* sym,
-             struct honey_symbol_table* symtab)
+emit_test(FILE* f, struct honey_symbol* sym, struct honey_symbol_table* symtab)
 {
   struct honey_ast_node* test = sym->test_node;
 
@@ -284,8 +284,8 @@ emit_test(FILE* f,
 
 bool
 honey_emit_arm64(struct honey_symbol_table* symtab,
-                    const char* output_path,
-                    bool include_tests)
+                 const char* output_path,
+                 bool include_tests)
 {
   FILE* f = fopen(output_path, "w");
   if (!f) {
@@ -370,20 +370,26 @@ emit_test_runner(FILE* f, struct honey_symbol** tests, int count)
   fprintf(f, ".global _test_runner\n");
   fprintf(f, ".align 2\n");
   fprintf(f, "_test_runner:\n");
+  fprintf(f, "    # function prologue start\n");
   fprintf(f, "    sub sp, sp, #64\n");
   fprintf(f, "    str x30, [sp, #56]\n");
+  fprintf(f, "    # function prologue end\n\n");
 
   // call each test
   for (int i = 0; i < count; i += 1) {
-    fprintf(f, "\n    # Running test: %s\n", tests[i]->name);
+    fprintf(f, "    # running test: %s\n", tests[i]->name);
     fprintf(f, "    bl _%s\n", tests[i]->name);
 
     // TODO: check return value, accumulate failures
+
+    fprintf(f, "\n");
   }
 
-  fprintf(f, "\n    mov x0, #0\n");
+  fprintf(f, "    mov x0, #0\n\n");
+  fprintf(f, "    # function epilogue start\n");
   fprintf(f, "    ldr x30, [sp, #56]\n");
   fprintf(f, "    add sp, sp, #64\n");
+  fprintf(f, "    # function epilogue end\n\n");
   fprintf(f, "    ret\n\n");
 
   return true;
