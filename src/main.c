@@ -41,6 +41,7 @@ read_file(const char* path)
 int
 main(int argc, char** argv)
 {
+  bool dump_info = false;
   bool test_mode = false;
   const char* source_path = NULL;
 
@@ -54,6 +55,8 @@ main(int argc, char** argv)
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--test") == 0) {
       test_mode = true;
+    } else if (strcmp(argv[i], "--dump-info") == 0) {
+      dump_info = true;
     } else {
       source_path = argv[i];
     }
@@ -64,9 +67,32 @@ main(int argc, char** argv)
     return 1;
   }
 
+  if (dump_info) {
+    printf("=== Source Code ===\n");
+    printf("%s\n", source_code);
+  }
+
   // lexing
   struct honey_context* honey_ctx = honey_context_create();
   honey_scan(honey_ctx, source_code);
+
+  if (dump_info) {
+    printf("=== Lexing ===\n");
+    printf("generated %d tokens:\n\n", honey_ctx->next_token_idx);
+    for (int j = 0; j < honey_ctx->next_token_idx; j += 1) {
+      struct honey_token* tok = &honey_ctx->tokens[j];
+      printf("[%d:%d] %s",
+             tok->line,
+             tok->column,
+             honey_token_kind_to_text(tok->kind));
+
+      if (tok->data.value) {
+        printf(" = \"%s\"", tok->data.value);
+      }
+      printf("\n");
+    }
+    printf("\n");
+  }
 
   // parsing
   int ast_count = 0;
@@ -76,6 +102,15 @@ main(int argc, char** argv)
     free(source_code);
     honey_context_destroy(honey_ctx);
     return 1;
+  }
+
+  if (dump_info) {
+    printf("=== Parsing ===\n");
+    printf("parsed %d declarations:\n\n", ast_count);
+    for (int i = 0; i < ast_count; i += 1) {
+      honey_ast_print(declarations[i], 0);
+      printf("\n");
+    }
   }
 
   // semantic analysis
@@ -91,9 +126,15 @@ main(int argc, char** argv)
     return 1;
   }
 
+  if (dump_info) {
+    printf("=== Semantic Analysis ===\n");
+    honey_symbol_table_print(&symtab);
+    printf("\n");
+  }
+
   // code generation
   const char* asm_path = "output.s";
-  if (!honey_codegen_arm64(&symtab, asm_path, test_mode)) {
+  if (!honey_emit_arm64(&symtab, asm_path, test_mode)) {
     honey_error("code generation failed");
     for (int i = 0; i < ast_count; i += 1) {
       honey_ast_destroy(declarations[i]);
@@ -104,25 +145,63 @@ main(int argc, char** argv)
     return 1;
   }
 
-  // assemble and link
   printf("=== Assembling and Linking ===\n");
-  if (test_mode) {
-    system("as output.s -o output.o");
-    system(
-      "ld output.o -o test_program -lSystem -syslibroot `xcrun -sdk macosx "
-      "--show-sdk-path` -e _test_runner -arch arm64");
-    printf("created executable: honey_test\n\n");
 
-    // run and check result
-    printf("=== Running Program ===\n");
+  // assemble generated code
+  if (system("as output.s -o output.o") != 0) {
+    honey_error("assembly failed");
+    for (int i = 0; i < ast_count; i += 1) {
+      honey_ast_destroy(declarations[i]);
+    }
+    free(declarations);
+    free(source_code);
+    honey_context_destroy(honey_ctx);
+    return 1;
+  }
+
+  // link with runtime for test mode
+  if (test_mode) {
+    const char* link_cmd =
+      "ld build/runtime/start_darwin_arm64.o output.o -o test_program "
+      "-lSystem -syslibroot `xcrun -sdk macosx --show-sdk-path` "
+      "-e _test_runner -arch arm64";
+
+    if (system(link_cmd) != 0) {
+      honey_error("linking failed");
+      for (int i = 0; i < ast_count; i += 1) {
+        honey_ast_destroy(declarations[i]);
+      }
+      free(declarations);
+      free(source_code);
+      honey_context_destroy(honey_ctx);
+      return 1;
+    }
+
+    printf("created executable: test_program\n\n");
+
+    printf("=== Running Tests ===\n");
     system("./test_program; echo \"exit code: $?\"");
-  } else {
-    system("as output.s -o output.o");
-    system("ld output.o -o program -lSystem -syslibroot `xcrun -sdk macosx "
-           "--show-sdk-path` -e _main -arch arm64");
+  }
+  // link with runtime for normal mode
+  else {
+    const char* link_cmd =
+      "ld build/runtime/start_darwin_arm64.o output.o -o program "
+      "-lSystem -syslibroot `xcrun -sdk macosx --show-sdk-path` "
+      "-e _start -arch arm64";
+
+    if (system(link_cmd) != 0) {
+      honey_error("linking failed");
+      for (int i = 0; i < ast_count; i += 1) {
+        honey_ast_destroy(declarations[i]);
+      }
+      free(declarations);
+      free(source_code);
+      honey_context_destroy(honey_ctx);
+      return 1;
+    }
+
     printf("created executable: program\n\n");
 
-    // run and check result
     printf("=== Running Program ===\n");
     system("./program; echo \"exit code: $?\"");
   }

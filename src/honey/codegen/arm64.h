@@ -6,6 +6,6 @@
 
 // generate arm64 assembly code
 bool
-honey_codegen_arm64(struct honey_symbol_table* symtab, const char* output_path, bool include_tests);
+honey_emit_arm64(struct honey_symbol_table* symtab, const char* output_path, bool include_tests);
 
 #endif

@@ -8,6 +8,11 @@ BIN_DIR = $(BUILD_DIR)/bin
 TEST_DIR = $(BUILD_DIR)/test
 EXAMPLES_DIR = examples
 
+# runtime files
+RUNTIME_DIR = src/honey/runtime
+RUNTIME_SRC = $(RUNTIME_DIR)/start_darwin_arm64.s
+RUNTIME_OBJ = $(BUILD_DIR)/runtime/start_darwin_arm64.o
+
 # compiler and flags
 CC = clang
 
@@ -28,7 +33,7 @@ OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 all: honey $(BUILD_DIR)/$(LIB_NAME)
 
-honey: $(BUILD_DIR) $(BIN_DIR) $(OBJECTS)
+honey: $(BUILD_DIR) $(BIN_DIR) $(RUNTIME_OBJ) $(OBJECTS)
 	$(CC) -o $(BIN_DIR)/$@ $(OBJECTS)
 	@echo "$(ANSI_COLOR_GREEN)Honey built$(ANSI_COLOR_RESET): $(BIN_DIR)/honey\n"
 
@@ -44,14 +49,19 @@ $(BIN_DIR):
 $(TEST_DIR):
 	mkdir -p $(TEST_DIR)
 
+# build runtime object file
+$(RUNTIME_OBJ): $(RUNTIME_SRC)
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@
+
 # compile c sources (maintain directory structure)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(MODE_FILE)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # create static library (to use in tests)
-$(BUILD_DIR)/$(LIB_NAME): $(OBJECTS)
-	ar rcs $@ $(OBJECTS)
+$(BUILD_DIR)/$(LIB_NAME): $(RUNTIME_OBJ) $(OBJECTS)
+	ar rcs $@ $(RUNTIME_OBJ) $(OBJECTS)
 	@echo "$(ANSI_COLOR_GREEN)Library built$(ANSI_COLOR_RESET): $(BUILD_DIR)/$(LIB_NAME)\n"
 
 # build tests
@@ -60,7 +70,7 @@ test: $(BUILD_DIR)/$(LIB_NAME) $(TEST_DIR)
 	@echo "$(ANSI_COLOR_GREEN)Test built$(ANSI_COLOR_RESET): $(TEST_DIR)/honey-test\n"
 
 clean:
-	rm -rf $(BUILD_DIR) output.s output.o honey_prog
+	rm -rf $(BUILD_DIR) output.s output.o honey_prog program test_program
 
 # generate compile_commands.json for lsp
 compdb:

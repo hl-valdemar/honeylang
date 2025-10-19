@@ -7,7 +7,7 @@
 #include <string.h>
 
 static bool
-codegen_test_runner(FILE* f, struct honey_symbol** tests, int count);
+emit_test_runner(FILE* f, struct honey_symbol** tests, int count);
 
 static struct honey_symbol*
 find_symbol(struct honey_symbol_table* symtab, const char* name)
@@ -21,12 +21,11 @@ find_symbol(struct honey_symbol_table* symtab, const char* name)
 }
 
 // simple stack-based approach for expression evaluation
-// result always ends up in x0
 static void
-push_register(FILE* f)
+push_register(FILE* f, const char* reg)
 {
-  // push x0 to stack
-  fprintf(f, "    str x0, [sp, #-16]!\n");
+  // push reg to stack
+  fprintf(f, "    str %s, [sp, #-16]!\n", reg);
 }
 
 static void
@@ -37,9 +36,9 @@ pop_register(FILE* f, const char* reg)
 }
 
 static bool
-codegen_expression(FILE* f,
-                   struct honey_ast_node* expr,
-                   struct honey_symbol_table* symtab)
+emit_expression(FILE* f,
+                struct honey_ast_node* expr,
+                struct honey_symbol_table* symtab)
 {
   switch (expr->kind) {
     case AST_LITERAL_INT:
@@ -77,15 +76,15 @@ codegen_expression(FILE* f,
 
     case AST_BINARY_OP: {
       // evaluate left operand (result in x0)
-      if (!codegen_expression(f, expr->data.binary_op.left, symtab)) {
+      if (!emit_expression(f, expr->data.binary_op.left, symtab)) {
         return false;
       }
 
       // save left result on stack
-      push_register(f);
+      push_register(f, "x0");
 
       // evaluate right operand (result in x0)
-      if (!codegen_expression(f, expr->data.binary_op.right, symtab)) {
+      if (!emit_expression(f, expr->data.binary_op.right, symtab)) {
         return false;
       }
 
@@ -120,12 +119,12 @@ codegen_expression(FILE* f,
 
       // evaluate arguments right-to-left, pushing results to stack
       for (int i = expr->data.call_expr.argument_count - 1; i >= 0; i -= 1) {
-        if (!codegen_expression(f, expr->data.call_expr.arguments[i], symtab))
+        if (!emit_expression(f, expr->data.call_expr.arguments[i], symtab))
           return false;
 
         // push result
         if (i > 0)
-          push_register(f); // save result for later args
+          push_register(f, "x0"); // save result for later args
       }
 
       // pop arguments into register 0x-7x (in reverse order)
@@ -150,15 +149,15 @@ codegen_expression(FILE* f,
 }
 
 static bool
-codegen_statement(FILE* f,
-                  struct honey_ast_node* stmt,
-                  struct honey_symbol_table* symtab)
+emit_statement(FILE* f,
+               struct honey_ast_node* stmt,
+               struct honey_symbol_table* symtab)
 {
   switch (stmt->kind) {
     case AST_RETURN_STMT:
       if (stmt->data.return_stmt.value) {
         // evaluate return statement
-        if (!codegen_expression(f, stmt->data.return_stmt.value, symtab)) {
+        if (!emit_expression(f, stmt->data.return_stmt.value, symtab)) {
           return false;
         }
       } else {
@@ -180,9 +179,9 @@ codegen_statement(FILE* f,
 }
 
 static bool
-codegen_block(FILE* f,
-              struct honey_ast_node* block,
-              struct honey_symbol_table* symtab)
+emit_block(FILE* f,
+           struct honey_ast_node* block,
+           struct honey_symbol_table* symtab)
 {
   if (block->kind != AST_BLOCK) {
     honey_error("expected block node\n");
@@ -199,14 +198,13 @@ codegen_block(FILE* f,
       for (int j = block->data.block.deferred_count - 1; j >= 0; j -= 1) {
         struct honey_ast_node* deferred = block->data.block.deferred[j];
         // execute the deferred statement
-        if (!codegen_statement(
-              f, deferred->data.defer_stmt.statement, symtab)) {
+        if (!emit_statement(f, deferred->data.defer_stmt.statement, symtab)) {
           return false;
         }
       }
 
       // now execute the return
-      if (!codegen_statement(f, stmt, symtab)) {
+      if (!emit_statement(f, stmt, symtab)) {
         return false;
       }
       return true;
@@ -216,7 +214,7 @@ codegen_block(FILE* f,
   // reached end of block, execute deferred statements
   for (int i = block->data.block.deferred_count - 1; i >= 0; i -= 1) {
     struct honey_ast_node* deferred = block->data.block.deferred[i];
-    if (!codegen_statement(f, deferred->data.defer_stmt.statement, symtab)) {
+    if (!emit_statement(f, deferred->data.defer_stmt.statement, symtab)) {
       return false;
     }
   }
@@ -225,9 +223,9 @@ codegen_block(FILE* f,
 }
 
 static bool
-codegen_function(FILE* f,
-                 struct honey_symbol* sym,
-                 struct honey_symbol_table* symtab)
+emit_function(FILE* f,
+              struct honey_symbol* sym,
+              struct honey_symbol_table* symtab)
 {
   struct honey_ast_node* func = sym->func_node;
 
@@ -241,7 +239,7 @@ codegen_function(FILE* f,
   fprintf(f, "    sub sp, sp, #64\n");
 
   // generate function body
-  if (!codegen_block(f, func->data.func_decl.body, symtab)) {
+  if (!emit_block(f, func->data.func_decl.body, symtab)) {
     return false;
   }
 
@@ -261,7 +259,7 @@ codegen_function(FILE* f,
 }
 
 static bool
-codegen_test(FILE* f,
+emit_test(FILE* f,
              struct honey_symbol* sym,
              struct honey_symbol_table* symtab)
 {
@@ -273,7 +271,7 @@ codegen_test(FILE* f,
   fprintf(f, "_%s:\n", sym->name);
   fprintf(f, "    sub sp, sp, #64\n");
 
-  if (!codegen_block(f, test->data.test_decl.body, symtab)) {
+  if (!emit_block(f, test->data.test_decl.body, symtab)) {
     return false;
   }
 
@@ -285,7 +283,7 @@ codegen_test(FILE* f,
 }
 
 bool
-honey_codegen_arm64(struct honey_symbol_table* symtab,
+honey_emit_arm64(struct honey_symbol_table* symtab,
                     const char* output_path,
                     bool include_tests)
 {
@@ -337,7 +335,7 @@ honey_codegen_arm64(struct honey_symbol_table* symtab,
     struct honey_symbol* sym = &symtab->symbols[i];
 
     if (sym->kind == SYMBOL_FUNCTION) {
-      if (!codegen_function(f, sym, symtab)) {
+      if (!emit_function(f, sym, symtab)) {
         fclose(f);
         return false;
       }
@@ -346,7 +344,7 @@ honey_codegen_arm64(struct honey_symbol_table* symtab,
         tests[test_count] = sym;
         test_count += 1;
 
-        if (!codegen_test(f, sym, symtab)) {
+        if (!emit_test(f, sym, symtab)) {
           fclose(f);
           return false;
         }
@@ -356,47 +354,18 @@ honey_codegen_arm64(struct honey_symbol_table* symtab,
 
   // generate test runner if in test mode
   if (include_tests) {
-    if (!codegen_test_runner(f, tests, test_count)) {
+    if (!emit_test_runner(f, tests, test_count)) {
       fclose(f);
       return false;
     }
   }
-
-  // // generate test runner if in test mode
-  // if (include_tests) {
-  //   if (!codegen_test_runner(f, tests, test_count)) {
-  //     fclose(f);
-  //     return false;
-  //   }
-  //
-  //   // add test entry point
-  //   fprintf(f, "# program entry point wrapper\n");
-  //   fprintf(f, ".global _start\n");
-  //   fprintf(f, ".align 2\n");
-  //   fprintf(f, "_start:\n");
-  //   fprintf(f, "    bl _test_runner\n"); // call test_runner
-  //   fprintf(f, "    mov x16, #1\n");     // syscall number for exit
-  //   fprintf(f, "    svc #0\n");       // make syscall
-  //   fprintf(f, "\n");
-  // }
-  // // add regular entry point
-  // else {
-  //   fprintf(f, "# program entry point wrapper\n");
-  //   fprintf(f, ".global _start\n");
-  //   fprintf(f, ".align 2\n");
-  //   fprintf(f, "_start:\n");
-  //   fprintf(f, "    bl _main\n");    // call main
-  //   fprintf(f, "    mov x16, #1\n"); // syscall number for exit
-  //   fprintf(f, "    svc #0\n");   // make syscall
-  //   fprintf(f, "\n");
-  // }
 
   fclose(f);
   return true;
 }
 
 static bool
-codegen_test_runner(FILE* f, struct honey_symbol** tests, int count)
+emit_test_runner(FILE* f, struct honey_symbol** tests, int count)
 {
   fprintf(f, ".global _test_runner\n");
   fprintf(f, ".align 2\n");

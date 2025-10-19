@@ -1,3 +1,4 @@
+# userfacing entry point "main" is mandatory
 main :: func() void { }
 
 some_test :: test { }
