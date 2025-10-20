@@ -6,7 +6,7 @@
 - [x] Binary operations (for arithmetic and comparisons)
 - [x] Function calls
 - [ ] Handle proper function calling convention (caller/callee saved registers, etc)
-- [ ] Actually enforce typing!
+- [ ] Actually enforce typing! (semantic analysis)
 - [ ] Figure out how imports should work (more like zig (verbose), rust (less verbose), or odin (minimally verbose, but also a bit opaque)?)
 - [ ] Local variables (requires stack frames)
 - [ ] Conditional control flow (e.g. if statements)

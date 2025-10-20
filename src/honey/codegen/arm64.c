@@ -6,8 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+// forward declarations
 static bool
 emit_test_runner(FILE* f, struct honey_symbol** tests, int count);
+static bool
+contains_call_expr(struct honey_ast_node* expr);
 
 static struct honey_symbol*
 find_symbol(struct honey_symbol_table* symtab, const char* name)
@@ -115,30 +118,42 @@ emit_expression(FILE* f,
     }
 
     case AST_CALL_EXPR: {
-      // simple case: 0-7 arguments - all fit in registers
+      // arm64 calling convention: first 8 args in x0-x7
+      int arg_count = expr->data.call_expr.argument_count;
 
-      // evaluate arguments right-to-left, pushing results to stack
-      for (int i = expr->data.call_expr.argument_count - 1; i >= 0; i -= 1) {
-        if (!emit_expression(f, expr->data.call_expr.arguments[i], symtab))
-          return false;
-
-        // push result
-        if (i > 0)
-          push_register(f, "x0"); // save result for later args
+      if (arg_count > 8) {
+        honey_error("functions with >8 arguments not yet supported");
+        return false;
       }
 
-      // pop arguments into register 0x-7x (in reverse order)
-      for (int i = 1; i < expr->data.call_expr.argument_count; i += 1) {
+      // evaluate arguments and place them in registers x0-x7
+      // we need to be careful about register allocation here
+
+      if (arg_count == 0) {
+        // no arguments, just call
+        fprintf(f, "    bl _%s\n", expr->data.call_expr.function_name);
+        return true;
+      }
+
+      // for simplicity, evaluate args right-to-left and push to stack
+      // then pop into correct registers
+      for (int i = arg_count - 1; i >= 0; i -= 1) {
+        if (!emit_expression(f, expr->data.call_expr.arguments[i], symtab))
+          return false;
+        push_register(f, "x0");
+      }
+
+      // pop arguments into registers x0-x7
+      for (int i = 0; i < arg_count; i += 1) {
         char reg[8];
         snprintf(reg, sizeof(reg), "x%d", i);
         pop_register(f, reg);
       }
-      // x0 already has last evaluated argument
 
-      // call the function
+      // call function
       fprintf(f, "    bl _%s\n", expr->data.call_expr.function_name);
-
       // result in x0
+
       return true;
     }
 
@@ -223,39 +238,125 @@ emit_block(FILE* f,
 }
 
 static bool
+contains_call_expr(struct honey_ast_node* expr)
+{
+  if (!expr)
+    return false;
+
+  if (expr->kind == AST_CALL_EXPR)
+    return true;
+
+  if (expr->kind == AST_BINARY_OP) {
+    return contains_call_expr(expr->data.binary_op.left) ||
+           contains_call_expr(expr->data.binary_op.right);
+  }
+
+  return false;
+}
+
+static void
+get_function_needs(struct honey_ast_node* func,
+                   bool* is_leaf,
+                   bool* uses_callee_saved)
+{
+  *is_leaf = true;
+  *uses_callee_saved = false;
+
+  if (!func->data.func_decl.body)
+    return;
+
+  // check if any statement contains a call
+  for (int i = 0; i < func->data.func_decl.body->data.block.statement_count;
+       i += 1) {
+    struct honey_ast_node* stmt =
+      func->data.func_decl.body->data.block.statements[i];
+    if (stmt->kind == AST_RETURN_STMT && stmt->data.return_stmt.value) {
+      if (contains_call_expr(stmt->data.return_stmt.value)) {
+        *is_leaf = false;
+        break;
+      }
+    }
+  }
+}
+
+static bool
 emit_function(FILE* f,
               struct honey_symbol* sym,
               struct honey_symbol_table* symtab)
 {
   struct honey_ast_node* func = sym->func_node;
 
-  // function label (macOS requires _ prefix)
+  // get function requirements
+  bool is_leaf = false;
+  bool uses_callee_saved = false;
+  get_function_needs(func, &is_leaf, &uses_callee_saved);
+
+  // calculate stack frame size (must be 16-byte aligned)
+  int stack_size = 0;
+
+  if (!is_leaf) {
+    stack_size += 16; // space for x30 (lr) and x29 (fp)
+  }
+
+  // space for expression evaluation stack
+  stack_size += 64;
+
+  // round up to 16-byte alignment
+  stack_size = (stack_size + 15) & ~15;
+
+  // function label
   fprintf(f, ".global _%s\n", sym->name);
-  fprintf(f, ".align 2  ; 2^2 bytes = 4 bytes = 32 bit alignment\n");
+  fprintf(f, ".align 2\n");
   fprintf(f, "_%s:\n", sym->name);
 
-  // function prologue - allocate space for stack operations
-  // we'll use a simple fixed frame for now
-  fprintf(f, "    # function prologue start\n");
-  fprintf(f, "    sub sp, sp, #64\n");
-  fprintf(f, "    str x30, [sp, #56]  ; save link register\n");
-  fprintf(f, "    # function prologue start\n\n");
+  // === PROLOGUE ===
+  fprintf(f, "    # prologue\n");
 
-  // generate function body
-  fprintf(f, "    # function body start\n");
+  if (!is_leaf) {
+    // save fp and lr using store pair (atomic operation)
+    fprintf(f, "    stp x29, x30, [sp, #-16]!\n");
+    fprintf(f, "    mov x29, sp\n"); // set up frame pointer
+
+    // allocate remaining stack space if needed
+    if (stack_size > 16) {
+      fprintf(f, "    sub sp, sp, #%d\n", stack_size - 16);
+    }
+  } else {
+    // leaf function - only allocate stack if needed
+    if (stack_size > 0) {
+      fprintf(f, "    sub sp, sp, #%d\n", stack_size);
+    }
+  }
+
+  fprintf(f, "\n");
+
+  // === BODY ===
+  fprintf(f, "    # body\n");
   if (!emit_block(f, func->data.func_decl.body, symtab)) {
     return false;
   }
-  fprintf(f, "    # function body end\n");
 
-  // function epilogue (different for entry point "main")
   fprintf(f, "\n");
-  fprintf(f, "    # function epilogue start\n");
-  fprintf(f, "    ldr x30, [sp, #56]  ; load link register\n");
-  fprintf(f, "    add sp, sp, #64\n");
-  fprintf(f, "    # function epilogue end\n\n");
-  fprintf(f, "    ret\n");
-  fprintf(f, "\n");
+
+  // === EPILOGUE ===
+  fprintf(f, "    # epilogue\n");
+
+  if (!is_leaf) {
+    // deallocate stack space (excluding fp/lr)
+    if (stack_size > 16) {
+      fprintf(f, "    add sp, sp, #%d\n", stack_size - 16);
+    }
+
+    // restore fp and lr using load pair
+    fprintf(f, "    ldp x29, x30, [sp], #16\n");
+  } else {
+    // leaf function - deallocate stack if we allocated any
+    if (stack_size > 0) {
+      fprintf(f, "    add sp, sp, #%d\n", stack_size);
+    }
+  }
+
+  fprintf(f, "    ret\n\n");
 
   return true;
 }
@@ -265,28 +366,26 @@ emit_test(FILE* f, struct honey_symbol* sym, struct honey_symbol_table* symtab)
 {
   struct honey_ast_node* test = sym->test_node;
 
-  // generate as normal function
+  // tests are treated as regular functions
   fprintf(f, ".global _%s\n", sym->name);
-  fprintf(f, ".align 2  ; 2^2 bytes = 4 bytes = 32 bit alignment\n");
+  fprintf(f, ".align 2\n");
   fprintf(f, "_%s:\n", sym->name);
-  fprintf(f, "    # function prologue start\n");
-  fprintf(f, "    sub sp, sp, #64\n");
-  fprintf(f, "    str x30, [sp, #56]  ; save link register\n");
-  fprintf(f, "    # function prologue start\n\n");
 
-  fprintf(f, "    # function body start\n");
+  fprintf(f, "    # prologue\n");
+  fprintf(f, "    stp x29, x30, [sp, #-16]!\n");
+  fprintf(f, "    mov x29, sp\n");
+  fprintf(f, "    sub sp, sp, #64\n\n");
+
+  fprintf(f, "    # body\n");
   if (!emit_block(f, test->data.test_decl.body, symtab)) {
     return false;
   }
-  fprintf(f, "    # function body end\n");
+  fprintf(f, "\n");
 
-  fprintf(f, "\n");
-  fprintf(f, "    # function epilogue start\n");
-  fprintf(f, "    ldr x30, [sp, #56]  ; load link register\n");
+  fprintf(f, "    # epilogue\n");
   fprintf(f, "    add sp, sp, #64\n");
-  fprintf(f, "    # function epilogue end\n\n");
-  fprintf(f, "    ret\n");
-  fprintf(f, "\n");
+  fprintf(f, "    ldp x29, x30, [sp], #16\n");
+  fprintf(f, "    ret\n\n");
 
   return true;
 }
@@ -302,16 +401,23 @@ honey_emit_arm64(struct honey_symbol_table* symtab,
     return false;
   }
 
-  fprintf(f, "# Generated by Honey compiler\n\n");
+  fprintf(f, "# Generated by Honey compiler\n");
+  fprintf(f, "#\n");
+  fprintf(f, "# arm64 calling convention:\n");
+  fprintf(f, "#   • arguments: x0-x7 (first 8 args, rest on stack)\n");
+  fprintf(f, "#   • return: x0\n");
+  fprintf(f, "#   • caller-saved: x0-x18\n");
+  fprintf(f, "#   • callee-saved: x19-x28, x29 (fp), x30 (lr)\n");
+  fprintf(f, "#   • stack: 16-byte aligned\n\n");
 
-  // emit comptime constants in .const section
+  // emit comptime constants to .const section
   bool has_comptime_data = false;
   for (int i = 0; i < symtab->count; i += 1) {
     struct honey_symbol* sym = &symtab->symbols[i];
     if (sym->kind == SYMBOL_COMPTIME) {
       if (!has_comptime_data) {
         fprintf(f, ".const\n");
-        fprintf(f, ".align 3  ; 2^8 bytes = 8 bytes = 64 bit alignment\n\n");
+        fprintf(f, ".align 3\n\n");
         has_comptime_data = true;
       }
 
@@ -361,9 +467,17 @@ honey_emit_arm64(struct honey_symbol_table* symtab,
     }
   }
 
-  if (!emit_test_runner(f, tests, test_count)) {
+  // if applicable, emit test runner
+  if (include_tests && !emit_test_runner(f, tests, test_count)) {
     fclose(f);
     return false;
+  }
+  // otherwise, generate minimal _test_runner label (required by honey runtime)
+  else {
+    fprintf(f, ".global _test_runner\n");
+    fprintf(f, ".align 2\n");
+    fprintf(f, "_test_runner:\n");
+    fprintf(f, "    ret\n\n");
   }
 
   fclose(f);
@@ -374,12 +488,12 @@ static bool
 emit_test_runner(FILE* f, struct honey_symbol** tests, int count)
 {
   fprintf(f, ".global _test_runner\n");
-  fprintf(f, ".align 2  ; 2^2 bytes = 4 bytes = 32 bit alignment\n");
+  fprintf(f, ".align 2\n");
   fprintf(f, "_test_runner:\n");
-  fprintf(f, "    # function prologue start\n");
+  fprintf(f, "    # prologue\n");
+  fprintf(f, "    stp x29, x30, [sp, #-16]!\n");
+  fprintf(f, "    mov x29, sp\n");
   fprintf(f, "    sub sp, sp, #64\n");
-  fprintf(f, "    str x30, [sp, #56]\n");
-  fprintf(f, "    # function prologue end\n\n");
 
   // call each test
   for (int i = 0; i < count; i += 1) {
@@ -391,11 +505,12 @@ emit_test_runner(FILE* f, struct honey_symbol** tests, int count)
     fprintf(f, "\n");
   }
 
+  // tests, as well as test runner, return void (i.e., 0)
   fprintf(f, "    mov x0, #0\n\n");
-  fprintf(f, "    # function epilogue start\n");
-  fprintf(f, "    ldr x30, [sp, #56]\n");
+
+  fprintf(f, "    # epilogue\n");
   fprintf(f, "    add sp, sp, #64\n");
-  fprintf(f, "    # function epilogue end\n\n");
+  fprintf(f, "    ldp x29, x30, [sp], #16\n");
   fprintf(f, "    ret\n\n");
 
   return true;
