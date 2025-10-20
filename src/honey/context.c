@@ -17,7 +17,7 @@ honey_context_destroy(struct honey_context* ctx)
     return;
 
   for (int i = 0; i < ctx->next_token_idx; i += 1) {
-    free(ctx->tokens[i].data.value);
+    free(ctx->tokens[i].value);
   }
   free(ctx);
 }

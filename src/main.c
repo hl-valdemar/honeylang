@@ -86,8 +86,8 @@ main(int argc, char** argv)
              tok->column,
              honey_token_kind_to_text(tok->kind));
 
-      if (tok->data.value) {
-        printf(" = \"%s\"", tok->data.value);
+      if (tok->value) {
+        printf(" = \"%s\"", tok->value);
       }
       printf("\n");
     }

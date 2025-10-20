@@ -10,60 +10,60 @@ enum honey_type_kind
 honey_resolve_type_name(const char* name)
 {
   if (strcmp(name, "void") == 0)
-    return TYPE_VOID;
+    return HONEY_TYPE_VOID;
   if (strcmp(name, "i8") == 0)
-    return TYPE_I8;
+    return HONEY_TYPE_I8;
   if (strcmp(name, "i16") == 0)
-    return TYPE_I16;
+    return HONEY_TYPE_I16;
   if (strcmp(name, "i32") == 0)
-    return TYPE_I32;
+    return HONEY_TYPE_I32;
   if (strcmp(name, "i64") == 0)
-    return TYPE_I64;
+    return HONEY_TYPE_I64;
   if (strcmp(name, "u8") == 0)
-    return TYPE_U8;
+    return HONEY_TYPE_U8;
   if (strcmp(name, "u16") == 0)
-    return TYPE_U16;
+    return HONEY_TYPE_U16;
   if (strcmp(name, "u32") == 0)
-    return TYPE_U32;
+    return HONEY_TYPE_U32;
   if (strcmp(name, "u64") == 0)
-    return TYPE_U64;
+    return HONEY_TYPE_U64;
   if (strcmp(name, "f32") == 0)
-    return TYPE_F32;
+    return HONEY_TYPE_F32;
   if (strcmp(name, "f64") == 0)
-    return TYPE_F64;
+    return HONEY_TYPE_F64;
 
-  return TYPE_UNKNOWN;
+  return HONEY_TYPE_UNKNOWN;
 }
 
 const char*
 honey_type_kind_to_text(enum honey_type_kind kind)
 {
   switch (kind) {
-    case TYPE_I8:
+    case HONEY_TYPE_I8:
       return "i8";
-    case TYPE_I16:
+    case HONEY_TYPE_I16:
       return "i16";
-    case TYPE_I32:
+    case HONEY_TYPE_I32:
       return "i32";
-    case TYPE_I64:
+    case HONEY_TYPE_I64:
       return "i64";
-    case TYPE_U8:
+    case HONEY_TYPE_U8:
       return "u8";
-    case TYPE_U16:
+    case HONEY_TYPE_U16:
       return "u16";
-    case TYPE_U32:
+    case HONEY_TYPE_U32:
       return "u32";
-    case TYPE_U64:
+    case HONEY_TYPE_U64:
       return "u64";
-    case TYPE_F32:
+    case HONEY_TYPE_F32:
       return "f32";
-    case TYPE_F64:
+    case HONEY_TYPE_F64:
       return "f64";
-    case TYPE_VOID:
+    case HONEY_TYPE_VOID:
       return "void";
-    case TYPE_FUNCTION:
+    case HONEY_TYPE_FUNCTION:
       return "func";
-    case TYPE_UNKNOWN:
+    case HONEY_TYPE_UNKNOWN:
       return "unknown";
   }
   return "unknown";
@@ -81,37 +81,37 @@ analyze_comptime_decl(struct honey_ast_node* node,
   struct honey_symbol* sym = &symtab->symbols[symtab->count];
   symtab->count += 1;
   sym->name = strdup(node->data.comptime_decl.name);
-  sym->kind = SYMBOL_COMPTIME;
+  sym->kind = HONEY_SYMBOL_COMPTIME;
 
   // infer or check type from value
-  if (node->data.comptime_decl.value->kind == AST_LITERAL_INT) {
+  if (node->data.comptime_decl.value->kind == HONEY_AST_LITERAL_INT) {
     // if explicit type given, use it; otherwise default to i64
     if (node->data.comptime_decl.explicit_type) {
       sym->type.kind =
         honey_resolve_type_name(node->data.comptime_decl.explicit_type);
-      if (sym->type.kind == TYPE_UNKNOWN) {
+      if (sym->type.kind == HONEY_TYPE_UNKNOWN) {
         honey_error("unknown type \"%s\"",
                     node->data.comptime_decl.explicit_type);
         return false;
       }
     } else {
-      sym->type.kind = TYPE_I64;
+      sym->type.kind = HONEY_TYPE_I64;
     }
 
     sym->comptime_value.int_value =
       node->data.comptime_decl.value->data.int_literal;
 
-  } else if (node->data.comptime_decl.value->kind == AST_LITERAL_FLOAT) {
+  } else if (node->data.comptime_decl.value->kind == HONEY_AST_LITERAL_FLOAT) {
     if (node->data.comptime_decl.explicit_type) {
       sym->type.kind =
         honey_resolve_type_name(node->data.comptime_decl.explicit_type);
-      if (sym->type.kind == TYPE_UNKNOWN) {
+      if (sym->type.kind == HONEY_TYPE_UNKNOWN) {
         honey_error("unknown type \"%s\"",
                     node->data.comptime_decl.explicit_type);
         return false;
       }
     } else {
-      sym->type.kind = TYPE_F64;
+      sym->type.kind = HONEY_TYPE_F64;
     }
 
     sym->comptime_value.float_value =
@@ -136,17 +136,17 @@ analyze_func_decl(struct honey_ast_node* node,
   struct honey_symbol* sym = &symtab->symbols[symtab->count];
   symtab->count += 1;
   sym->name = strdup(node->data.func_decl.name);
-  sym->kind = SYMBOL_FUNCTION;
+  sym->kind = HONEY_SYMBOL_FUNCTION;
   sym->func_node = node;
 
   // build function type
-  sym->type.kind = TYPE_FUNCTION;
+  sym->type.kind = HONEY_TYPE_FUNCTION;
 
   // return type
   if (node->data.func_decl.return_type) {
     enum honey_type_kind ret_kind =
       honey_resolve_type_name(node->data.func_decl.return_type);
-    if (ret_kind == TYPE_UNKNOWN) {
+    if (ret_kind == HONEY_TYPE_UNKNOWN) {
       honey_error("unknown return type \"%s\"",
                   node->data.func_decl.return_type);
       return false;
@@ -156,7 +156,7 @@ analyze_func_decl(struct honey_ast_node* node,
     sym->type.func.return_type->kind = ret_kind;
   } else {
     sym->type.func.return_type = malloc(sizeof(struct honey_type));
-    sym->type.func.return_type->kind = TYPE_VOID;
+    sym->type.func.return_type->kind = HONEY_TYPE_VOID;
   }
 
   // parameter types
@@ -176,7 +176,7 @@ analyze_func_decl(struct honey_ast_node* node,
 
       enum honey_type_kind param_kind =
         honey_resolve_type_name(param->data.name.type);
-      if (param_kind == TYPE_UNKNOWN) {
+      if (param_kind == HONEY_TYPE_UNKNOWN) {
         honey_error("unknown parameter type \"%s\"", param->data.name.type);
         return false;
       }
@@ -203,13 +203,13 @@ analyze_test_decl(struct honey_ast_node* node,
   struct honey_symbol* sym = &symtab->symbols[symtab->count];
   symtab->count += 1;
   sym->name = strdup(node->data.test_decl.name);
-  sym->kind = SYMBOL_TEST;
+  sym->kind = HONEY_SYMBOL_TEST;
   sym->test_node = node;
 
   // tests are effectively void -> void functions
-  sym->type.kind = TYPE_FUNCTION;
+  sym->type.kind = HONEY_TYPE_FUNCTION;
   sym->type.func.return_type = malloc(sizeof(struct honey_type));
-  sym->type.func.return_type->kind = TYPE_VOID;
+  sym->type.func.return_type->kind = HONEY_TYPE_VOID;
   sym->type.func.param_count = 0;
   sym->type.func.param_types = NULL;
 
@@ -234,15 +234,15 @@ honey_analyze(struct honey_ast_node** declarations,
     bool success = false;
 
     switch (ast->kind) {
-      case AST_COMPTIME_DECL:
+      case HONEY_AST_COMPTIME_DECL:
         success = analyze_comptime_decl(ast, symtab);
         break;
 
-      case AST_FUNC_DECL:
+      case HONEY_AST_FUNC_DECL:
         success = analyze_func_decl(ast, symtab);
         break;
 
-      case AST_TEST_DECL:
+      case HONEY_AST_TEST_DECL:
         success = analyze_test_decl(ast, symtab);
         break;
 
@@ -270,15 +270,16 @@ honey_symbol_table_print(struct honey_symbol_table* symtab)
 
     printf("  [%d] %s: ", i, sym->name);
 
-    if (sym->kind == SYMBOL_COMPTIME) {
+    if (sym->kind == HONEY_SYMBOL_COMPTIME) {
       printf("const %s = ", honey_type_kind_to_text(sym->type.kind));
 
-      if (sym->type.kind >= TYPE_I8 && sym->type.kind <= TYPE_U64) {
+      if (sym->type.kind >= HONEY_TYPE_I8 && sym->type.kind <= HONEY_TYPE_U64) {
         printf("%lld", sym->comptime_value.int_value);
-      } else if (sym->type.kind == TYPE_F32 || sym->type.kind == TYPE_F64) {
+      } else if (sym->type.kind == HONEY_TYPE_F32 ||
+                 sym->type.kind == HONEY_TYPE_F64) {
         printf("%f", sym->comptime_value.float_value);
       }
-    } else if (sym->kind == SYMBOL_FUNCTION) {
+    } else if (sym->kind == HONEY_SYMBOL_FUNCTION) {
       printf("func(");
       for (int j = 0; j < sym->type.func.param_count; j += 1) {
         if (j > 0)
@@ -288,10 +289,38 @@ honey_symbol_table_print(struct honey_symbol_table* symtab)
       }
       printf(") : %s",
              honey_type_kind_to_text(sym->type.func.return_type->kind));
-    } else if (sym->kind == SYMBOL_TEST) {
+    } else if (sym->kind == HONEY_SYMBOL_TEST) {
       printf("test");
     }
 
     printf("\n");
+  }
+}
+
+// get the size in bytes for a type
+int
+honey_type_size(enum honey_type_kind type)
+{
+  switch (type) {
+    case HONEY_TYPE_VOID:
+      return 0;
+    case HONEY_TYPE_U8:
+    case HONEY_TYPE_I8:
+      return 1;
+    case HONEY_TYPE_U16:
+    case HONEY_TYPE_I16:
+      return 2;
+    case HONEY_TYPE_U32:
+    case HONEY_TYPE_I32:
+    case HONEY_TYPE_F32:
+      return 4;
+    case HONEY_TYPE_U64:
+    case HONEY_TYPE_I64:
+    case HONEY_TYPE_F64:
+      return 8;
+
+    // default to pointer size
+    default:
+      return 8;
   }
 }

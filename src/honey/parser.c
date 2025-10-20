@@ -1,25 +1,27 @@
 #include "parser.h"
 #include "context.h"
 #include "honey/ast.h"
+#include "honey/token.h"
 #include "log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+// forward declarations
 static struct honey_ast_node*
 parse_declaration(struct honey_parser* p);
-
 static struct honey_ast_node*
 parse_expression(struct honey_parser* p);
-
 static struct honey_ast_node*
 parse_call_expr(struct honey_parser* p, char* function_name);
-
 static struct honey_ast_node*
 parse_statement(struct honey_parser* p);
-
 static struct honey_ast_node*
 parse_block(struct honey_parser* p);
+static struct honey_ast_node*
+parse_var_decl(struct honey_parser* p);
+static struct honey_ast_node*
+parse_assignment(struct honey_parser* p);
 
 static struct honey_token*
 current_token(struct honey_parser* p)
@@ -72,7 +74,7 @@ parser_error(struct honey_parser* p, const char* message)
       "parse error at line %d, column %d: %s", tok->line, tok->column, message);
     honey_error("  got: %s \"%s\"",
                 honey_token_kind_to_text(tok->kind),
-                tok->data.value ? tok->data.value : "");
+                tok->value ? tok->value : "");
   } else {
     honey_error("parse error at EOF: %s", message);
   }
@@ -106,21 +108,21 @@ parse_primary(struct honey_parser* p)
 
   switch (tok->kind) {
     case HONEY_TOKEN_INT: {
-      node = honey_ast_create(AST_LITERAL_INT);
-      node->data.int_literal = atoll(tok->data.value);
+      node = honey_ast_create(HONEY_AST_LITERAL_INT);
+      node->data.int_literal = atoll(tok->value);
       advance_token(p);
       break;
     }
 
     case HONEY_TOKEN_FLOAT: {
-      node = honey_ast_create(AST_LITERAL_FLOAT);
-      node->data.float_literal = atof(tok->data.value);
+      node = honey_ast_create(HONEY_AST_LITERAL_FLOAT);
+      node->data.float_literal = atof(tok->value);
       advance_token(p);
       break;
     }
 
     case HONEY_TOKEN_NAME: {
-      char* name = strdup(tok->data.value);
+      char* name = strdup(tok->value);
       advance_token(p);
 
       // check if function call
@@ -134,7 +136,7 @@ parse_primary(struct honey_parser* p)
       }
       // just a name reference
       else {
-        node = honey_ast_create(AST_NAME);
+        node = honey_ast_create(HONEY_AST_NAME);
         node->data.name.identifier = name;
         node->data.name.type = NULL;
       }
@@ -181,8 +183,8 @@ parse_term(struct honey_parser* p)
       return NULL;
     }
 
-    struct honey_ast_node* binary = honey_ast_create(AST_BINARY_OP);
-    binary->data.binary_op.op = BINARY_OP_MUL;
+    struct honey_ast_node* binary = honey_ast_create(HONEY_AST_BINARY_OP);
+    binary->data.binary_op.op = HONEY_BINARY_OP_MUL;
     binary->data.binary_op.left = left;
     binary->data.binary_op.right = right;
 
@@ -209,8 +211,8 @@ parse_expression(struct honey_parser* p)
       return NULL;
     }
 
-    struct honey_ast_node* binary = honey_ast_create(AST_BINARY_OP);
-    binary->data.binary_op.op = BINARY_OP_ADD;
+    struct honey_ast_node* binary = honey_ast_create(HONEY_AST_BINARY_OP);
+    binary->data.binary_op.op = HONEY_BINARY_OP_ADD;
     binary->data.binary_op.left = left;
     binary->data.binary_op.right = right;
 
@@ -228,7 +230,7 @@ parse_block(struct honey_parser* p)
     return NULL;
   }
 
-  struct honey_ast_node* block = honey_ast_create(AST_BLOCK);
+  struct honey_ast_node* block = honey_ast_create(HONEY_AST_BLOCK);
 
   // dynamically grow statement list
   int capacity_statements = 8;
@@ -250,7 +252,7 @@ parse_block(struct honey_parser* p)
     }
 
     // if defer statement, add to deferred list
-    if (stmt->kind == AST_DEFER_STMT) {
+    if (stmt->kind == HONEY_AST_DEFER_STMT) {
       // grow if needed
       if (block->data.block.deferred_count >= capacity_deferred) {
         capacity_deferred *= 2;
@@ -293,7 +295,7 @@ parse_return_stmt(struct honey_parser* p)
     return NULL;
   }
 
-  struct honey_ast_node* ret = honey_ast_create(AST_RETURN_STMT);
+  struct honey_ast_node* ret = honey_ast_create(HONEY_AST_RETURN_STMT);
 
   // check for expression to return
   if (!check(p, HONEY_TOKEN_RBRACE) && !check(p, HONEY_TOKEN_EOF)) {
@@ -316,7 +318,7 @@ parse_defer_stmt(struct honey_parser* p)
     return NULL;
   }
 
-  struct honey_ast_node* defer_node = honey_ast_create(AST_DEFER_STMT);
+  struct honey_ast_node* defer_node = honey_ast_create(HONEY_AST_DEFER_STMT);
 
   // parse the statement to defer
   defer_node->data.defer_stmt.statement = parse_statement(p);
@@ -336,10 +338,81 @@ parse_statement(struct honey_parser* p)
   if (check(p, HONEY_TOKEN_DEFER))
     return parse_defer_stmt(p);
 
-  // only return and defer statements for now
-  // later: variable declarations, if statements, etc...
+  struct honey_token* next_tok = peek_token(p, 1);
+
+  if (check(p, HONEY_TOKEN_MUT) || (check(p, HONEY_TOKEN_NAME) && next_tok &&
+                                    next_tok->kind == HONEY_TOKEN_COLON)) {
+    parse_var_decl(p);
+  }
+
+  if (check(p, HONEY_TOKEN_NAME) && next_tok &&
+      next_tok->kind == HONEY_TOKEN_EQUAL) {
+    parse_assignment(p);
+  }
+
   parser_error(p, "expected statement");
   return NULL;
+}
+
+static struct honey_ast_node*
+parse_var_decl(struct honey_parser* p)
+{
+  bool is_mutable = match(p, HONEY_TOKEN_MUT);
+
+  struct honey_token* name_tok = current_token(p);
+  if (!expect(p, HONEY_TOKEN_NAME, "expected variable name")) {
+    return NULL;
+  }
+
+  if (!expect(p, HONEY_TOKEN_COLON, "expected \":\" after variable name")) {
+    return NULL;
+  }
+
+  struct honey_token* type_tok = current_token(p);
+  if (!expect(p, HONEY_TOKEN_NAME, "expected type name")) {
+    return NULL;
+  }
+
+  struct honey_ast_node* node = honey_ast_create(HONEY_AST_VAR_DECL);
+  node->data.var_decl.name = strdup(name_tok->value);
+  node->data.var_decl.type = strdup(type_tok->value);
+  node->data.var_decl.is_mutable = is_mutable;
+  node->data.var_decl.value = NULL;
+
+  // check for initial value
+  if (match(p, HONEY_TOKEN_EQUAL)) {
+    node->data.var_decl.value = parse_expression(p);
+    if (!node->data.var_decl.value) {
+      honey_ast_destroy(node);
+      return NULL;
+    }
+  }
+
+  return node;
+}
+
+static struct honey_ast_node*
+parse_assignment(struct honey_parser* p)
+{
+  struct honey_token* name_tok = current_token(p);
+  if (!expect(p, HONEY_TOKEN_NAME, "expected variable name")) {
+    return NULL;
+  }
+
+  if (!expect(p, HONEY_TOKEN_EQUAL, "expected \"=\"")) {
+    return NULL;
+  }
+
+  struct honey_ast_node* value = parse_expression(p);
+  if (!value) {
+    return NULL;
+  }
+
+  struct honey_ast_node* node = honey_ast_create(HONEY_AST_ASSIGNMENT);
+  node->data.assignment.name = strdup(name_tok->value);
+  node->data.assignment.value = value;
+
+  return node;
 }
 
 // parse function declaration
@@ -348,7 +421,7 @@ parse_statement(struct honey_parser* p)
 static struct honey_ast_node*
 parse_func_decl(struct honey_parser* p)
 {
-  struct honey_ast_node* node = honey_ast_create(AST_FUNC_DECL);
+  struct honey_ast_node* node = honey_ast_create(HONEY_AST_FUNC_DECL);
 
   // expect name
   struct honey_token* name_tok = current_token(p);
@@ -356,7 +429,7 @@ parse_func_decl(struct honey_parser* p)
     honey_ast_destroy(node);
     return NULL;
   }
-  node->data.func_decl.name = strdup(name_tok->data.value);
+  node->data.func_decl.name = strdup(name_tok->value);
 
   // expect :: (assignment)
   if (!expect(p, HONEY_TOKEN_DOUBLE_COLON, "expected \"::\"")) {
@@ -406,9 +479,9 @@ parse_func_decl(struct honey_parser* p)
       }
 
       // create parameter node
-      struct honey_ast_node* param = honey_ast_create(AST_NAME);
-      param->data.name.identifier = strdup(param_name->data.value);
-      param->data.name.type = strdup(param_type->data.value);
+      struct honey_ast_node* param = honey_ast_create(HONEY_AST_NAME);
+      param->data.name.identifier = strdup(param_name->value);
+      param->data.name.type = strdup(param_type->value);
 
       // grow array if needed
       if (node->data.func_decl.param_count >= capacity) {
@@ -436,7 +509,7 @@ parse_func_decl(struct honey_parser* p)
     honey_ast_destroy(node);
     return NULL;
   }
-  node->data.func_decl.return_type = strdup(ret_type->data.value);
+  node->data.func_decl.return_type = strdup(ret_type->value);
 
   // parse function body
   node->data.func_decl.body = parse_block(p);
@@ -452,7 +525,7 @@ parse_func_decl(struct honey_parser* p)
 static struct honey_ast_node*
 parse_test_decl(struct honey_parser* p)
 {
-  struct honey_ast_node* node = honey_ast_create(AST_TEST_DECL);
+  struct honey_ast_node* node = honey_ast_create(HONEY_AST_TEST_DECL);
 
   // expect name
   struct honey_token* name_tok = current_token(p);
@@ -460,7 +533,7 @@ parse_test_decl(struct honey_parser* p)
     honey_ast_destroy(node);
     return NULL;
   }
-  node->data.test_decl.name = strdup(name_tok->data.value);
+  node->data.test_decl.name = strdup(name_tok->value);
 
   // expect :: (assignment)
   if (!expect(p, HONEY_TOKEN_DOUBLE_COLON, "expected \"::\"")) {
@@ -487,7 +560,7 @@ parse_test_decl(struct honey_parser* p)
 static struct honey_ast_node*
 parse_call_expr(struct honey_parser* p, char* function_name)
 {
-  struct honey_ast_node* node = honey_ast_create(AST_CALL_EXPR);
+  struct honey_ast_node* node = honey_ast_create(HONEY_AST_CALL_EXPR);
 
   node->data.call_expr.function_name = function_name;
   node->data.call_expr.arguments = NULL;
@@ -535,7 +608,7 @@ parse_call_expr(struct honey_parser* p, char* function_name)
 static struct honey_ast_node*
 parse_comptime_decl(struct honey_parser* p)
 {
-  struct honey_ast_node* node = honey_ast_create(AST_COMPTIME_DECL);
+  struct honey_ast_node* node = honey_ast_create(HONEY_AST_COMPTIME_DECL);
 
   // expect NAME
   struct honey_token* name_tok = current_token(p);
@@ -544,7 +617,7 @@ parse_comptime_decl(struct honey_parser* p)
     honey_ast_destroy(node);
     return NULL;
   }
-  node->data.comptime_decl.name = strdup(name_tok->data.value);
+  node->data.comptime_decl.name = strdup(name_tok->value);
 
   // check for explicit type: (NAME: type :: value)
   if (match(p, HONEY_TOKEN_COLON)) {
@@ -553,7 +626,7 @@ parse_comptime_decl(struct honey_parser* p)
       honey_ast_destroy(node);
       return NULL;
     }
-    node->data.comptime_decl.explicit_type = strdup(type_tok->data.value);
+    node->data.comptime_decl.explicit_type = strdup(type_tok->value);
   } else {
     node->data.comptime_decl.explicit_type = NULL;
   }

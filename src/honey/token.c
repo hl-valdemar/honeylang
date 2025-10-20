@@ -18,6 +18,8 @@ honey_token_kind_to_text(enum honey_token_kind kind)
       return "HONEY_TOKEN_FLOAT";
     case HONEY_TOKEN_EOF:
       return "HONEY_TOKEN_EOF";
+    case HONEY_TOKEN_MUT:
+      return "HONEY_TOKEN_MUT";
     case HONEY_TOKEN_FUNC:
       return "HONEY_TOKEN_FUNC";
     case HONEY_TOKEN_TEST:
@@ -36,6 +38,10 @@ honey_token_kind_to_text(enum honey_token_kind kind)
       return "HONEY_TOKEN_RPAREN";
     case HONEY_TOKEN_COMMA:
       return "HONEY_TOKEN_COMMA";
+    case HONEY_TOKEN_EQUAL:
+      return "HONEY_TOKEN_EQUAL";
+    case HONEY_TOKEN_DOUBLE_EQUAL:
+      return "HONEY_TOKEN_DOUBLE_EQUAL";
     case HONEY_TOKEN_PLUS:
       return "HONEY_TOKEN_PLUS";
     case HONEY_TOKEN_MINUS:

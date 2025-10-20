@@ -7,19 +7,19 @@
 
 enum honey_type_kind
 {
-  TYPE_VOID,
-  TYPE_I8,
-  TYPE_I16,
-  TYPE_I32,
-  TYPE_I64,
-  TYPE_U8,
-  TYPE_U16,
-  TYPE_U32,
-  TYPE_U64,
-  TYPE_F32,
-  TYPE_F64,
-  TYPE_FUNCTION,
-  TYPE_UNKNOWN,
+  HONEY_TYPE_VOID,
+  HONEY_TYPE_I8,
+  HONEY_TYPE_I16,
+  HONEY_TYPE_I32,
+  HONEY_TYPE_I64,
+  HONEY_TYPE_U8,
+  HONEY_TYPE_U16,
+  HONEY_TYPE_U32,
+  HONEY_TYPE_U64,
+  HONEY_TYPE_F32,
+  HONEY_TYPE_F64,
+  HONEY_TYPE_FUNCTION,
+  HONEY_TYPE_UNKNOWN,
 };
 
 struct honey_type
@@ -37,9 +37,9 @@ struct honey_type
 
 enum honey_symbol_kind
 {
-  SYMBOL_COMPTIME,
-  SYMBOL_FUNCTION,
-  SYMBOL_TEST,
+  HONEY_SYMBOL_COMPTIME,
+  HONEY_SYMBOL_FUNCTION,
+  HONEY_SYMBOL_TEST,
 };
 
 struct honey_symbol
@@ -85,5 +85,9 @@ honey_resolve_type_name(const char* name);
 
 const char*
 honey_type_kind_to_text(enum honey_type_kind kind);
+
+// get the size in bytes for a type
+int
+honey_type_size(enum honey_type_kind type);
 
 #endif

@@ -1,5 +1,6 @@
 #include "lexer.h"
 #include "context.h"
+#include "honey/token.h"
 #include "log.h"
 #include <ctype.h>
 #include <stdbool.h>
@@ -74,7 +75,7 @@ make_simple_token(enum honey_token_kind kind)
 {
   return (struct honey_token){
     .kind = kind,
-    .data.value = NULL,
+    .value = NULL,
   };
 }
 
@@ -83,12 +84,12 @@ make_value_token(enum honey_token_kind kind, const char* start, int len)
 {
   struct honey_token token = {
     .kind = kind,
-    .data.value = malloc(len + 1),
+    .value = malloc(len + 1),
   };
 
-  if (token.data.value) {
-    strncpy(token.data.value, start, len);
-    token.data.value[len] = '\0';
+  if (token.value) {
+    strncpy(token.value, start, len);
+    token.value[len] = '\0';
   }
 
   return token;
@@ -99,12 +100,14 @@ check_keyword(const char* name)
 {
   if (strcmp(name, "func") == 0)
     return HONEY_TOKEN_FUNC;
-  if (strcmp(name, "test") == 0)
-    return HONEY_TOKEN_TEST;
   if (strcmp(name, "return") == 0)
     return HONEY_TOKEN_RETURN;
   if (strcmp(name, "defer") == 0)
     return HONEY_TOKEN_DEFER;
+  if (strcmp(name, "mut") == 0)
+    return HONEY_TOKEN_MUT;
+  if (strcmp(name, "test") == 0)
+    return HONEY_TOKEN_TEST;
 
   return HONEY_TOKEN_NAME;
 }
@@ -136,12 +139,12 @@ scan_name(struct honey_context* ctx)
 
   // start with raw name and check if keyword
   struct honey_token token = make_value_token(HONEY_TOKEN_NAME, start, len);
-  token.kind = check_keyword(token.data.value);
+  token.kind = check_keyword(token.value);
 
   // no need to store value keyword
   if (token.kind != HONEY_TOKEN_NAME) {
-    free(token.data.value);
-    token.data.value = NULL;
+    free(token.value);
+    token.value = NULL;
   }
 
   add_token(ctx, token);
@@ -215,6 +218,7 @@ honey_scan(struct honey_context* ctx, const char* src)
     // double colon
     else if (c == ':' && peek_char_offset(ctx, 1) == ':') {
       add_token(ctx, make_simple_token(HONEY_TOKEN_DOUBLE_COLON));
+      // consume both
       advance_char(ctx);
       advance_char(ctx);
     }
@@ -241,6 +245,18 @@ honey_scan(struct honey_context* ctx, const char* src)
     // comma
     else if (c == ',') {
       add_token(ctx, make_simple_token(HONEY_TOKEN_COMMA));
+      advance_char(ctx);
+    }
+    // single equal
+    else if (c == '=' && peek_char_offset(ctx, 1) != '=') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_EQUAL));
+      advance_char(ctx);
+    }
+    // double equal
+    else if (c == '=' && peek_char_offset(ctx, 1) == '=') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_DOUBLE_EQUAL));
+      // consume both
+      advance_char(ctx);
       advance_char(ctx);
     }
     // plus

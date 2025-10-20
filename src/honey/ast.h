@@ -6,25 +6,34 @@
 
 enum honey_ast_kind
 {
-  AST_COMPTIME_DECL, // NAME :: value
-  AST_FUNC_DECL,     // NAME :: func(...) : type { ... }
-  AST_TEST_DECL,     // NAME :: test { ... }
-  AST_LITERAL_INT,   // 10
-  AST_LITERAL_FLOAT, // 3.14
-  AST_NAME,          // identifier reference
-  AST_BLOCK,         // { statements }
-  AST_RETURN_STMT,   // return expr
-  AST_DEFER_STMT,    // defer statement
-  AST_BINARY_OP,     // binary operation
-  AST_CALL_EXPR,     // function call
+  // declarations and assignment
+  HONEY_AST_COMPTIME_DECL, // NAME :: value
+  HONEY_AST_FUNC_DECL,     // NAME :: func(...) : type { ... }
+  HONEY_AST_TEST_DECL,     // NAME :: test { ... }
+  HONEY_AST_VAR_DECL,      // local variable declaration
+  HONEY_AST_ASSIGNMENT,    // local variable assignment
+
+  // literals
+  HONEY_AST_LITERAL_INT,   // 10
+  HONEY_AST_LITERAL_FLOAT, // 3.14
+
+  // statements
+  HONEY_AST_RETURN_STMT, // return expr
+  HONEY_AST_DEFER_STMT,  // defer statement
+
+  // other
+  HONEY_AST_NAME,      // identifier reference
+  HONEY_AST_BLOCK,     // { statements }
+  HONEY_AST_BINARY_OP, // binary operation
+  HONEY_AST_CALL_EXPR, // function call
 };
 
 enum honey_binary_op_kind
 {
-  BINARY_OP_ADD, // +
-  BINARY_OP_SUB, // -
-  BINARY_OP_MUL, // *
-  BINARY_OP_DIV, // /
+  HONEY_BINARY_OP_ADD, // +
+  HONEY_BINARY_OP_SUB, // -
+  HONEY_BINARY_OP_MUL, // *
+  HONEY_BINARY_OP_DIV, // /
 };
 
 struct honey_ast_node
@@ -63,6 +72,22 @@ struct honey_ast_node
       char* name;                  // test name
       struct honey_ast_node* body; // AST_BLOCK
     } test_decl;
+
+    // variable declaration: name: type = value
+    struct
+    {
+      char* name;
+      char* type;                   // required for now
+      struct honey_ast_node* value; // initial value (memzero if omitted)
+      bool is_mutable;              // true if declared with 'mut'
+    } var_decl;
+
+    // assignment: name = value
+    struct
+    {
+      char* name;
+      struct honey_ast_node* value;
+    } assignment;
 
     // block statement
     struct

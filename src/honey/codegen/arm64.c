@@ -1,16 +1,31 @@
 #include "arm64.h"
-#include "../log.h"
 #include "honey/ast.h"
+#include "honey/log.h"
 #include "honey/semantic.h"
+#include "honey/stackframe.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+// code generation context
+struct codegen_context
+{
+  FILE* output;
+  struct honey_symbol_table* symtab;
+  struct honey_stackframe* frame; // current function's stack frame
+};
 
 // forward declarations
 static bool
 emit_test_runner(FILE* f, struct honey_symbol** tests, int count);
 static bool
 contains_call_expr(struct honey_ast_node* expr);
+static bool
+emit_expression(struct codegen_context* ctx, struct honey_ast_node* expr);
+static bool
+emit_statement(struct codegen_context* ctx, struct honey_ast_node* stmt);
+static bool
+emit_block(struct codegen_context* ctx, struct honey_ast_node* block);
 
 static struct honey_symbol*
 find_symbol(struct honey_symbol_table* symtab, const char* name)
@@ -27,87 +42,100 @@ find_symbol(struct honey_symbol_table* symtab, const char* name)
 static void
 push_register(FILE* f, const char* reg)
 {
-  // push reg to stack
   fprintf(f, "    str %s, [sp, #-16]!\n", reg);
 }
 
 static void
 pop_register(FILE* f, const char* reg)
 {
-  // pop from stack to reg
   fprintf(f, "    ldr %s, [sp], #16\n", reg);
 }
 
 static bool
-emit_expression(FILE* f,
-                struct honey_ast_node* expr,
-                struct honey_symbol_table* symtab)
+emit_expression(struct codegen_context* ctx, struct honey_ast_node* expr)
 {
+  FILE* f = ctx->output;
+
   switch (expr->kind) {
-    case AST_LITERAL_INT:
-      // load immediate value into x0 (return register)
+    case HONEY_AST_LITERAL_INT:
       fprintf(f, "    mov x0, #%lld\n", expr->data.int_literal);
       return true;
 
-    case AST_NAME: {
-      // look up the constant in the symbol table
+    case HONEY_AST_NAME: {
+      // first check if it's a local variable
+      if (ctx->frame) {
+        struct honey_local_var* local =
+          honey_stackframe_find_local(ctx->frame, expr->data.name.identifier);
+
+        if (local) {
+          // load from stack frame (relative to frame pointer)
+          int size = honey_type_size(local->type);
+
+          if (size == 8) {
+            fprintf(f, "    ldr x0, [x29, #%d]\n", local->stack_offset);
+          } else if (size == 4) {
+            fprintf(f, "    ldr w0, [x29, #%d]\n", local->stack_offset);
+          } else if (size == 2) {
+            fprintf(f, "    ldrh w0, [x29, #%d]\n", local->stack_offset);
+          } else if (size == 1) {
+            fprintf(f, "    ldrb w0, [x29, #%d]\n", local->stack_offset);
+          }
+
+          return true;
+        }
+      }
+
+      // not a local, check if it's a comptime constant
       struct honey_symbol* sym =
-        find_symbol(symtab, expr->data.name.identifier);
+        find_symbol(ctx->symtab, expr->data.name.identifier);
+
       if (!sym) {
         honey_error("undefined symbol \"%s\"", expr->data.name.identifier);
         return false;
       }
 
-      if (sym->kind != SYMBOL_COMPTIME) {
-        honey_error("\"%s\" is not comptime", expr->data.name.identifier);
+      if (sym->kind != HONEY_SYMBOL_COMPTIME) {
+        honey_error("\"%s\" is not a comptime constant or local variable",
+                    expr->data.name.identifier);
         return false;
       }
 
-      // load comptime value from .const section
       fprintf(f, "    adrp x1, _COMPTIME_%s@PAGE\n", sym->name);
 
-      if (sym->type.kind >= TYPE_I8 && sym->type.kind <= TYPE_U64) {
+      if (sym->type.kind >= HONEY_TYPE_I8 && sym->type.kind <= HONEY_TYPE_U64) {
         fprintf(f, "    ldr x0, [x1, _COMPTIME_%s@PAGEOFF]\n", sym->name);
-      } else if (sym->type.kind == TYPE_F32) {
+      } else if (sym->type.kind == HONEY_TYPE_F32) {
         fprintf(f, "    ldr s0, [x1, _COMPTIME_%s@PAGEOFF]\n", sym->name);
-      } else if (sym->type.kind == TYPE_F64) {
+      } else if (sym->type.kind == HONEY_TYPE_F64) {
         fprintf(f, "    ldr d0, [x1, _COMPTIME_%s@PAGEOFF]\n", sym->name);
       }
 
       return true;
     }
 
-    case AST_BINARY_OP: {
-      // evaluate left operand (result in x0)
-      if (!emit_expression(f, expr->data.binary_op.left, symtab)) {
+    case HONEY_AST_BINARY_OP: {
+      if (!emit_expression(ctx, expr->data.binary_op.left)) {
         return false;
       }
-
-      // save left result on stack
       push_register(f, "x0");
 
-      // evaluate right operand (result in x0)
-      if (!emit_expression(f, expr->data.binary_op.right, symtab)) {
+      if (!emit_expression(ctx, expr->data.binary_op.right)) {
         return false;
       }
-
-      // pop left operand into x1
       pop_register(f, "x1");
 
-      // now: x1 = left, x0 = right
-      // perform operation and store result in x0
       switch (expr->data.binary_op.op) {
-        case BINARY_OP_ADD:
+        case HONEY_BINARY_OP_ADD:
           fprintf(f, "    add x0, x1, x0\n");
           break;
-        case BINARY_OP_SUB:
+        case HONEY_BINARY_OP_SUB:
           fprintf(f, "    sub x0, x1, x0\n");
           break;
-        case BINARY_OP_MUL:
+        case HONEY_BINARY_OP_MUL:
           fprintf(f, "    mul x0, x1, x0\n");
           break;
-        case BINARY_OP_DIV:
-          fprintf(f, "    sdiv x0, x1, x0\n"); // signed division
+        case HONEY_BINARY_OP_DIV:
+          fprintf(f, "    sdiv x0, x1, x0\n");
           break;
         default:
           honey_error("unsupported binary operation");
@@ -117,8 +145,7 @@ emit_expression(FILE* f,
       return true;
     }
 
-    case AST_CALL_EXPR: {
-      // arm64 calling convention: first 8 args in x0-x7
+    case HONEY_AST_CALL_EXPR: {
       int arg_count = expr->data.call_expr.argument_count;
 
       if (arg_count > 8) {
@@ -126,19 +153,14 @@ emit_expression(FILE* f,
         return false;
       }
 
-      // evaluate arguments and place them in registers x0-x7
-      // we need to be careful about register allocation here
-
       if (arg_count == 0) {
-        // no arguments, just call
         fprintf(f, "    bl _%s\n", expr->data.call_expr.function_name);
         return true;
       }
 
-      // for simplicity, evaluate args right-to-left and push to stack
-      // then pop into correct registers
+      // evaluate args right-to-left and push to stack
       for (int i = arg_count - 1; i >= 0; i -= 1) {
-        if (!emit_expression(f, expr->data.call_expr.arguments[i], symtab))
+        if (!emit_expression(ctx, expr->data.call_expr.arguments[i]))
           return false;
         push_register(f, "x0");
       }
@@ -150,9 +172,7 @@ emit_expression(FILE* f,
         pop_register(f, reg);
       }
 
-      // call function
       fprintf(f, "    bl _%s\n", expr->data.call_expr.function_name);
-      // result in x0
 
       return true;
     }
@@ -164,26 +184,103 @@ emit_expression(FILE* f,
 }
 
 static bool
-emit_statement(FILE* f,
-               struct honey_ast_node* stmt,
-               struct honey_symbol_table* symtab)
+emit_statement(struct codegen_context* ctx, struct honey_ast_node* stmt)
 {
+  FILE* f = ctx->output;
+
   switch (stmt->kind) {
-    case AST_RETURN_STMT:
+    case HONEY_AST_VAR_DECL: {
+      // add variable to stack frame
+      enum honey_type_kind type =
+        honey_resolve_type_name(stmt->data.var_decl.type);
+
+      if (type == HONEY_TYPE_UNKNOWN) {
+        honey_error("unknown type \"%s\"", stmt->data.var_decl.type);
+        return false;
+      }
+
+      int offset = honey_stackframe_add_local(ctx->frame,
+                                              stmt->data.var_decl.name,
+                                              type,
+                                              false, // not a parameter
+                                              stmt->data.var_decl.is_mutable);
+
+      if (offset == -1) {
+        honey_error("too many local variables");
+        return false;
+      }
+
+      // if there's an initializer, evaluate it and store
+      if (stmt->data.var_decl.value) {
+        if (!emit_expression(ctx, stmt->data.var_decl.value)) {
+          return false;
+        }
+
+        // store result to stack
+        int size = honey_type_size(type);
+
+        if (size == 8) {
+          fprintf(f, "    str x0, [x29, #%d]\n", offset);
+        } else if (size == 4) {
+          fprintf(f, "    str w0, [x29, #%d]\n", offset);
+        } else if (size == 2) {
+          fprintf(f, "    strh w0, [x29, #%d]\n", offset);
+        } else if (size == 1) {
+          fprintf(f, "    strb w0, [x29, #%d]\n", offset);
+        }
+      }
+
+      return true;
+    }
+
+    case HONEY_AST_ASSIGNMENT: {
+      // look up the variable
+      struct honey_local_var* local =
+        honey_stackframe_find_local(ctx->frame, stmt->data.assignment.name);
+
+      if (!local) {
+        honey_error("undefined variable \"%s\"", stmt->data.assignment.name);
+        return false;
+      }
+
+      if (!local->is_mutable) {
+        honey_error("cannot assign to immutable variable \"%s\"",
+                    stmt->data.assignment.name);
+        return false;
+      }
+
+      // evaluate new value
+      if (!emit_expression(ctx, stmt->data.assignment.value)) {
+        return false;
+      }
+
+      // store to stack
+      int size = honey_type_size(local->type);
+
+      if (size == 8) {
+        fprintf(f, "    str x0, [x29, #%d]\n", local->stack_offset);
+      } else if (size == 4) {
+        fprintf(f, "    str w0, [x29, #%d]\n", local->stack_offset);
+      } else if (size == 2) {
+        fprintf(f, "    strh w0, [x29, #%d]\n", local->stack_offset);
+      } else if (size == 1) {
+        fprintf(f, "    strb w0, [x29, #%d]\n", local->stack_offset);
+      }
+
+      return true;
+    }
+
+    case HONEY_AST_RETURN_STMT:
       if (stmt->data.return_stmt.value) {
-        // evaluate return statement
-        if (!emit_expression(f, stmt->data.return_stmt.value, symtab)) {
+        if (!emit_expression(ctx, stmt->data.return_stmt.value)) {
           return false;
         }
       } else {
-        // return void (x0 = 0)
         fprintf(f, "    mov x0, #0\n");
       }
       return true;
 
-    case AST_DEFER_STMT:
-      // defer statements are handled at block level, not individually
-      // this should not be reached during normal code generation
+    case HONEY_AST_DEFER_STMT:
       honey_error("defer statement should be handled at block level");
       return false;
 
@@ -194,42 +291,40 @@ emit_statement(FILE* f,
 }
 
 static bool
-emit_block(FILE* f,
-           struct honey_ast_node* block,
-           struct honey_symbol_table* symtab)
+emit_block(struct codegen_context* ctx, struct honey_ast_node* block)
 {
-  if (block->kind != AST_BLOCK) {
+  if (block->kind != HONEY_AST_BLOCK) {
     honey_error("expected block node\n");
     return false;
   }
 
-  // generate code for regular statements
   for (int i = 0; i < block->data.block.statement_count; i += 1) {
     struct honey_ast_node* stmt = block->data.block.statements[i];
 
-    // if this is a return statement, execute deferred statements first
-    if (stmt->kind == AST_RETURN_STMT) {
-      // execute deferred statements in reverse order (lifo)
+    if (stmt->kind == HONEY_AST_RETURN_STMT) {
+      // execute deferred statements in reverse order (LIFO)
       for (int j = block->data.block.deferred_count - 1; j >= 0; j -= 1) {
         struct honey_ast_node* deferred = block->data.block.deferred[j];
-        // execute the deferred statement
-        if (!emit_statement(f, deferred->data.defer_stmt.statement, symtab)) {
+        if (!emit_statement(ctx, deferred->data.defer_stmt.statement)) {
           return false;
         }
       }
 
-      // now execute the return
-      if (!emit_statement(f, stmt, symtab)) {
+      if (!emit_statement(ctx, stmt)) {
         return false;
       }
       return true;
+    }
+
+    if (!emit_statement(ctx, stmt)) {
+      return false;
     }
   }
 
   // reached end of block, execute deferred statements
   for (int i = block->data.block.deferred_count - 1; i >= 0; i -= 1) {
     struct honey_ast_node* deferred = block->data.block.deferred[i];
-    if (!emit_statement(f, deferred->data.defer_stmt.statement, symtab)) {
+    if (!emit_statement(ctx, deferred->data.defer_stmt.statement)) {
       return false;
     }
   }
@@ -243,10 +338,10 @@ contains_call_expr(struct honey_ast_node* expr)
   if (!expr)
     return false;
 
-  if (expr->kind == AST_CALL_EXPR)
+  if (expr->kind == HONEY_AST_CALL_EXPR)
     return true;
 
-  if (expr->kind == AST_BINARY_OP) {
+  if (expr->kind == HONEY_AST_BINARY_OP) {
     return contains_call_expr(expr->data.binary_op.left) ||
            contains_call_expr(expr->data.binary_op.right);
   }
@@ -254,25 +349,50 @@ contains_call_expr(struct honey_ast_node* expr)
   return false;
 }
 
+// check if function body contains any local variables
+static bool
+has_local_variables(struct honey_ast_node* body)
+{
+  if (!body || body->kind != HONEY_AST_BLOCK)
+    return false;
+
+  for (int i = 0; i < body->data.block.statement_count; i++) {
+    if (body->data.block.statements[i]->kind == HONEY_AST_VAR_DECL) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 static void
-get_function_needs(struct honey_ast_node* func,
-                   bool* is_leaf,
-                   bool* uses_callee_saved)
+analyze_function_needs(struct honey_ast_node* func,
+                       bool* is_leaf,
+                       bool* uses_callee_saved,
+                       bool* needs_frame)
 {
   *is_leaf = true;
   *uses_callee_saved = false;
+  *needs_frame = false;
 
   if (!func->data.func_decl.body)
     return;
 
-  // check if any statement contains a call
+  // check for local variables
+  if (has_local_variables(func->data.func_decl.body)) {
+    *needs_frame = true;
+  }
+
+  // check for function calls
   for (int i = 0; i < func->data.func_decl.body->data.block.statement_count;
-       i += 1) {
+       i++) {
     struct honey_ast_node* stmt =
       func->data.func_decl.body->data.block.statements[i];
-    if (stmt->kind == AST_RETURN_STMT && stmt->data.return_stmt.value) {
+
+    if (stmt->kind == HONEY_AST_RETURN_STMT && stmt->data.return_stmt.value) {
       if (contains_call_expr(stmt->data.return_stmt.value)) {
         *is_leaf = false;
+        *needs_frame = true; // non-leaf always needs frame
         break;
       }
     }
@@ -286,43 +406,87 @@ emit_function(FILE* f,
 {
   struct honey_ast_node* func = sym->func_node;
 
-  // get function requirements
+  // analyze function requirements
   bool is_leaf = false;
   bool uses_callee_saved = false;
-  get_function_needs(func, &is_leaf, &uses_callee_saved);
+  bool needs_frame = false;
+  analyze_function_needs(func, &is_leaf, &uses_callee_saved, &needs_frame);
 
-  // calculate stack frame size (must be 16-byte aligned)
-  int stack_size = 0;
+  // create stack frame for this function
+  struct honey_stackframe* frame = honey_stackframe_create();
 
-  if (!is_leaf) {
-    stack_size += 16; // space for x30 (lr) and x29 (fp)
+  // add parameters to stack frame
+  for (int i = 0; i < func->data.func_decl.param_count; i++) {
+    struct honey_ast_node* param = func->data.func_decl.params[i];
+    enum honey_type_kind param_type =
+      honey_resolve_type_name(param->data.name.type);
+
+    honey_stackframe_add_local(frame,
+                               param->data.name.identifier,
+                               param_type,
+                               true,   // is parameter
+                               false); // parameters are immutable by default
   }
 
-  // space for expression evaluation stack
+  // create codegen context
+  struct codegen_context ctx = {
+    .output = f,
+    .symtab = symtab,
+    .frame = frame,
+  };
+
+  // first pass: analyze body to build complete frame
+  // (we do this by traversing and finding all var_decl nodes)
+  // For now, we'll build the frame as we go during emission
+
+  // calculate stack sizes
+  int local_size = 0;
+  int stack_size = 0;
+
+  if (needs_frame) {
+    stack_size += 16; // FP + LR
+  }
+
+  // space for expression evaluation
   stack_size += 64;
+
+  // we'll add local variable space after we know how many there are
+  // for now, reserve space (we'll calculate actual size during emission)
 
   // round up to 16-byte alignment
   stack_size = (stack_size + 15) & ~15;
 
-  // function label
+  // === EMIT FUNCTION ===
   fprintf(f, ".global _%s\n", sym->name);
   fprintf(f, ".align 2\n");
   fprintf(f, "_%s:\n", sym->name);
 
   // === PROLOGUE ===
-  fprintf(f, "    # prologue\n");
+  fprintf(f, "    ; prologue\n");
 
-  if (!is_leaf) {
-    // save fp and lr using store pair (atomic operation)
+  if (needs_frame || !is_leaf) {
+    // save FP and LR
     fprintf(f, "    stp x29, x30, [sp, #-16]!\n");
-    fprintf(f, "    mov x29, sp\n"); // set up frame pointer
+    fprintf(f, "    mov x29, sp\n");
 
-    // allocate remaining stack space if needed
+    // allocate remaining space
     if (stack_size > 16) {
       fprintf(f, "    sub sp, sp, #%d\n", stack_size - 16);
     }
+
+    // save parameters from registers to stack
+    for (int i = 0; i < func->data.func_decl.param_count && i < 8; i++) {
+      struct honey_local_var* param = &frame->locals[i];
+      int size = honey_type_size(param->type);
+
+      if (size == 8) {
+        fprintf(f, "    str x%d, [x29, #%d]\n", i, param->stack_offset);
+      } else if (size == 4) {
+        fprintf(f, "    str w%d, [x29, #%d]\n", i, param->stack_offset);
+      }
+    }
   } else {
-    // leaf function - only allocate stack if needed
+    // leaf without frame - minimal prologue
     if (stack_size > 0) {
       fprintf(f, "    sub sp, sp, #%d\n", stack_size);
     }
@@ -331,32 +495,34 @@ emit_function(FILE* f,
   fprintf(f, "\n");
 
   // === BODY ===
-  fprintf(f, "    # body\n");
-  if (!emit_block(f, func->data.func_decl.body, symtab)) {
+  fprintf(f, "    ; body\n");
+  if (!emit_block(&ctx, func->data.func_decl.body)) {
     return false;
   }
 
   fprintf(f, "\n");
 
   // === EPILOGUE ===
-  fprintf(f, "    # epilogue\n");
+  fprintf(f, "    ; epilogue\n");
 
-  if (!is_leaf) {
-    // deallocate stack space (excluding fp/lr)
+  if (needs_frame || !is_leaf) {
+    // deallocate stack space
     if (stack_size > 16) {
       fprintf(f, "    add sp, sp, #%d\n", stack_size - 16);
     }
 
-    // restore fp and lr using load pair
+    // restore FP and LR
     fprintf(f, "    ldp x29, x30, [sp], #16\n");
   } else {
-    // leaf function - deallocate stack if we allocated any
     if (stack_size > 0) {
       fprintf(f, "    add sp, sp, #%d\n", stack_size);
     }
   }
 
-  fprintf(f, "    ret\n\n");
+  fprintf(f, "    ret\n");
+  fprintf(f, "\n");
+
+  honey_stackframe_destroy(frame);
 
   return true;
 }
@@ -367,25 +533,37 @@ emit_test(FILE* f, struct honey_symbol* sym, struct honey_symbol_table* symtab)
   struct honey_ast_node* test = sym->test_node;
 
   // tests are treated as regular functions
+  struct honey_stackframe* frame = honey_stackframe_create();
+
+  struct codegen_context ctx = {
+    .output = f,
+    .symtab = symtab,
+    .frame = frame,
+  };
+
   fprintf(f, ".global _%s\n", sym->name);
   fprintf(f, ".align 2\n");
   fprintf(f, "_%s:\n", sym->name);
 
-  fprintf(f, "    # prologue\n");
+  fprintf(f, "    ; prologue\n");
   fprintf(f, "    stp x29, x30, [sp, #-16]!\n");
   fprintf(f, "    mov x29, sp\n");
-  fprintf(f, "    sub sp, sp, #64\n\n");
+  fprintf(f, "    sub sp, sp, #64\n");
+  fprintf(f, "\n");
 
-  fprintf(f, "    # body\n");
-  if (!emit_block(f, test->data.test_decl.body, symtab)) {
+  fprintf(f, "    ; body\n");
+  if (!emit_block(&ctx, test->data.test_decl.body)) {
     return false;
   }
   fprintf(f, "\n");
 
-  fprintf(f, "    # epilogue\n");
+  fprintf(f, "    ; epilogue\n");
   fprintf(f, "    add sp, sp, #64\n");
   fprintf(f, "    ldp x29, x30, [sp], #16\n");
-  fprintf(f, "    ret\n\n");
+  fprintf(f, "    ret\n");
+  fprintf(f, "\n");
+
+  honey_stackframe_destroy(frame);
 
   return true;
 }
@@ -401,20 +579,20 @@ honey_emit_arm64(struct honey_symbol_table* symtab,
     return false;
   }
 
-  fprintf(f, "# Generated by Honey compiler\n");
-  fprintf(f, "#\n");
-  fprintf(f, "# arm64 calling convention:\n");
-  fprintf(f, "#   • arguments: x0-x7 (first 8 args, rest on stack)\n");
-  fprintf(f, "#   • return: x0\n");
-  fprintf(f, "#   • caller-saved: x0-x18\n");
-  fprintf(f, "#   • callee-saved: x19-x28, x29 (fp), x30 (lr)\n");
-  fprintf(f, "#   • stack: 16-byte aligned\n\n");
+  fprintf(f, "; Generated by Honey compiler\n");
+  fprintf(f, ";\n");
+  fprintf(f, "; arm64 calling convention:\n");
+  fprintf(f, ";   • arguments: x0-x7 (first 8 args, rest on stack)\n");
+  fprintf(f, ";   • return: x0\n");
+  fprintf(f, ";   • caller-saved: x0-x18\n");
+  fprintf(f, ";   • callee-saved: x19-x28, x29 (fp), x30 (lr)\n");
+  fprintf(f, ";   • stack: 16-byte aligned\n\n");
 
-  // emit comptime constants to .const section
+  // emit comptime constants
   bool has_comptime_data = false;
   for (int i = 0; i < symtab->count; i += 1) {
     struct honey_symbol* sym = &symtab->symbols[i];
-    if (sym->kind == SYMBOL_COMPTIME) {
+    if (sym->kind == HONEY_SYMBOL_COMPTIME) {
       if (!has_comptime_data) {
         fprintf(f, ".const\n");
         fprintf(f, ".align 3\n\n");
@@ -423,16 +601,15 @@ honey_emit_arm64(struct honey_symbol_table* symtab,
 
       fprintf(f, "_COMPTIME_%s:\n", sym->name);
 
-      if (sym->type.kind >= TYPE_I8 && sym->type.kind <= TYPE_U64) {
+      if (sym->type.kind >= HONEY_TYPE_I8 && sym->type.kind <= HONEY_TYPE_U64) {
         fprintf(f, "    .quad %lld\n\n", sym->comptime_value.int_value);
-      } else if (sym->type.kind == TYPE_F32 || sym->type.kind == TYPE_F64) {
-        // convert f64 to hex for exact encoding
+      } else if (sym->type.kind == HONEY_TYPE_F32 ||
+                 sym->type.kind == HONEY_TYPE_F64) {
         union
         {
           double d;
           uint64_t u;
         } conv;
-
         conv.d = sym->comptime_value.float_value;
         fprintf(f, "    .quad 0x%llx\n\n", conv.u);
       }
@@ -449,12 +626,12 @@ honey_emit_arm64(struct honey_symbol_table* symtab,
   for (int i = 0; i < symtab->count; i += 1) {
     struct honey_symbol* sym = &symtab->symbols[i];
 
-    if (sym->kind == SYMBOL_FUNCTION) {
+    if (sym->kind == HONEY_SYMBOL_FUNCTION) {
       if (!emit_function(f, sym, symtab)) {
         fclose(f);
         return false;
       }
-    } else if (sym->kind == SYMBOL_TEST) {
+    } else if (sym->kind == HONEY_SYMBOL_TEST) {
       if (include_tests) {
         tests[test_count] = sym;
         test_count += 1;
@@ -490,26 +667,22 @@ emit_test_runner(FILE* f, struct honey_symbol** tests, int count)
   fprintf(f, ".global _test_runner\n");
   fprintf(f, ".align 2\n");
   fprintf(f, "_test_runner:\n");
-  fprintf(f, "    # prologue\n");
+  fprintf(f, "    ; prologue\n");
   fprintf(f, "    stp x29, x30, [sp, #-16]!\n");
   fprintf(f, "    mov x29, sp\n");
-  fprintf(f, "    sub sp, sp, #64\n");
+  fprintf(f, "    sub sp, sp, #16\n");
+  fprintf(f, "\n");
 
-  // call each test
   for (int i = 0; i < count; i += 1) {
-    fprintf(f, "    # running test: %s\n", tests[i]->name);
+    fprintf(f, "    ; test: %s\n", tests[i]->name);
     fprintf(f, "    bl _%s\n", tests[i]->name);
-
-    // TODO: check return value, accumulate failures
-
     fprintf(f, "\n");
   }
 
-  // tests, as well as test runner, return void (i.e., 0)
-  fprintf(f, "    mov x0, #0\n\n");
-
-  fprintf(f, "    # epilogue\n");
-  fprintf(f, "    add sp, sp, #64\n");
+  fprintf(f, "    mov x0, #0\n");
+  fprintf(f, "\n");
+  fprintf(f, "    ; epilogue\n");
+  fprintf(f, "    add sp, sp, #16\n");
   fprintf(f, "    ldp x29, x30, [sp], #16\n");
   fprintf(f, "    ret\n\n");
 

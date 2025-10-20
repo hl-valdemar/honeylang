@@ -8,9 +8,12 @@ enum honey_token_kind
   HONEY_TOKEN_EOF,
 
   // assignment
+  HONEY_TOKEN_MUT,
   HONEY_TOKEN_NAME,
   HONEY_TOKEN_COLON,        // :
   HONEY_TOKEN_DOUBLE_COLON, // ::
+  HONEY_TOKEN_EQUAL,        // =
+  HONEY_TOKEN_DOUBLE_EQUAL, // ==
 
   // types
   HONEY_TOKEN_INT,
@@ -30,9 +33,9 @@ enum honey_token_kind
   HONEY_TOKEN_COMMA,  // ,
 
   // binary operators
-  HONEY_TOKEN_PLUS, // +
+  HONEY_TOKEN_PLUS,  // +
   HONEY_TOKEN_MINUS, // -
-  HONEY_TOKEN_STAR, // *
+  HONEY_TOKEN_STAR,  // *
   HONEY_TOKEN_SLASH, // /
 };
 
@@ -42,10 +45,7 @@ honey_token_kind_to_text(enum honey_token_kind kind);
 struct honey_token
 {
   enum honey_token_kind kind;
-  struct
-  {
-    char* value;
-  } data;
+  char* value;
 
   // for better error reporting
   int line;

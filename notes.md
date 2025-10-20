@@ -23,7 +23,9 @@
   ```
   This should be a good learning experience
 
-- Semicolons probably not needed (just look at odin)
+- Semicolons not needed (just look at odin!)
+
+- No variable shadowing!
 
 - Strong typing!
 

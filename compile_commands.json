@@ -2,6 +2,18 @@
   {
     "arguments": [
       "/usr/bin/clang",
+      "-c",
+      "-o",
+      "build/runtime/start_darwin_arm64.o",
+      "src/honey/runtime/start_darwin_arm64.s"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/runtime/start_darwin_arm64.s",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/runtime/start_darwin_arm64.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
       "-Wall",
       "-Wextra",
       "-Isrc",
@@ -72,107 +84,27 @@
       "-std=c11",
       "-c",
       "-o",
+      "build/honey/stackframe.o",
+      "src/honey/stackframe.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/stackframe.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/honey/stackframe.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c11",
+      "-c",
+      "-o",
       "build/honey/codegen/arm64.o",
       "src/honey/codegen/arm64.c"
     ],
     "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
     "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/codegen/arm64.c",
     "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/honey/codegen/arm64.o"
-  },
-  {
-    "arguments": [
-      "/usr/bin/clang",
-      "-Wall",
-      "-Wextra",
-      "-Isrc",
-      "-std=c11",
-      "-c",
-      "-o",
-      "build/honey/semantic.o",
-      "src/honey/semantic.c"
-    ],
-    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
-    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/semantic.c",
-    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/honey/semantic.o"
-  },
-  {
-    "arguments": [
-      "/usr/bin/clang",
-      "-Wall",
-      "-Wextra",
-      "-Isrc",
-      "-std=c11",
-      "-c",
-      "-o",
-      "build/honey/context.o",
-      "src/honey/context.c"
-    ],
-    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
-    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/context.c",
-    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/honey/context.o"
-  },
-  {
-    "arguments": [
-      "/usr/bin/clang",
-      "-Wall",
-      "-Wextra",
-      "-Isrc",
-      "-std=c11",
-      "-c",
-      "-o",
-      "build/honey/parser.o",
-      "src/honey/parser.c"
-    ],
-    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
-    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/parser.c",
-    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/honey/parser.o"
-  },
-  {
-    "arguments": [
-      "/usr/bin/clang",
-      "-Wall",
-      "-Wextra",
-      "-Isrc",
-      "-std=c11",
-      "-c",
-      "-o",
-      "build/main.o",
-      "src/main.c"
-    ],
-    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
-    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/main.c",
-    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/main.o"
-  },
-  {
-    "arguments": [
-      "/usr/bin/clang",
-      "-c",
-      "-Wall",
-      "-Wextra",
-      "-Isrc",
-      "-std=c11",
-      "-o",
-      "build/test/parser",
-      "tests/parser.c"
-    ],
-    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
-    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/tests/parser.c",
-    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/test/parser"
-  },
-  {
-    "arguments": [
-      "/usr/bin/clang",
-      "-c",
-      "-Wall",
-      "-Wextra",
-      "-Isrc",
-      "-std=c11",
-      "-o",
-      "build/test/codegen",
-      "tests/codegen.c"
-    ],
-    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
-    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/tests/codegen.c",
-    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/test/codegen"
   }
 ]
