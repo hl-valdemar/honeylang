@@ -4,7 +4,9 @@
 
 - [x] Defer statements (affect code generation significantly - need to track scope exits)
 - [x] Binary operations (for arithmetic and comparisons)
-- [ ] Function calls (and ensure that function return values align with the return type!)
+- [x] Function calls
+- [ ] Handle proper function calling convention (caller/callee saved registers, etc)
+- [ ] Actually enforce typing!
 - [ ] Figure out how imports should work (more like zig (verbose), rust (less verbose), or odin (minimally verbose, but also a bit opaque)?)
 - [ ] Local variables (requires stack frames)
 - [ ] Conditional control flow (e.g. if statements)
@@ -70,6 +72,8 @@
 - Unused declarations should generate warnings (descend computation graph to check) and should not be part of the generated code
 
 - Should be able to write bare-metal executables
+
+- Syntax highlighting for multiline strings with codeblocks
 
 ## Memory Allocation Design
 
