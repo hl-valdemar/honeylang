@@ -48,9 +48,9 @@ static struct
     if (strcmp((a), (b)) != 0) {                                               \
       printf(                                                                  \
         "  %sASSERT FAILED%s: %s\n", TEST_COLOR_RED, TEST_COLOR_RESET, msg);   \
-      printf("    Expected: \"%s\"\n", (b));                                   \
-      printf("    Got: \"%s\"\n", (a));                                        \
-      printf("    File: %s, Line: %d\n", __FILE__, __LINE__);                  \
+      printf("    gxpected: \"%s\"\n", (b));                                   \
+      printf("    got: \"%s\"\n", (a));                                        \
+      printf("    gile: %s, Line: %d\n", __FILE__, __LINE__);                  \
       return false;                                                            \
     }                                                                          \
   } while (0)

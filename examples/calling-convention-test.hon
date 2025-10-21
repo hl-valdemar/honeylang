@@ -27,9 +27,9 @@ add_three :: func(a: i64, b: i64, c: i64) i64 {
 # complex non-leaf with multiple calls
 # expected: proper frame setup with saved registers
 main :: func() i64 {
-  base := get_number()
-  doubled := double(base)
-  result := add_three(base, doubled, 10)
+  base: i64 = get_number()
+  doubled: i64 = double(base)
+  result: i64 = add_three(base, doubled, 10)
   return result
 }
 
