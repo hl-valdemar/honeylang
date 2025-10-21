@@ -21,7 +21,7 @@ TEST_BINS = $(TEST_SOURCES:$(TEST_DIR)/%.c=$(BUILD_DIR)/tests/%)
 CC = clang
 
 # build flags
-CFLAGS = -Wall -Wextra -I$(SRC_DIR) -std=c11
+CFLAGS = -Wall -Wextra -I$(SRC_DIR) -std=c2x
 
 # find all .c files recursively in src/
 SOURCES = $(shell find $(SRC_DIR) -name '*.c')
