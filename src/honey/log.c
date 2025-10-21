@@ -32,7 +32,7 @@ honey_log(enum honey_log_level level, const char* msg, ...)
     ANSI_COLOR_MAGENTA // trace
   };
 
-  FILE* out = (level == LOG_LEVEL_WARN) ? stdout : stderr;
+  FILE* out = (level == HONEY_LOG_LEVEL_WARN) ? stdout : stderr;
 
   fprintf(out,
           "[%s%s%s] %s(honey)%s: ",
@@ -57,7 +57,7 @@ honey_log_assertion_failure(const char* expr,
                             const char* file,
                             int line)
 {
-  honey_log(LOG_LEVEL_FATAL,
+  honey_log(HONEY_LOG_LEVEL_FATAL,
             "assertion failure: %s, message: '%s', in file: %s, on line: %d",
             expr,
             msg,

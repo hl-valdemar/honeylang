@@ -17,25 +17,25 @@
 #define ANSI_COLOR_BRIGHT_RED "\x1b[91m"
 
 // enable or disable log levels
-#define LOG_WARN_ENABLED true
-#define LOG_INFO_ENABLED true
+#define HONEY_LOG_WARN_ENABLED true
+#define HONEY_LOG_INFO_ENABLED true
 
-#if RELEASE
-#define LOG_DEBUG_ENABLED false
-#define LOG_TRACE_ENABLED false
+#if RELEASE == 1
+#define HONEY_LOG_DEBUG_ENABLED false
+#define HONEY_LOG_TRACE_ENABLED false
 #else
-#define LOG_DEBUG_ENABLED true
-#define LOG_TRACE_ENABLED true
+#define HONEY_LOG_DEBUG_ENABLED true
+#define HONEY_LOG_TRACE_ENABLED true
 #endif
 
 enum honey_log_level
 {
-  LOG_LEVEL_FATAL = 0,
-  LOG_LEVEL_ERROR = 1,
-  LOG_LEVEL_WARN = 2,
-  LOG_LEVEL_INFO = 3,
-  LOG_LEVEL_DEBUG = 4,
-  LOG_LEVEL_TRACE = 5,
+  HONEY_LOG_LEVEL_FATAL = 0,
+  HONEY_LOG_LEVEL_ERROR = 1,
+  HONEY_LOG_LEVEL_WARN = 2,
+  HONEY_LOG_LEVEL_INFO = 3,
+  HONEY_LOG_LEVEL_DEBUG = 4,
+  HONEY_LOG_LEVEL_TRACE = 5,
 };
 
 bool
@@ -47,29 +47,43 @@ void
 honey_log(enum honey_log_level level, const char* msg, ...);
 
 // logging utility macros
-#define honey_fatal(msg, ...) honey_log(LOG_LEVEL_FATAL, msg, ##__VA_ARGS__)
-#define honey_error(msg, ...) honey_log(LOG_LEVEL_ERROR, msg, ##__VA_ARGS__)
 
-#if LOG_WARN_ENABLED
-#define honey_warn(msg, ...) honey_log(LOG_LEVEL_WARN, msg, ##__VA_ARGS__)
+#if LOG_DISABLED == 1
+#define honey_fatal(msg, ...)
+#define honey_error(msg, ...)
+#define honey_warn(msg, ...)
+#define honey_info(msg, ...)
+#define honey_debug(msg, ...)
+#define honey_trace(msg, ...)
+#else
+
+#define honey_fatal(msg, ...)                                                  \
+  honey_log(HONEY_LOG_LEVEL_FATAL, msg, ##__VA_ARGS__)
+#define honey_error(msg, ...)                                                  \
+  honey_log(HONEY_LOG_LEVEL_ERROR, msg, ##__VA_ARGS__)
+
+#if HONEY_LOG_WARN_ENABLED
+#define honey_warn(msg, ...) honey_log(HONEY_LOG_LEVEL_WARN, msg, ##__VA_ARGS__)
 #else
 #define honey_warn(msg, ...)
 #endif
 
-#if LOG_INFO_ENABLED
-#define honey_info(msg, ...) honey_log(LOG_LEVEL_INFO, msg, ##__VA_ARGS__)
+#if HONEY_LOG_INFO_ENABLED
+#define honey_info(msg, ...) honey_log(HONEY_LOG_LEVEL_INFO, msg, ##__VA_ARGS__)
 #else
 #define honey_info(msg, ...)
 #endif
 
-#if LOG_DEBUG_ENABLED
-#define honey_debug(msg, ...) honey_log(LOG_LEVEL_DEBUG, msg, ##__VA_ARGS__)
+#if HONEY_LOG_DEBUG_ENABLED
+#define honey_debug(msg, ...)                                                  \
+  honey_log(HONEY_LOG_LEVEL_DEBUG, msg, ##__VA_ARGS__)
 #else
 #define honey_debug(msg, ...)
 #endif
 
-#if LOG_TRACE_ENABLED
-#define honey_trace(msg, ...) honey_log(LOG_LEVEL_TRACE, msg, ##__VA_ARGS__)
+#if HONEY_LOG_TRACE_ENABLED
+#define honey_trace(msg, ...)                                                  \
+  honey_log(HONEY_LOG_LEVEL_TRACE, msg, ##__VA_ARGS__)
 #else
 #define honey_trace(msg, ...)
 #endif
@@ -90,3 +104,5 @@ honey_log_assertion_failure(const char* expr,
       abort();                                                                 \
     }                                                                          \
   }
+
+#endif

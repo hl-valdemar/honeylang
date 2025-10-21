@@ -41,6 +41,8 @@ read_file(const char* path)
 int
 main(int argc, char** argv)
 {
+  honey_log_init();
+
   bool dump_info = false;
   bool test_mode = false;
   const char* source_path = NULL;
@@ -223,5 +225,6 @@ main(int argc, char** argv)
   free(source_code);
   honey_context_destroy(honey_ctx);
 
+  honey_log_shutdown();
   return 0;
 }
