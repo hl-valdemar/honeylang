@@ -164,11 +164,11 @@ main(int argc, char** argv)
   }
 
   const char* link_cmd_normal =
-    "ld build/runtime/start_darwin_arm64.o output.o -o program "
+    "ld build/runtime/start-darwin-arm64.o output.o -o program "
     "-lSystem -syslibroot `xcrun -sdk macosx --show-sdk-path` "
     "-e _start -arch arm64";
   const char* link_cmd_test =
-    "ld build/runtime/start_darwin_arm64.o output.o -o test_program "
+    "ld build/runtime/start-darwin-arm64.o output.o -o test_program "
     "-lSystem -syslibroot `xcrun -sdk macosx --show-sdk-path` "
     "-e _test_start -arch arm64";
 
