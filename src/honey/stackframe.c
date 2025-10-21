@@ -62,7 +62,7 @@ struct honey_local_var*
 honey_stackframe_find_local(struct honey_stackframe* frame, const char* name)
 {
   for (int i = 0; i < frame->local_count; i += 1) {
-    if (strcmp(name, frame->locals[i].name)) {
+    if (strcmp(name, frame->locals[i].name) == 0) {
       return &frame->locals[i];
     }
   }
