@@ -228,6 +228,22 @@ mut some_val: i32 = 10
 some_val += 20
 assert(some_val == 30)
 
+# arbitrary nested scopes
+do_something :: func() void {
+  # do something here
+  
+  # then open another scope with local variables
+  {
+    x := 10
+    y := 30
+
+    # do something with x and y...
+
+  } # x and y are dropped here
+
+  # continue doing something else
+}
+
 ######################
 # Illustrative Example
 

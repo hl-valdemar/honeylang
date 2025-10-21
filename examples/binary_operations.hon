@@ -1,3 +1,0 @@
-main :: func() i8 {
-  return 1 + 2 * 3
-}

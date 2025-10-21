@@ -59,11 +59,6 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(MODE_FILE)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# create static library (to use in tests)
-$(BUILD_DIR)/$(LIB_NAME): $(RUNTIME_OBJ) $(OBJECTS)
-	ar rcs $@ $(RUNTIME_OBJ) $(OBJECTS)
-	@echo "$(ANSI_COLOR_GREEN)Library built$(ANSI_COLOR_RESET): $(BUILD_DIR)/$(LIB_NAME)\n"
-
 clean:
 	rm -rf $(BUILD_DIR) output.s output.o honey_prog program test_program
 
