@@ -342,12 +342,12 @@ parse_statement(struct honey_parser* p)
 
   if (check(p, HONEY_TOKEN_MUT) || (check(p, HONEY_TOKEN_NAME) && next_tok &&
                                     next_tok->kind == HONEY_TOKEN_COLON)) {
-    parse_var_decl(p);
+    return parse_var_decl(p);
   }
 
   if (check(p, HONEY_TOKEN_NAME) && next_tok &&
       next_tok->kind == HONEY_TOKEN_EQUAL) {
-    parse_assignment(p);
+    return parse_assignment(p);
   }
 
   parser_error(p, "expected statement");

@@ -440,7 +440,6 @@ emit_function(FILE* f,
   // For now, we'll build the frame as we go during emission
 
   // calculate stack sizes
-  int local_size = 0;
   int stack_size = 0;
 
   if (needs_frame) {
