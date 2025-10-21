@@ -1,7 +1,7 @@
+#define _POSIX_C_SOURCE 200809L
 #include "semantic.h"
 #include "honey/ast.h"
 #include "log.h"
-#include <_string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

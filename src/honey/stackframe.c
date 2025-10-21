@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "stackframe.h"
 #include "honey/semantic.h"
 #include <stdlib.h>
