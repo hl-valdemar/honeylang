@@ -366,7 +366,7 @@ has_local_variables(struct honey_ast_node* body)
 }
 
 static void
-analyze_function_needs(struct honey_ast_node* func,
+get_function_needs(struct honey_ast_node* func,
                        bool* is_leaf,
                        bool* uses_callee_saved,
                        bool* needs_frame)
@@ -406,11 +406,11 @@ emit_function(FILE* f,
 {
   struct honey_ast_node* func = sym->func_node;
 
-  // analyze function requirements
+  // get function requirements
   bool is_leaf = false;
   bool uses_callee_saved = false;
   bool needs_frame = false;
-  analyze_function_needs(func, &is_leaf, &uses_callee_saved, &needs_frame);
+  get_function_needs(func, &is_leaf, &uses_callee_saved, &needs_frame);
 
   // create stack frame for this function
   struct honey_stackframe* frame = honey_stackframe_create();
@@ -436,26 +436,26 @@ emit_function(FILE* f,
   };
 
   // first pass: analyze body to build complete frame
-  // (we do this by traversing and finding all var_decl nodes)
-  // For now, we'll build the frame as we go during emission
+  // (traverse and find all var_decl nodes)
+  // for now, build the frame as we go during emission
 
   // calculate stack sizes
   int stack_size = 0;
 
   if (needs_frame) {
-    stack_size += 16; // FP + LR
+    stack_size += 16; // fp + lr
   }
 
   // space for expression evaluation
   stack_size += 64;
 
-  // we'll add local variable space after we know how many there are
-  // for now, reserve space (we'll calculate actual size during emission)
+  // add local variable space after we know how many there are
+  // for now, reserve space (calculate actual size during emission)
 
   // round up to 16-byte alignment
   stack_size = (stack_size + 15) & ~15;
 
-  // === EMIT FUNCTION ===
+  // === LABEL ===
   fprintf(f, ".global _%s\n", sym->name);
   fprintf(f, ".align 2\n");
   fprintf(f, "_%s:\n", sym->name);
@@ -464,7 +464,7 @@ emit_function(FILE* f,
   fprintf(f, "    ; prologue\n");
 
   if (needs_frame || !is_leaf) {
-    // save FP and LR
+    // save fp and lr
     fprintf(f, "    stp x29, x30, [sp, #-16]!\n");
     fprintf(f, "    mov x29, sp\n");
 
@@ -510,7 +510,7 @@ emit_function(FILE* f,
       fprintf(f, "    add sp, sp, #%d\n", stack_size - 16);
     }
 
-    // restore FP and LR
+    // restore fp and lr
     fprintf(f, "    ldp x29, x30, [sp], #16\n");
   } else {
     if (stack_size > 0) {
