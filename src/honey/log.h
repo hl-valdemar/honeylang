@@ -20,7 +20,7 @@
 #define HONEY_LOG_WARN_ENABLED true
 #define HONEY_LOG_INFO_ENABLED true
 
-#if RELEASE == 1
+#if RELEASE
 #define HONEY_LOG_DEBUG_ENABLED false
 #define HONEY_LOG_TRACE_ENABLED false
 #else
@@ -48,7 +48,7 @@ honey_log(enum honey_log_level level, const char* msg, ...);
 
 // logging utility macros
 
-#if LOG_DISABLED == 1
+#if LOG_DISABLED
 #define honey_fatal(msg, ...)
 #define honey_error(msg, ...)
 #define honey_warn(msg, ...)

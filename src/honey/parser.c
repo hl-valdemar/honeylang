@@ -65,7 +65,7 @@ match(struct honey_parser* p, enum honey_token_kind kind)
 }
 
 static void
-parser_error(struct honey_parser* p, const char* message)
+parser_error(struct honey_parser* p, [[maybe_unused]] const char* message)
 {
   struct honey_token* tok = current_token(p);
 

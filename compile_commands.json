@@ -4,12 +4,12 @@
       "/usr/bin/clang",
       "-c",
       "-o",
-      "build/runtime/start_darwin_arm64.o",
-      "src/honey/runtime/start_darwin_arm64.s"
+      "build/runtime/start-darwin-arm64.o",
+      "src/honey/runtime/start-darwin-arm64.s"
     ],
     "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
-    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/runtime/start_darwin_arm64.s",
-    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/runtime/start_darwin_arm64.o"
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/runtime/start-darwin-arm64.s",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/runtime/start-darwin-arm64.o"
   },
   {
     "arguments": [
@@ -17,7 +17,7 @@
       "-Wall",
       "-Wextra",
       "-Isrc",
-      "-std=c11",
+      "-std=c2x",
       "-c",
       "-o",
       "build/honey/log.o",
@@ -33,7 +33,7 @@
       "-Wall",
       "-Wextra",
       "-Isrc",
-      "-std=c11",
+      "-std=c2x",
       "-c",
       "-o",
       "build/honey/ast.o",
@@ -49,7 +49,7 @@
       "-Wall",
       "-Wextra",
       "-Isrc",
-      "-std=c11",
+      "-std=c2x",
       "-c",
       "-o",
       "build/honey/lexer.o",
@@ -65,7 +65,7 @@
       "-Wall",
       "-Wextra",
       "-Isrc",
-      "-std=c11",
+      "-std=c2x",
       "-c",
       "-o",
       "build/honey/token.o",
@@ -81,7 +81,7 @@
       "-Wall",
       "-Wextra",
       "-Isrc",
-      "-std=c11",
+      "-std=c2x",
       "-c",
       "-o",
       "build/honey/stackframe.o",
@@ -97,7 +97,7 @@
       "-Wall",
       "-Wextra",
       "-Isrc",
-      "-std=c11",
+      "-std=c2x",
       "-c",
       "-o",
       "build/honey/codegen/arm64.o",
@@ -106,5 +106,274 @@
     "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
     "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/codegen/arm64.c",
     "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/honey/codegen/arm64.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-c",
+      "-o",
+      "build/honey/semantic.o",
+      "src/honey/semantic.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/semantic.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/honey/semantic.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-c",
+      "-o",
+      "build/honey/context.o",
+      "src/honey/context.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/context.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/honey/context.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-c",
+      "-o",
+      "build/honey/parser.o",
+      "src/honey/parser.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/parser.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/honey/parser.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-c",
+      "-o",
+      "build/main.o",
+      "src/main.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/main.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/main.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-DLOG_DISABLED=1",
+      "-c",
+      "-o",
+      "build/test_objs/honey/log.o",
+      "src/honey/log.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/log.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/test_objs/honey/log.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-DLOG_DISABLED=1",
+      "-c",
+      "-o",
+      "build/test_objs/honey/ast.o",
+      "src/honey/ast.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/ast.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/test_objs/honey/ast.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-DLOG_DISABLED=1",
+      "-c",
+      "-o",
+      "build/test_objs/honey/lexer.o",
+      "src/honey/lexer.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/lexer.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/test_objs/honey/lexer.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-DLOG_DISABLED=1",
+      "-c",
+      "-o",
+      "build/test_objs/honey/token.o",
+      "src/honey/token.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/token.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/test_objs/honey/token.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-DLOG_DISABLED=1",
+      "-c",
+      "-o",
+      "build/test_objs/honey/stackframe.o",
+      "src/honey/stackframe.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/stackframe.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/test_objs/honey/stackframe.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-DLOG_DISABLED=1",
+      "-c",
+      "-o",
+      "build/test_objs/honey/codegen/arm64.o",
+      "src/honey/codegen/arm64.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/codegen/arm64.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/test_objs/honey/codegen/arm64.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-DLOG_DISABLED=1",
+      "-c",
+      "-o",
+      "build/test_objs/honey/semantic.o",
+      "src/honey/semantic.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/semantic.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/test_objs/honey/semantic.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-DLOG_DISABLED=1",
+      "-c",
+      "-o",
+      "build/test_objs/honey/context.o",
+      "src/honey/context.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/context.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/test_objs/honey/context.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-DLOG_DISABLED=1",
+      "-c",
+      "-o",
+      "build/test_objs/honey/parser.o",
+      "src/honey/parser.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/src/honey/parser.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/test_objs/honey/parser.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-DLOG_DISABLED=1",
+      "build/test_objs/honey/log.o",
+      "build/test_objs/honey/ast.o",
+      "build/test_objs/honey/lexer.o",
+      "build/test_objs/honey/token.o",
+      "build/test_objs/honey/stackframe.o",
+      "build/test_objs/honey/codegen/arm64.o",
+      "build/test_objs/honey/semantic.o",
+      "build/test_objs/honey/context.o",
+      "build/test_objs/honey/parser.o",
+      "-o",
+      "build/tests/lexer-test",
+      "tests/lexer-test.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/tests/lexer-test.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/tests/lexer-test"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-Isrc",
+      "-std=c2x",
+      "-DLOG_DISABLED=1",
+      "build/test_objs/honey/log.o",
+      "build/test_objs/honey/ast.o",
+      "build/test_objs/honey/lexer.o",
+      "build/test_objs/honey/token.o",
+      "build/test_objs/honey/stackframe.o",
+      "build/test_objs/honey/codegen/arm64.o",
+      "build/test_objs/honey/semantic.o",
+      "build/test_objs/honey/context.o",
+      "build/test_objs/honey/parser.o",
+      "-o",
+      "build/tests/parser-test",
+      "tests/parser-test.c"
+    ],
+    "directory": "/Users/valdemar/Developer/Personal/Languages/honeylang",
+    "file": "/Users/valdemar/Developer/Personal/Languages/honeylang/tests/parser-test.c",
+    "output": "/Users/valdemar/Developer/Personal/Languages/honeylang/build/tests/parser-test"
   }
 ]

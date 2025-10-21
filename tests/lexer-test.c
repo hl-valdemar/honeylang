@@ -3,8 +3,6 @@
 #include "../src/honey/test-framework.h"
 #include "../src/honey/token.h"
 
-#define LOG_DISABLED 1
-
 static bool
 test_scan_integer(void)
 {

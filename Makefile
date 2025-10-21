@@ -32,8 +32,16 @@ OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 # filter out main.o for tests (since tests have their own main)
 TEST_OBJECTS = $(filter-out $(BUILD_DIR)/main.o, $(OBJECTS))
 
+# test-specific object directory (compiled with LOG_DISABLED)
+TEST_OBJ_DIR = $(BUILD_DIR)/test-objs
+TEST_LIB_OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(TEST_OBJ_DIR)/%.o)
+TEST_LIB_OBJECTS := $(filter-out $(TEST_OBJ_DIR)/main.o, $(TEST_LIB_OBJECTS))
+
 # targets
 .PHONY: all test clean compdb
+
+# prevent make from deleting test object files after building
+.SECONDARY: $(TEST_LIB_OBJECTS)
 
 all: honey
 
@@ -66,10 +74,15 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# build individual test executables (link with all object files except main.o)
-$(BUILD_DIR)/tests/%: $(TEST_DIR)/%.c $(TEST_OBJECTS)
+# compile test-specific object files with LOG_DISABLED
+$(TEST_OBJ_DIR)/%.o: $(SRC_DIR)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -DLOG_DISABLED -c $< -o $@
+
+# build individual test executables (link with test-specific objects)
+$(BUILD_DIR)/tests/%: $(TEST_DIR)/%.c $(TEST_LIB_OBJECTS)
 	@mkdir -p $(BUILD_DIR)/tests
-	$(CC) $(CFLAGS) $< $(TEST_OBJECTS) -o $@
+	$(CC) $(CFLAGS) -DLOG_DISABLED=1 $< $(TEST_LIB_OBJECTS) -o $@
 	@echo "$(ANSI_COLOR_GREEN)test built$(ANSI_COLOR_RESET): $@\n"
 
 clean:
