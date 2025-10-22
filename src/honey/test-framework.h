@@ -20,7 +20,7 @@ static struct
 #define TEST_COLOR_RESET "\x1b[0m"
 
 // assert macros
-#define ASSERT(expr, msg)                                                      \
+#define assert(expr, msg)                                                      \
   do {                                                                         \
     if (!(expr)) {                                                             \
       printf(                                                                  \
@@ -31,7 +31,7 @@ static struct
     }                                                                          \
   } while (0)
 
-#define ASSERT_EQ(a, b, msg)                                                   \
+#define assert_eq(a, b, msg)                                                   \
   do {                                                                         \
     if ((a) != (b)) {                                                          \
       printf(                                                                  \
@@ -43,7 +43,7 @@ static struct
     }                                                                          \
   } while (0)
 
-#define ASSERT_STR_EQ(a, b, msg)                                               \
+#define assert_str_eq(a, b, msg)                                               \
   do {                                                                         \
     if (strcmp((a), (b)) != 0) {                                               \
       printf(                                                                  \
@@ -55,12 +55,12 @@ static struct
     }                                                                          \
   } while (0)
 
-#define ASSERT_NULL(ptr, msg) ASSERT((ptr) == NULL, msg)
+#define assert_null(ptr, msg) assert((ptr) == NULL, msg)
 
-#define ASSERT_NOT_NULL(ptr, msg) ASSERT((ptr) != NULL, msg)
+#define assert_not_null(ptr, msg) assert((ptr) != NULL, msg)
 
 // test runner
-#define RUN_TEST(test_func)                                                    \
+#define run_test(test_func)                                                    \
   do {                                                                         \
     printf("running: %s%s%s ... ",                                             \
            TEST_COLOR_YELLOW,                                                  \
