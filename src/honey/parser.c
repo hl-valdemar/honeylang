@@ -71,10 +71,20 @@ parser_error(struct honey_parser* p, [[maybe_unused]] const char* message)
 
   if (tok) {
     honey_error(
-      "parse error at line %d, column %d: %s", tok->line, tok->column, message);
-    honey_error("  got: %s \"%s\"",
-                honey_token_kind_to_text(tok->kind),
-                tok->value ? tok->value : "");
+      "parse error at %sline %d%s, %scolumn %d%s: %s%s%s, %sgot %s \"%s\"%s",
+      ANSI_COLOR_RED,
+      tok->line,
+      ANSI_COLOR_RESET,
+      ANSI_COLOR_RED,
+      tok->column,
+      ANSI_COLOR_RESET,
+      ANSI_COLOR_YELLOW,
+      message,
+      ANSI_COLOR_RESET,
+      ANSI_COLOR_YELLOW,
+      honey_token_kind_to_text(tok->kind),
+      tok->value ? tok->value : "",
+      ANSI_COLOR_RESET);
   } else {
     honey_error("parse error at EOF: %s", message);
   }

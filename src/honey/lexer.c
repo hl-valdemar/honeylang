@@ -281,7 +281,7 @@ honey_scan(struct honey_context* ctx, const char* src)
     }
     // unknown character (warn and skip)
     else {
-      honey_warn("unknown character '%s%c%s' at %sline %d%s, %scolumn %d%s",
+      honey_warn("unknown character \"%s%c%s\" at %sline %d%s, %scolumn %d%s. skipping...",
                  ANSI_COLOR_RED,
                  c,
                  ANSI_COLOR_RESET,

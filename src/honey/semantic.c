@@ -77,6 +77,16 @@ analyze_comptime_decl(struct honey_ast_node* node,
     return false;
   }
 
+  for (int i = 0; i < symtab->count; i += 1) {
+    if (strcmp(symtab->symbols[i].name, node->data.comptime_decl.name) == 0) {
+      honey_error("comptime constant \"%s%s%s\" is already defined",
+                  ANSI_COLOR_RED,
+                  symtab->symbols[i].name,
+                  ANSI_COLOR_RESET);
+      return false;
+    }
+  }
+
   struct honey_symbol* sym = &symtab->symbols[symtab->count];
   symtab->count += 1;
   sym->name = strdup(node->data.comptime_decl.name);

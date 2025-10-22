@@ -64,48 +64,38 @@ test_resolve_void_type(void)
 static bool
 test_resolve_signed_int_types(void)
 {
-  assert_eq(honey_resolve_type_name("i8"),
-            HONEY_TYPE_I8,
-            "i8 type should resolve");
-  assert_eq(honey_resolve_type_name("i16"),
-            HONEY_TYPE_I16,
-            "i16 type should resolve");
-  assert_eq(honey_resolve_type_name("i32"),
-            HONEY_TYPE_I32,
-            "i32 type should resolve");
-  assert_eq(honey_resolve_type_name("i64"),
-            HONEY_TYPE_I64,
-            "i64 type should resolve");
+  assert_eq(
+    honey_resolve_type_name("i8"), HONEY_TYPE_I8, "i8 type should resolve");
+  assert_eq(
+    honey_resolve_type_name("i16"), HONEY_TYPE_I16, "i16 type should resolve");
+  assert_eq(
+    honey_resolve_type_name("i32"), HONEY_TYPE_I32, "i32 type should resolve");
+  assert_eq(
+    honey_resolve_type_name("i64"), HONEY_TYPE_I64, "i64 type should resolve");
   return true;
 }
 
 static bool
 test_resolve_unsigned_int_types(void)
 {
-  assert_eq(honey_resolve_type_name("u8"),
-            HONEY_TYPE_U8,
-            "u8 type should resolve");
-  assert_eq(honey_resolve_type_name("u16"),
-            HONEY_TYPE_U16,
-            "u16 type should resolve");
-  assert_eq(honey_resolve_type_name("u32"),
-            HONEY_TYPE_U32,
-            "u32 type should resolve");
-  assert_eq(honey_resolve_type_name("u64"),
-            HONEY_TYPE_U64,
-            "u64 type should resolve");
+  assert_eq(
+    honey_resolve_type_name("u8"), HONEY_TYPE_U8, "u8 type should resolve");
+  assert_eq(
+    honey_resolve_type_name("u16"), HONEY_TYPE_U16, "u16 type should resolve");
+  assert_eq(
+    honey_resolve_type_name("u32"), HONEY_TYPE_U32, "u32 type should resolve");
+  assert_eq(
+    honey_resolve_type_name("u64"), HONEY_TYPE_U64, "u64 type should resolve");
   return true;
 }
 
 static bool
 test_resolve_float_types(void)
 {
-  assert_eq(honey_resolve_type_name("f32"),
-            HONEY_TYPE_F32,
-            "f32 type should resolve");
-  assert_eq(honey_resolve_type_name("f64"),
-            HONEY_TYPE_F64,
-            "f64 type should resolve");
+  assert_eq(
+    honey_resolve_type_name("f32"), HONEY_TYPE_F32, "f32 type should resolve");
+  assert_eq(
+    honey_resolve_type_name("f64"), HONEY_TYPE_F64, "f64 type should resolve");
   return true;
 }
 
@@ -124,29 +114,22 @@ test_resolve_unknown_type(void)
 static bool
 test_type_kind_to_text(void)
 {
-  assert_str_eq(honey_type_kind_to_text(HONEY_TYPE_VOID),
-                "void",
-                "void type text");
+  assert_str_eq(
+    honey_type_kind_to_text(HONEY_TYPE_VOID), "void", "void type text");
   assert_str_eq(honey_type_kind_to_text(HONEY_TYPE_I8), "i8", "i8 type text");
-  assert_str_eq(honey_type_kind_to_text(HONEY_TYPE_I32),
-                "i32",
-                "i32 type text");
-  assert_str_eq(honey_type_kind_to_text(HONEY_TYPE_I64),
-                "i64",
-                "i64 type text");
+  assert_str_eq(
+    honey_type_kind_to_text(HONEY_TYPE_I32), "i32", "i32 type text");
+  assert_str_eq(
+    honey_type_kind_to_text(HONEY_TYPE_I64), "i64", "i64 type text");
   assert_str_eq(honey_type_kind_to_text(HONEY_TYPE_U8), "u8", "u8 type text");
-  assert_str_eq(honey_type_kind_to_text(HONEY_TYPE_U32),
-                "u32",
-                "u32 type text");
-  assert_str_eq(honey_type_kind_to_text(HONEY_TYPE_F32),
-                "f32",
-                "f32 type text");
-  assert_str_eq(honey_type_kind_to_text(HONEY_TYPE_F64),
-                "f64",
-                "f64 type text");
-  assert_str_eq(honey_type_kind_to_text(HONEY_TYPE_FUNCTION),
-                "func",
-                "function type text");
+  assert_str_eq(
+    honey_type_kind_to_text(HONEY_TYPE_U32), "u32", "u32 type text");
+  assert_str_eq(
+    honey_type_kind_to_text(HONEY_TYPE_F32), "f32", "f32 type text");
+  assert_str_eq(
+    honey_type_kind_to_text(HONEY_TYPE_F64), "f64", "f64 type text");
+  assert_str_eq(
+    honey_type_kind_to_text(HONEY_TYPE_FUNCTION), "func", "function type text");
   assert_str_eq(honey_type_kind_to_text(HONEY_TYPE_UNKNOWN),
                 "unknown",
                 "unknown type text");
@@ -285,6 +268,22 @@ test_analyze_comptime_with_invalid_type(void)
   bool success = honey_analyze(nodes, count, &symtab);
 
   assert(!success, "semantic analysis should fail with invalid type");
+
+  cleanup_ast(nodes, count);
+  return true;
+}
+
+static bool
+test_analyze_comptime_duplicate_definitions(void)
+{
+  int count;
+  struct honey_ast_node** nodes = parse_source("x :: 42\nx :: 54", &count);
+  assert_not_null(nodes, "parsing should succeed");
+
+  struct honey_symbol_table symtab;
+  bool success = honey_analyze(nodes, count, &symtab);
+
+  assert(!success, "semantic analysis should fail with duplicate definitions");
 
   cleanup_ast(nodes, count);
   return true;
@@ -480,11 +479,11 @@ test_analyze_test_declaration(void)
   assert_eq(symtab.count, 1, "should have 1 symbol");
 
   struct honey_symbol* sym = &symtab.symbols[0];
-  assert_str_eq(sym->name,
-                "simple_test",
-                "symbol name should be 'simple_test'");
+  assert_str_eq(
+    sym->name, "simple_test", "symbol name should be 'simple_test'");
   assert_eq(sym->kind, HONEY_SYMBOL_TEST, "should be test symbol");
-  assert_eq(sym->type.kind, HONEY_TYPE_FUNCTION, "test type should be function");
+  assert_eq(
+    sym->type.kind, HONEY_TYPE_FUNCTION, "test type should be function");
 
   // tests are void -> void functions
   assert_not_null(sym->type.func.return_type, "should have return type");
@@ -513,12 +512,12 @@ static bool
 test_symbol_table_multiple_declarations(void)
 {
   int count;
-  struct honey_ast_node** nodes = parse_source(
-    "x :: 10\n"
-    "y :: 20\n"
-    "add :: func(a: i32, b: i32) i32 { return a + b }\n"
-    "my_test :: test { z: i32 = 30 }",
-    &count);
+  struct honey_ast_node** nodes =
+    parse_source("x :: 10\n"
+                 "y :: 20\n"
+                 "add :: func(a: i32, b: i32) i32 { return a + b }\n"
+                 "my_test :: test { z: i32 = 30 }",
+                 &count);
 
   assert_not_null(nodes, "parsing should succeed");
   assert_eq(count, 4, "should have 4 declarations");
@@ -531,26 +530,22 @@ test_symbol_table_multiple_declarations(void)
 
   // check first symbol (comptime)
   assert_str_eq(symtab.symbols[0].name, "x", "first symbol should be 'x'");
-  assert_eq(symtab.symbols[0].kind,
-            HONEY_SYMBOL_COMPTIME,
-            "first should be comptime");
+  assert_eq(
+    symtab.symbols[0].kind, HONEY_SYMBOL_COMPTIME, "first should be comptime");
 
   // check second symbol (comptime)
   assert_str_eq(symtab.symbols[1].name, "y", "second symbol should be 'y'");
-  assert_eq(symtab.symbols[1].kind,
-            HONEY_SYMBOL_COMPTIME,
-            "second should be comptime");
+  assert_eq(
+    symtab.symbols[1].kind, HONEY_SYMBOL_COMPTIME, "second should be comptime");
 
   // check third symbol (function)
   assert_str_eq(symtab.symbols[2].name, "add", "third symbol should be 'add'");
-  assert_eq(symtab.symbols[2].kind,
-            HONEY_SYMBOL_FUNCTION,
-            "third should be function");
+  assert_eq(
+    symtab.symbols[2].kind, HONEY_SYMBOL_FUNCTION, "third should be function");
 
   // check fourth symbol (test)
-  assert_str_eq(symtab.symbols[3].name,
-                "my_test",
-                "fourth symbol should be 'my_test'");
+  assert_str_eq(
+    symtab.symbols[3].name, "my_test", "fourth symbol should be 'my_test'");
   assert_eq(symtab.symbols[3].kind, HONEY_SYMBOL_TEST, "fourth should be test");
 
   cleanup_symbol_table(&symtab);
@@ -593,16 +588,15 @@ static bool
 test_integration_all_integer_types(void)
 {
   int count;
-  struct honey_ast_node** nodes = parse_source(
-    "a: i8 :: 1\n"
-    "b: i16 :: 2\n"
-    "c: i32 :: 3\n"
-    "d: i64 :: 4\n"
-    "e: u8 :: 5\n"
-    "f: u16 :: 6\n"
-    "g: u32 :: 7\n"
-    "h: u64 :: 8",
-    &count);
+  struct honey_ast_node** nodes = parse_source("a: i8 :: 1\n"
+                                               "b: i16 :: 2\n"
+                                               "c: i32 :: 3\n"
+                                               "d: i64 :: 4\n"
+                                               "e: u8 :: 5\n"
+                                               "f: u16 :: 6\n"
+                                               "g: u32 :: 7\n"
+                                               "h: u64 :: 8",
+                                               &count);
 
   assert_not_null(nodes, "parsing should succeed");
 
@@ -631,10 +625,9 @@ static bool
 test_integration_all_float_types(void)
 {
   int count;
-  struct honey_ast_node** nodes = parse_source(
-    "pi32: f32 :: 3.14\n"
-    "pi64: f64 :: 3.14159265",
-    &count);
+  struct honey_ast_node** nodes = parse_source("pi32: f32 :: 3.14\n"
+                                               "pi64: f64 :: 3.14159265",
+                                               &count);
 
   assert_not_null(nodes, "parsing should succeed");
 
@@ -674,35 +667,26 @@ test_integration_complex_function_signature(void)
 
   // verify all parameter types
   assert_eq(sym->type.func.param_types[0]->kind, HONEY_TYPE_I8, "param 0: i8");
-  assert_eq(sym->type.func.param_types[1]->kind,
-            HONEY_TYPE_I16,
-            "param 1: i16");
-  assert_eq(sym->type.func.param_types[2]->kind,
-            HONEY_TYPE_I32,
-            "param 2: i32");
-  assert_eq(sym->type.func.param_types[3]->kind,
-            HONEY_TYPE_I64,
-            "param 3: i64");
+  assert_eq(
+    sym->type.func.param_types[1]->kind, HONEY_TYPE_I16, "param 1: i16");
+  assert_eq(
+    sym->type.func.param_types[2]->kind, HONEY_TYPE_I32, "param 2: i32");
+  assert_eq(
+    sym->type.func.param_types[3]->kind, HONEY_TYPE_I64, "param 3: i64");
   assert_eq(sym->type.func.param_types[4]->kind, HONEY_TYPE_U8, "param 4: u8");
-  assert_eq(sym->type.func.param_types[5]->kind,
-            HONEY_TYPE_U16,
-            "param 5: u16");
-  assert_eq(sym->type.func.param_types[6]->kind,
-            HONEY_TYPE_U32,
-            "param 6: u32");
-  assert_eq(sym->type.func.param_types[7]->kind,
-            HONEY_TYPE_U64,
-            "param 7: u64");
-  assert_eq(sym->type.func.param_types[8]->kind,
-            HONEY_TYPE_F32,
-            "param 8: f32");
-  assert_eq(sym->type.func.param_types[9]->kind,
-            HONEY_TYPE_F64,
-            "param 9: f64");
+  assert_eq(
+    sym->type.func.param_types[5]->kind, HONEY_TYPE_U16, "param 5: u16");
+  assert_eq(
+    sym->type.func.param_types[6]->kind, HONEY_TYPE_U32, "param 6: u32");
+  assert_eq(
+    sym->type.func.param_types[7]->kind, HONEY_TYPE_U64, "param 7: u64");
+  assert_eq(
+    sym->type.func.param_types[8]->kind, HONEY_TYPE_F32, "param 8: f32");
+  assert_eq(
+    sym->type.func.param_types[9]->kind, HONEY_TYPE_F64, "param 9: f64");
 
-  assert_eq(sym->type.func.return_type->kind,
-            HONEY_TYPE_VOID,
-            "return type: void");
+  assert_eq(
+    sym->type.func.return_type->kind, HONEY_TYPE_VOID, "return type: void");
 
   cleanup_symbol_table(&symtab);
   cleanup_ast(nodes, count);
@@ -737,6 +721,7 @@ main(void)
   run_test(test_analyze_comptime_float_with_inferred_type);
   run_test(test_analyze_comptime_float_with_explicit_type);
   run_test(test_analyze_comptime_with_invalid_type);
+  run_test(test_analyze_comptime_duplicate_definitions);
 
   // function declaration tests
   run_test(test_analyze_function_no_params);
