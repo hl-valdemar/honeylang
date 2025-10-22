@@ -24,8 +24,16 @@ enum honey_ast_kind
   // other
   HONEY_AST_NAME,      // identifier reference
   HONEY_AST_BLOCK,     // { statements }
+  HONEY_AST_UNARY_OP,  // unary operation
   HONEY_AST_BINARY_OP, // binary operation
   HONEY_AST_CALL_EXPR, // function call
+};
+
+enum honey_unary_op_kind
+{
+  HONEY_UNARY_OP_NEG,    // -x (negation)
+  HONEY_UNARY_OP_NOT,    // !x (logical not)
+  HONEY_UNARY_OP_BITNOT, // ~x (bitwise not)
 };
 
 enum honey_binary_op_kind
@@ -111,6 +119,13 @@ struct honey_ast_node
     {
       struct honey_ast_node* statement; // statement to defer
     } defer_stmt;
+
+    // unary operation
+    struct
+    {
+      enum honey_unary_op_kind op;
+      struct honey_ast_node* operand;
+    } unary_op;
 
     // binary operation
     struct

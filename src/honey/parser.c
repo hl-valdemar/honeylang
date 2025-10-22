@@ -176,18 +176,36 @@ parse_primary(struct honey_parser* p)
   return node;
 }
 
+static struct honey_ast_node*
+parse_unary(struct honey_parser* p)
+{
+  if (check(p, HONEY_TOKEN_MINUS)) {
+    advance_token(p);
+
+    // note: disallow chaining, e.g. '--x', as this has ambiguous semantics
+    // across different languages
+
+    struct honey_ast_node* unary = honey_ast_create(HONEY_AST_UNARY_OP);
+    unary->data.unary_op.op = HONEY_UNARY_OP_NEG;
+    unary->data.unary_op.operand = parse_primary(p);
+    return unary;
+  }
+
+  return parse_primary(p);
+}
+
 // parse multiplication and division (higher precedence)
 static struct honey_ast_node*
 parse_term(struct honey_parser* p)
 {
-  struct honey_ast_node* left = parse_primary(p);
+  struct honey_ast_node* left = parse_unary(p);
   if (!left)
     return NULL;
 
   while (check(p, HONEY_TOKEN_STAR)) {
     advance_token(p);
 
-    struct honey_ast_node* right = parse_primary(p);
+    struct honey_ast_node* right = parse_unary(p);
     if (!right) {
       honey_ast_destroy(left);
       return NULL;

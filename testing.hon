@@ -1,6 +1,0 @@
-x :: 30
-x :: 30
-
-main :: func() void {
-  return x
-}

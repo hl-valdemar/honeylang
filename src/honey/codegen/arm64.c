@@ -113,6 +113,24 @@ emit_expression(struct codegen_context* ctx, struct honey_ast_node* expr)
       return true;
     }
 
+    case HONEY_AST_UNARY_OP: {
+      if (!emit_expression(ctx, expr->data.unary_op.operand)) {
+        return false;
+      }
+      push_register(f, "x0");
+
+      switch (expr->data.unary_op.op) {
+        case HONEY_UNARY_OP_NEG:
+          fprintf(f, "    neg x0, x0\n");
+          break;
+        default:
+          honey_error("unsupported unary operation");
+          return false;
+      }
+
+      return true;
+    }
+
     case HONEY_AST_BINARY_OP: {
       if (!emit_expression(ctx, expr->data.binary_op.left)) {
         return false;
@@ -367,9 +385,9 @@ has_local_variables(struct honey_ast_node* body)
 
 static void
 get_function_needs(struct honey_ast_node* func,
-                       bool* is_leaf,
-                       bool* uses_callee_saved,
-                       bool* needs_frame)
+                   bool* is_leaf,
+                   bool* uses_callee_saved,
+                   bool* needs_frame)
 {
   *is_leaf = true;
   *uses_callee_saved = false;

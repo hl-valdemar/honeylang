@@ -4,21 +4,30 @@
 #include <string.h>
 
 const char*
+unary_op_kind_to_text(enum honey_unary_op_kind kind)
+{
+  switch (kind) {
+    case HONEY_UNARY_OP_NEG:
+      return "HONEY_UNARY_OP_NEG";
+    case HONEY_UNARY_OP_NOT:
+      return "HONEY_UNARY_OP_NOT";
+    case HONEY_UNARY_OP_BITNOT:
+      return "HONEY_UNARY_OP_BITNOT";
+  }
+}
+
+const char*
 binary_op_kind_to_text(enum honey_binary_op_kind kind)
 {
   switch (kind) {
     case HONEY_BINARY_OP_ADD:
       return "HONEY_BINARY_OP_ADD";
-      break;
     case HONEY_BINARY_OP_SUB:
       return "HONEY_BINARY_OP_SUB";
-      break;
     case HONEY_BINARY_OP_MUL:
       return "HONEY_BINARY_OP_MUL";
-      break;
     case HONEY_BINARY_OP_DIV:
       return "HONEY_BINARY_OP_DIV";
-      break;
   }
 }
 
@@ -77,6 +86,10 @@ honey_ast_destroy(struct honey_ast_node* node)
         honey_ast_destroy(node->data.block.deferred[i]);
 
       free(node->data.block.deferred);
+      break;
+
+    case HONEY_AST_UNARY_OP:
+      honey_ast_destroy(node->data.unary_op.operand);
       break;
 
     case HONEY_AST_BINARY_OP:
@@ -192,6 +205,14 @@ honey_ast_print(struct honey_ast_node* node, int indent)
       printf("defer:\n");
       if (node->data.defer_stmt.statement)
         honey_ast_print(node->data.defer_stmt.statement, indent + 1);
+      break;
+
+    case HONEY_AST_UNARY_OP:
+      printf("unary op: %s\n", unary_op_kind_to_text(node->data.unary_op.op));
+      for (int i = 0; i < indent + 1; i += 1)
+        printf("  ");
+      printf("operand:\n");
+      honey_ast_print(node->data.unary_op.operand, indent + 2);
       break;
 
     case HONEY_AST_BINARY_OP:
