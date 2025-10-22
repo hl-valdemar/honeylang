@@ -1,6 +1,7 @@
 #ifndef HONEY_TEST_FRAMEWORK_H
 #define HONEY_TEST_FRAMEWORK_H
 
+#include "honey/log.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -23,10 +24,12 @@ static struct
 #define assert(expr, msg)                                                      \
   do {                                                                         \
     if (!(expr)) {                                                             \
-      printf(                                                                  \
-        "  %sASSERT FAILED%s: %s\n", TEST_COLOR_RED, TEST_COLOR_RESET, msg);   \
-      printf("    expression: %s\n", #expr);                                   \
-      printf("    file: %s, Line: %d\n", __FILE__, __LINE__);                  \
+      printf("[%sASSERT FAILED%s: %s%s%s] ",                                   \
+             ANSI_COLOR_RED,                                                   \
+             ANSI_COLOR_RESET,                                                 \
+             ANSI_COLOR_DARK_WHITE,                                            \
+             msg,                                                              \
+             ANSI_COLOR_RESET);                                                \
       return false;                                                            \
     }                                                                          \
   } while (0)
@@ -34,11 +37,12 @@ static struct
 #define assert_eq(a, b, msg)                                                   \
   do {                                                                         \
     if ((a) != (b)) {                                                          \
-      printf(                                                                  \
-        "  %sASSERT FAILED%s: %s\n", TEST_COLOR_RED, TEST_COLOR_RESET, msg);   \
-      printf("    expected: %lld\n", (long long)(b));                          \
-      printf("    got: %lld\n", (long long)(a));                               \
-      printf("    file: %s, Line: %d\n", __FILE__, __LINE__);                  \
+      printf("[%sASSERT FAILED%s: %s%s%s] ",                                   \
+             ANSI_COLOR_RED,                                                   \
+             ANSI_COLOR_RESET,                                                 \
+             ANSI_COLOR_DARK_WHITE,                                            \
+             msg,                                                              \
+             ANSI_COLOR_RESET);                                                \
       return false;                                                            \
     }                                                                          \
   } while (0)
@@ -46,11 +50,12 @@ static struct
 #define assert_str_eq(a, b, msg)                                               \
   do {                                                                         \
     if (strcmp((a), (b)) != 0) {                                               \
-      printf(                                                                  \
-        "  %sASSERT FAILED%s: %s\n", TEST_COLOR_RED, TEST_COLOR_RESET, msg);   \
-      printf("    gxpected: \"%s\"\n", (b));                                   \
-      printf("    got: \"%s\"\n", (a));                                        \
-      printf("    gile: %s, Line: %d\n", __FILE__, __LINE__);                  \
+      printf("[%sASSERT FAILED%s: %s%s%s] ",                                   \
+             ANSI_COLOR_RED,                                                   \
+             ANSI_COLOR_RESET,                                                 \
+             ANSI_COLOR_DARK_WHITE,                                            \
+             msg,                                                              \
+             ANSI_COLOR_RESET);                                                \
       return false;                                                            \
     }                                                                          \
   } while (0)
