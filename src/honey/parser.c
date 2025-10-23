@@ -694,7 +694,8 @@ parse_declaration(struct honey_parser* p)
 
     // peek for func keyword
     struct honey_token* after_colon = peek_token(p, 2);
-    if (after_colon && after_colon->kind == HONEY_TOKEN_FUNC) {
+    if (after_colon && (after_colon->kind == HONEY_TOKEN_FUNC ||
+                        after_colon->kind == HONEY_TOKEN_COMPTIME)) {
       return parse_func_decl(p);
     }
     // peek for test keyword
