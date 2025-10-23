@@ -97,8 +97,8 @@ comptime_value_fits_type(struct honey_comptime_value value,
 }
 
 static bool
-analyze_comptime_decl(struct honey_ast_node* node,
-                      struct honey_symbol_table* symtab)
+register_comptime_decl(struct honey_ast_node* node,
+                       struct honey_symbol_table* symtab)
 {
   if (symtab->count >= HONEY_MAX_SYMBOLS) {
     honey_error("too many symbols");
@@ -121,26 +121,9 @@ analyze_comptime_decl(struct honey_ast_node* node,
   sym->name = strdup(node->data.comptime_decl.name);
   sym->kind = HONEY_SYMBOL_COMPTIME;
 
-  // try to evaluate comptime expression
-  struct honey_comptime_value result =
-    honey_comptime_eval(node->data.comptime_decl.value, symtab);
-
-  if (result.kind == HONEY_COMPTIME_INVALID) {
-    honey_error(
-      "comptime declaration \"%s%s%s\" contains non-comptime expression",
-      ANSI_COLOR_RED,
-      node->data.comptime_decl.name,
-      ANSI_COLOR_RESET);
-    symtab->count -= 1;
-    free(sym->name);
-    return false;
-  }
-
-  // determine the type
-  enum honey_type_kind resolved_type;
-
+  // validate explicit type if provided
   if (node->data.comptime_decl.explicit_type) {
-    resolved_type =
+    enum honey_type_kind resolved_type =
       honey_resolve_type_name(node->data.comptime_decl.explicit_type);
 
     if (resolved_type == HONEY_TYPE_UNKNOWN) {
@@ -153,6 +136,55 @@ analyze_comptime_decl(struct honey_ast_node* node,
       return false;
     }
 
+    sym->type.kind = resolved_type;
+  } else {
+    // type will be inferred during evaluation pass
+    sym->type.kind = HONEY_TYPE_UNKNOWN;
+  }
+
+  return true;
+}
+
+static bool
+evaluate_comptime_decl(struct honey_ast_node* node,
+                       struct honey_symbol_table* symtab)
+{
+  // find the symbol
+  struct honey_symbol* sym = NULL;
+  for (int i = 0; i < symtab->count; i += 1) {
+    if (strcmp(symtab->symbols[i].name, node->data.comptime_decl.name) == 0) {
+      sym = &symtab->symbols[i];
+      break;
+    }
+  }
+
+  if (!sym) {
+    honey_error("internal error: symbol \"%s\" not found",
+                ANSI_COLOR_RED,
+                node->data.comptime_decl.name,
+                ANSI_COLOR_RESET);
+    return false;
+  }
+
+  struct honey_comptime_value result =
+    honey_comptime_eval(node->data.comptime_decl.value, symtab);
+
+  if (result.kind == HONEY_COMPTIME_INVALID) {
+    honey_error(
+      "comptime declaration \"%s%s%s\" contains non-comptime expression",
+      ANSI_COLOR_RED,
+      node->data.comptime_decl.name,
+      ANSI_COLOR_RESET);
+    return false;
+  }
+
+  // determine the type
+  enum honey_type_kind resolved_type;
+
+  if (sym->type.kind != HONEY_TYPE_UNKNOWN) {
+    // explicit type was provided
+    resolved_type = sym->type.kind;
+
     // type validation check
     if (!comptime_value_fits_type(result, resolved_type)) {
       if (result.kind == HONEY_COMPTIME_INT) {
@@ -162,9 +194,6 @@ analyze_comptime_decl(struct honey_ast_node* node,
         honey_error("cannot assign floating point value to type \"%s\"",
                     honey_type_kind_to_text(resolved_type));
       }
-
-      symtab->count -= 1;
-      free(sym->name);
       return false;
     }
   } else {
@@ -176,8 +205,6 @@ analyze_comptime_decl(struct honey_ast_node* node,
     } else {
       // this shouldn't happen if honey_eval_comptime works correctly
       honey_error("internal error: couldn't infer type for comptime constant");
-      symtab->count -= 1;
-      free(sym->name);
       return false;
     }
   }
@@ -297,14 +324,14 @@ honey_analyze(struct honey_ast_node** declarations,
     return false;
   }
 
-  // process all declarations
+  // first pass: register all symbols (names and types only, no evaluation)
   for (int i = 0; i < count; i += 1) {
     struct honey_ast_node* ast = declarations[i];
     bool success = false;
 
     switch (ast->kind) {
       case HONEY_AST_COMPTIME_DECL:
-        success = analyze_comptime_decl(ast, symtab);
+        success = register_comptime_decl(ast, symtab);
         break;
 
       case HONEY_AST_FUNC_DECL:
@@ -323,6 +350,17 @@ honey_analyze(struct honey_ast_node** declarations,
     // only return on error
     if (!success) {
       return false;
+    }
+  }
+
+  // second pass: evaluate comptime expressions
+  for (int i = 0; i < count; i += 1) {
+    struct honey_ast_node* ast = declarations[i];
+
+    if (ast->kind == HONEY_AST_COMPTIME_DECL) {
+      if (!evaluate_comptime_decl(ast, symtab)) {
+        return false;
+      }
     }
   }
 
