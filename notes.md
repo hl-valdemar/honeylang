@@ -9,7 +9,9 @@
 - [x] Local variables (requires stack frames)
 - [x] Setup a proper test framework
 - [x] Implement fuzz testing
-- [ ] Comptime evaluation (start with simple comptime computable expressions; add comptime function calls later)
+- [x] Comptime evaluation of simple expressions
+- [ ] Multiple passes in comptime evaluation (first pass collects symbols, second pass evaluates comptime expressions)
+- [ ] Comptime evaluation of comptime compatible function calls
 - [ ] Check all tests to make sure they actually test properly!
 - [ ] Type inference on variable declaration (optional type declaration, allows for the `a := 10` syntax as opposed to `a: i32 = 10`)
         - probably requires a peer resolution system to avoid unnecessary manual type casting (i.e., what context is the variable used in?)
