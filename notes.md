@@ -38,6 +38,7 @@
       ```
 - [ ] Add a flag for toggling code emission with documentation in the form of comments (allows for smaller binaries when toggled off, as well as more informative code when toggled on)
 - [ ] Support namespace inference, e.g. `some_value == .first_item` instead of `some_value == SomeEnum.first_item`
+- [ ] Support functions using external calling conventions: `f :: extern.c func() void { }`
 
 ## Things I like in Programming
 

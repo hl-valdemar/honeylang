@@ -13,9 +13,12 @@ function_wo_params :: func() return_type { }
 # declaring comptime-capable functions (must be evaluable at compile time)
 some_comptime_func :: comptime func() void { }
 
-# declaring a function following c call conventions
+# declaring a function following c calling conventions
 some_c_func :: extern.c func() void { }
 some_comptime_c_func :: extern.c comptime func() void { }
+
+# declaring a function following fortran calling conventions
+some_fortran_func :: extern.fortran func() void { }
 
 # error types (enum-like - zig inspired)
 SomeError :: error{
@@ -208,7 +211,7 @@ some_closure :: closure(param: some_type) return_type {
 }
 
 # runtime closures
-some_closure : closure(param: some_type): return_type = { 
+some_closure: closure(param: some_type) return_type = { 
   # ...
 }
 
@@ -222,8 +225,19 @@ some_tuple: {i32, []const u8} = { 0, "hello?" } # (runtime local)
 first: i32, second: []const u8 = some_tuple
 first: i32, second: []const u8 = { 43, "hello" }
 
-# IMPORTING FILES (aliasing scopes) (comptime) (like zig)
-# undecided, TODO
+# importing files (aliasing scopes) (comptime operation)
+# standard import
+import "std/mem"
+
+# aliased import
+m :: import "std/mem"
+
+main :: func() void {
+  # now use either:
+  mem.heap.alloc(Entity, 1)
+  # or:
+  m.heap.alloc(Entity, 1)
+}
 
 # declaring numbers
 1000000 = 1_000_000 # use underscores to break up numbers for easier visual parsing
