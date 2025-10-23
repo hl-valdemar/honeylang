@@ -252,7 +252,7 @@ fuzz_parser_handles_invalid_syntax(void)
 static bool
 fuzz_parser_accepts_valid_declarations(void)
 {
-  for (int i = 0; i < FUZZ_ITERATIONS / 4; i++) {
+  for (int i = 0; i < FUZZ_ITERATIONS; i++) {
     char* name = rand_identifier(20);
     int value = rand_int();
     char input[256] = { 0 };
@@ -294,17 +294,34 @@ fuzz_parser_accepts_valid_declarations(void)
 static bool
 fuzz_parser_function_declarations(void)
 {
-  for (int i = 0; i < FUZZ_ITERATIONS / 4; i++) {
+  for (int i = 0; i < FUZZ_ITERATIONS; i++) {
     char* name = rand_identifier(20);
+    bool is_comptime = (rand_range(0, 1) == 1);
+    int num_params = rand_range(0, 15);
     const char* ret_type = rand_type();
     int ret_val = rand_int();
-    char input[512];
+    char input[1024];
 
-    // generate function: name :: func() type { return value }
+    char* params = malloc(512);
+    char* original = params;
+    for (int i = 0; i < num_params; i += 1) {
+      char* param = rand_identifier(20);
+      const char* param_type = rand_type();
+      int param_len = strlen(param);
+      int type_len = strlen(param_type);
+      sprintf(params, "%s: %s", param, param_type);
+      params += param_len + type_len + 2;
+      free(param);
+    }
+
+    // generate function: name :: func() type { return value },
+    //   or: name :: comptime func() type { return value }
     snprintf(input,
              sizeof(input),
-             "%s :: func() %s { return %d }",
+             "%s :: %s func(%s) %s { return %d }",
              name,
+             is_comptime ? "comptime" : "",
+             params,
              ret_type,
              ret_val);
 
@@ -321,6 +338,7 @@ fuzz_parser_function_declarations(void)
     }
 
     free(name);
+    free(original);
   }
 
   return true;
@@ -333,7 +351,7 @@ fuzz_parser_function_declarations(void)
 static bool
 fuzz_parser_binary_operations(void)
 {
-  for (int i = 0; i < FUZZ_ITERATIONS / 4; i++) {
+  for (int i = 0; i < FUZZ_ITERATIONS; i++) {
     int a = rand_int();
     int b = rand_int();
     const char* op = rand_operator();
@@ -378,7 +396,7 @@ fuzz_semantic_type_resolution(void)
                               "u16",  "u32", "u64", "f32", "f64" };
   int type_count = sizeof(all_types) / sizeof(all_types[0]);
 
-  for (int i = 0; i < FUZZ_ITERATIONS / 4; i++) {
+  for (int i = 0; i < FUZZ_ITERATIONS; i++) {
     const char* type_name = all_types[rand() % type_count];
 
     // property: all valid type names should resolve consistently
@@ -401,7 +419,7 @@ fuzz_semantic_type_resolution(void)
 static bool
 fuzz_semantic_undefined_symbols(void)
 {
-  for (int i = 0; i < FUZZ_ITERATIONS / 4; i++) {
+  for (int i = 0; i < FUZZ_ITERATIONS; i++) {
     char* undefined_name = rand_identifier(20);
     char input[256];
     snprintf(
@@ -438,7 +456,7 @@ fuzz_semantic_undefined_symbols(void)
 static bool
 fuzz_codegen_basic_structure(void)
 {
-  for (int i = 0; i < FUZZ_ITERATIONS / 10; i++) {
+  for (int i = 0; i < FUZZ_ITERATIONS; i++) {
     char* func_name = rand_identifier(20);
     int ret_value = rand_range(0, 255); // keep values reasonable
     char input[256];
@@ -521,9 +539,28 @@ fuzz_extreme_integer_values(void)
     assert_not_null(nodes, msg);
 
     if (nodes != NULL && count > 0) {
-      snprintf(msg, sizeof(msg), "should be integer literal: %s", input);
-      assert_eq(
-        nodes[0]->data.comptime_decl.value->kind, HONEY_AST_LITERAL_INT, msg);
+      struct honey_ast_node* value_expr = nodes[0]->data.comptime_decl.value;
+
+      // Negative values parse as UNARY_OP with NEG, positive as LITERAL_INT
+      if (extreme_values[i] < 0) {
+        snprintf(msg,
+                 sizeof(msg),
+                 "negative value should parse as unary op: %s",
+                 input);
+        assert_eq(value_expr->kind, HONEY_AST_UNARY_OP, msg);
+        assert_eq(value_expr->data.unary_op.op,
+                  HONEY_UNARY_OP_NEG,
+                  "should be negation");
+        assert_eq(value_expr->data.unary_op.operand->kind,
+                  HONEY_AST_LITERAL_INT,
+                  "operand should be literal");
+      } else {
+        snprintf(msg,
+                 sizeof(msg),
+                 "non-negative value should parse as integer literal: %s",
+                 input);
+        assert_eq(value_expr->kind, HONEY_AST_LITERAL_INT, msg);
+      }
 
       cleanup_ast(nodes, count);
     }
@@ -614,7 +651,7 @@ fuzz_identifier_length_boundaries(void)
 static bool
 fuzz_parser_test_declarations(void)
 {
-  for (int i = 0; i < FUZZ_ITERATIONS / 4; i++) {
+  for (int i = 0; i < FUZZ_ITERATIONS; i++) {
     char* test_name = rand_identifier(20);
     int value = rand_int();
     char input[256];

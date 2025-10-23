@@ -86,18 +86,18 @@ static inline void
 print_test_summary(void)
 {
   printf("\ntest summary:\n");
-  printf("∟ total:  %d\n", test_stats.total);
-  printf("∟ %spassed: %d%s\n",
+  printf("├── total:  %d\n", test_stats.total);
+  printf("├── %spassed: %d%s\n",
          TEST_COLOR_GREEN,
          test_stats.passed,
          TEST_COLOR_RESET);
   if (test_stats.failed > 0) {
-    printf("∟ %sfailed: %d%s\n",
+    printf("└── %sfailed: %d%s\n",
            TEST_COLOR_RED,
            test_stats.failed,
            TEST_COLOR_RESET);
   } else {
-    printf("∟ failed: %d\n", test_stats.failed);
+    printf("└── failed: %d\n", test_stats.failed);
   }
 }
 
