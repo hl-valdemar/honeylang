@@ -11,13 +11,31 @@
 - [x] Implement fuzz testing
 - [x] Comptime evaluation of simple expressions
 - [x] Comptime execution context with dependency tracking (allows for comptime function calls)
+- [ ] Figure out how imports should work
+        - more like zig (verbose), rust (less verbose), or odin (minimally verbose, but also a bit opaque)?
 - [ ] Check all tests to make sure they actually test properly!
 - [ ] Type inference on variable declaration (optional type declaration, allows for the `a := 10` syntax as opposed to `a: i32 = 10`)
         - probably requires a peer resolution system to avoid unnecessary manual type casting (i.e., what context is the variable used in?)
 - [ ] Actually enforce typing! (semantic analysis)
-- [ ] Figure out how imports should work
-        - more like zig (verbose), rust (less verbose), or odin (minimally verbose, but also a bit opaque)?
-- [ ] Conditional control flow (e.g. if statements)
+- [ ] Control flow mechanisms (e.g. if statements, etc)
+- [ ] Allow for floating point values to be defined simply as `10` instead of `10.0`
+- [ ] Proper register allocation for smarter operations (e.g., less work -> faster computation)
+- [ ] Support arbitrary number of tokens, symbols, etc in a honey program (just requires manual resizing of arrays - heap allocation)
+- [ ] Improve handling of diagnostics - something like this, maybe:
+      ```c
+      struct honey_diagnostic {
+          enum { HONEY_ERROR, HONEY_WARNING } level;
+          char* message;
+          int line, column;
+      };
+
+      struct honey_diagnostic_list {
+          struct honey_diagnostic* items;
+          int count;
+      };
+
+      // pass around, accumulate errors, display all at once
+      ```
 
 ## Things I like in Programming
 

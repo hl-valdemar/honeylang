@@ -12,6 +12,48 @@
 #include <time.h>
 
 // ============================================================================
+// helper functions
+// ============================================================================
+
+static struct honey_ast_node**
+parse_source(const char* source, int* out_count)
+{
+  struct honey_context* ctx = honey_context_create();
+  honey_scan(ctx, source);
+  struct honey_ast_node** nodes = honey_parse(ctx, out_count);
+  honey_context_destroy(ctx);
+  return nodes;
+}
+
+static void
+cleanup_ast(struct honey_ast_node** nodes, int count)
+{
+  for (int i = 0; i < count; i++) {
+    honey_ast_destroy(nodes[i]);
+  }
+  free(nodes);
+}
+
+static void
+cleanup_symbol_table(struct honey_symbol_table* symtab)
+{
+  for (int i = 0; i < symtab->count; i++) {
+    struct honey_symbol* sym = &symtab->symbols[i];
+    free(sym->name);
+
+    if (sym->type.kind == HONEY_TYPE_FUNCTION) {
+      free(sym->type.func.return_type);
+      if (sym->type.func.param_types) {
+        for (int j = 0; j < sym->type.func.param_count; j++) {
+          free(sym->type.func.param_types[j]);
+        }
+        free(sym->type.func.param_types);
+      }
+    }
+  }
+}
+
+// ============================================================================
 // fuzz testing configuration
 // ============================================================================
 
@@ -106,51 +148,6 @@ rand_whitespace(void)
   }
   ws[spaces] = '\0';
   return ws;
-}
-
-// ============================================================================
-// helper functions
-// ============================================================================
-
-static struct honey_ast_node**
-parse_source(const char* source, int* out_count)
-{
-  struct honey_context* ctx = honey_context_create();
-  honey_scan(ctx, source);
-  struct honey_ast_node** nodes = honey_parse(ctx, out_count);
-  honey_context_destroy(ctx);
-  return nodes;
-}
-
-static void
-cleanup_ast(struct honey_ast_node** nodes, int count)
-{
-  if (!nodes)
-    return;
-  for (int i = 0; i < count; i++) {
-    if (nodes[i])
-      honey_ast_destroy(nodes[i]);
-  }
-  free(nodes);
-}
-
-static void
-cleanup_symbol_table(struct honey_symbol_table* symtab)
-{
-  for (int i = 0; i < symtab->count; i++) {
-    struct honey_symbol* sym = &symtab->symbols[i];
-    free(sym->name);
-
-    if (sym->type.kind == HONEY_TYPE_FUNCTION) {
-      free(sym->type.func.return_type);
-      if (sym->type.func.param_types) {
-        for (int j = 0; j < sym->type.func.param_count; j++) {
-          free(sym->type.func.param_types[j]);
-        }
-        free(sym->type.func.param_types);
-      }
-    }
-  }
 }
 
 // ============================================================================
