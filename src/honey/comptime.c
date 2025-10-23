@@ -137,7 +137,7 @@ honey_comptime_eval(struct honey_ast_node* expr,
     case HONEY_AST_NAME: {
       // look up name in symbol table
       if (!symtab) {
-        make_invalid();
+        return make_invalid();
       }
 
       for (int i = 0; i < symtab->count; i += 1) {
@@ -147,10 +147,10 @@ honey_comptime_eval(struct honey_ast_node* expr,
           if (symtab->symbols[i].kind == HONEY_SYMBOL_COMPTIME) {
             if (symtab->symbols[i].type.kind >= HONEY_TYPE_I8 &&
                 symtab->symbols[i].type.kind <= HONEY_TYPE_U64) {
-              make_int(symtab->symbols[i].comptime_value.int_value);
+              return make_int(symtab->symbols[i].comptime_value.int_value);
             } else if (symtab->symbols[i].type.kind >= HONEY_TYPE_F32 &&
                        symtab->symbols[i].type.kind <= HONEY_TYPE_F64) {
-              make_float(symtab->symbols[i].comptime_value.float_value);
+              return make_float(symtab->symbols[i].comptime_value.float_value);
             }
           }
           // runtime dependent functions and variables can't be used in comptime

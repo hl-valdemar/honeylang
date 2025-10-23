@@ -1,6 +1,7 @@
-SOME_VALUE :: 42.0
-PI :: 3.14 + SOME_VALUE
+PI :: 3.14
+SOME_VALUE :: 42
+COMPTIME_EXPR :: SOME_VALUE + 23
 
 main :: func() void {
-  return SOME_VALUE
+  return COMPTIME_EXPR
 }
