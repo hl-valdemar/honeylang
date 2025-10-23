@@ -45,7 +45,7 @@ union(enum) {
   error: some_error,
 };
 # making it generic
-error_union :: func(comptime v: type, comptime e: type) type {
+error_union :: comptime func(v: type, e: type) type {
   return union(enum){
     value: v,
     error: e,
@@ -276,6 +276,40 @@ do_something :: func() void {
   } # x and y are dropped here
 
   # continue doing something else
+}
+
+# traits (type constraints)
+Fly :: trait {
+  grow_wings :: func() void;
+  flap_wings :: func() void;
+  tuck_wings :: func() void;
+}
+
+# here, flyer is an instance of something that implements the Fly trait
+fly_somewhere :: func(flyer: {Fly}, dir: Direction) void { }
+
+# comptime generics via functions (zig style)
+TypeStorage :: comptime func(T: type) type {
+  match T {
+    i32: print("storage contains items of i32!"),
+    f64: print("storage contains items of f64!"),
+    else: print("storage contains something else..."),
+  }
+
+  return struct {
+    storage: [sizeof(u8)]T,
+    count: u8,
+  }
+}
+
+# combining functional generics and traits, we could get something like this
+# here, F is a type constrained by the Fly trait (i.e., not an instance of any type, note the `type` before the `{Fly}`)
+# in other words, F must be a type that implements the Fly trait
+FlyerStorage :: func(F: type{Fly}, dir: Direction) void {
+  return struct {
+    storage: [sizeof(u8)]F,
+    count: u8,
+  }
 }
 
 ######################
