@@ -10,8 +10,7 @@
 - [x] Setup a proper test framework
 - [x] Implement fuzz testing
 - [x] Comptime evaluation of simple expressions
-- [ ] Multiple passes in comptime evaluation (first pass collects symbols, second pass evaluates comptime expressions)
-- [ ] Comptime evaluation of comptime compatible function calls
+- [x] Comptime execution context with dependency tracking (allows for comptime function calls)
 - [ ] Check all tests to make sure they actually test properly!
 - [ ] Type inference on variable declaration (optional type declaration, allows for the `a := 10` syntax as opposed to `a: i32 = 10`)
         - probably requires a peer resolution system to avoid unnecessary manual type casting (i.e., what context is the variable used in?)

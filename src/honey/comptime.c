@@ -169,7 +169,7 @@ honey_comptime_eval(struct honey_ast_node* expr,
     }
 
     case HONEY_AST_CALL_EXPR: {
-      // Look up the function
+      // look up the function
       struct honey_symbol* func_sym = NULL;
       for (int i = 0; i < symtab->count; i++) {
         if (strcmp(symtab->symbols[i].name,
@@ -180,19 +180,19 @@ honey_comptime_eval(struct honey_ast_node* expr,
       }
 
       if (!func_sym || func_sym->kind != HONEY_SYMBOL_FUNCTION) {
-        honey_error("undefined function '%s'",
+        honey_error("undefined function \"%s\"",
                     expr->data.call_expr.function_name);
         return make_invalid();
       }
 
-      // Check if function is comptime
+      // check if function is comptime
       if (!func_sym->func.is_comptime) {
-        honey_error("cannot call non-comptime function '%s' at compile time",
+        honey_error("cannot call non-comptime function \"%s\" at compile time",
                     func_sym->name);
         return make_invalid();
       }
 
-      // Evaluate all arguments
+      // evaluate all arguments
       int arg_count = expr->data.call_expr.argument_count;
       struct honey_comptime_value* arg_values =
         malloc(sizeof(struct honey_comptime_value) * arg_count);
@@ -207,7 +207,7 @@ honey_comptime_eval(struct honey_ast_node* expr,
         }
       }
 
-      // Call the function at comptime
+      // call the function at comptime
       struct honey_comptime_value result = evaluate_comptime_function_call(
         func_sym, arg_values, arg_count, symtab, 0);
 
@@ -230,10 +230,6 @@ honey_is_comptime_evaluable(struct honey_ast_node* expr,
   struct honey_comptime_value result = honey_comptime_eval(expr, symtab);
   return result.kind != HONEY_COMPTIME_INVALID;
 }
-
-// ============================================================================
-// Comptime execution context management
-// ============================================================================
 
 static struct honey_comptime_execution_context*
 create_comptime_context(struct honey_symbol_table* symtab)
@@ -261,13 +257,13 @@ destroy_comptime_context(struct honey_comptime_execution_context* ctx)
   if (!ctx)
     return;
 
-  // Free local variable names
+  // free local variable names
   for (int i = 0; i < ctx->locals_count; i++) {
     free(ctx->locals[i].name);
   }
   free(ctx->locals);
 
-  // Free parameter names
+  // free parameter names
   for (int i = 0; i < ctx->params_count; i++) {
     free(ctx->params[i].name);
   }
@@ -279,14 +275,14 @@ destroy_comptime_context(struct honey_comptime_execution_context* ctx)
 static struct honey_comptime_value*
 lookup_local(struct honey_comptime_execution_context* ctx, const char* name)
 {
-  // Check parameters first
+  // check parameters first
   for (int i = 0; i < ctx->params_count; i++) {
     if (strcmp(ctx->params[i].name, name) == 0) {
       return &ctx->params[i].value;
     }
   }
 
-  // Then check locals
+  // then check locals
   for (int i = 0; i < ctx->locals_count; i++) {
     if (strcmp(ctx->locals[i].name, name) == 0) {
       return &ctx->locals[i].value;
@@ -313,10 +309,6 @@ add_local(struct honey_comptime_execution_context* ctx,
   return true;
 }
 
-// ============================================================================
-// Comptime statement evaluation
-// ============================================================================
-
 static bool
 evaluate_statement_at_comptime(struct honey_ast_node* stmt,
                                struct honey_comptime_execution_context* ctx);
@@ -334,7 +326,7 @@ evaluate_block_at_comptime(struct honey_ast_node* block,
       return false;
     }
 
-    // If we hit a return, stop executing
+    // if we hit a return, stop executing
     if (ctx->has_returned) {
       return true;
     }
@@ -351,23 +343,166 @@ evaluate_expr_in_context(struct honey_ast_node* expr,
     return make_invalid();
   }
 
-  // Handle NAME nodes - check local context first
-  if (expr->kind == HONEY_AST_NAME) {
-    // First check if it's a local/parameter
-    struct honey_comptime_value* local =
-      lookup_local(ctx, expr->data.name.identifier);
+  switch (expr->kind) {
+    case HONEY_AST_LITERAL_INT:
+      return make_int(expr->data.int_literal);
 
-    if (local) {
-      return *local;
+    case HONEY_AST_LITERAL_FLOAT:
+      return make_float(expr->data.float_literal);
+
+    case HONEY_AST_NAME: {
+      // first check if it's a local/parameter
+      struct honey_comptime_value* local =
+        lookup_local(ctx, expr->data.name.identifier);
+
+      if (local) {
+        return *local;
+      }
+
+      // fall back to checking global symbol table
+      for (int i = 0; i < ctx->global_symtab->count; i++) {
+        if (strcmp(ctx->global_symtab->symbols[i].name,
+                   expr->data.name.identifier) == 0) {
+          if (ctx->global_symtab->symbols[i].kind == HONEY_SYMBOL_COMPTIME) {
+            if (ctx->global_symtab->symbols[i].type.kind >= HONEY_TYPE_I8 &&
+                ctx->global_symtab->symbols[i].type.kind <= HONEY_TYPE_U64) {
+              return make_int(
+                ctx->global_symtab->symbols[i].comptime_value.int_value);
+            } else if (ctx->global_symtab->symbols[i].type.kind >=
+                         HONEY_TYPE_F32 &&
+                       ctx->global_symtab->symbols[i].type.kind <=
+                         HONEY_TYPE_F64) {
+              return make_float(
+                ctx->global_symtab->symbols[i].comptime_value.float_value);
+            }
+          }
+          return make_invalid();
+        }
+      }
+      return make_invalid();
     }
 
-    // Fall through to global evaluation
-  }
+    case HONEY_AST_BINARY_OP: {
+      // recursively evaluate both operands in context
+      struct honey_comptime_value left =
+        evaluate_expr_in_context(expr->data.binary_op.left, ctx);
+      struct honey_comptime_value right =
+        evaluate_expr_in_context(expr->data.binary_op.right, ctx);
 
-  // For everything else, use the regular evaluator
-  // But we need to temporarily merge our context into it somehow
-  // For now, just use the global symbol table
-  return honey_comptime_eval(expr, ctx->global_symtab);
+      if (left.kind == HONEY_COMPTIME_INVALID ||
+          right.kind == HONEY_COMPTIME_INVALID) {
+        return make_invalid();
+      }
+
+      // handle integer operations
+      if (left.kind == HONEY_COMPTIME_INT && right.kind == HONEY_COMPTIME_INT) {
+        int64_t result;
+        switch (expr->data.binary_op.op) {
+          case HONEY_BINARY_OP_ADD:
+            result = left.int_value + right.int_value;
+            break;
+          case HONEY_BINARY_OP_SUB:
+            result = left.int_value - right.int_value;
+            break;
+          case HONEY_BINARY_OP_MUL:
+            result = left.int_value * right.int_value;
+            break;
+          case HONEY_BINARY_OP_DIV:
+            if (right.int_value == 0) {
+              honey_error("division by zero in comptime expression");
+              return make_invalid();
+            }
+            result = left.int_value / right.int_value;
+            break;
+          default:
+            return make_invalid();
+        }
+        return make_int(result);
+      }
+
+      // handle float operations
+      if (left.kind == HONEY_COMPTIME_FLOAT &&
+          right.kind == HONEY_COMPTIME_FLOAT) {
+        double result;
+        switch (expr->data.binary_op.op) {
+          case HONEY_BINARY_OP_ADD:
+            result = left.float_value + right.float_value;
+            break;
+          case HONEY_BINARY_OP_SUB:
+            result = left.float_value - right.float_value;
+            break;
+          case HONEY_BINARY_OP_MUL:
+            result = left.float_value * right.float_value;
+            break;
+          case HONEY_BINARY_OP_DIV:
+            if (right.float_value == 0.0) {
+              honey_error("division by zero in comptime expression");
+              return make_invalid();
+            }
+            result = left.float_value / right.float_value;
+            break;
+          default:
+            return make_invalid();
+        }
+        return make_float(result);
+      }
+
+      return make_invalid();
+    }
+
+    case HONEY_AST_CALL_EXPR: {
+      // look up the function in global symbol table
+      struct honey_symbol* func_sym = NULL;
+      for (int i = 0; i < ctx->global_symtab->count; i++) {
+        if (strcmp(ctx->global_symtab->symbols[i].name,
+                   expr->data.call_expr.function_name) == 0) {
+          func_sym = &ctx->global_symtab->symbols[i];
+          break;
+        }
+      }
+
+      if (!func_sym || func_sym->kind != HONEY_SYMBOL_FUNCTION) {
+        honey_error("undefined function '%s'",
+                    expr->data.call_expr.function_name);
+        return make_invalid();
+      }
+
+      if (!func_sym->func.is_comptime) {
+        honey_error("cannot call non-comptime function '%s' at compile time",
+                    func_sym->name);
+        return make_invalid();
+      }
+
+      // evaluate all arguments in context
+      int arg_count = expr->data.call_expr.argument_count;
+      struct honey_comptime_value* arg_values =
+        malloc(sizeof(struct honey_comptime_value) * arg_count);
+
+      for (int i = 0; i < arg_count; i++) {
+        arg_values[i] =
+          evaluate_expr_in_context(expr->data.call_expr.arguments[i], ctx);
+
+        if (arg_values[i].kind == HONEY_COMPTIME_INVALID) {
+          free(arg_values);
+          return make_invalid();
+        }
+      }
+
+      // call the function at comptime
+      struct honey_comptime_value result =
+        evaluate_comptime_function_call(func_sym,
+                                        arg_values,
+                                        arg_count,
+                                        ctx->global_symtab,
+                                        ctx->recursion_depth);
+
+      free(arg_values);
+      return result;
+    }
+
+    default:
+      return make_invalid();
+  }
 }
 
 static bool
@@ -394,7 +529,7 @@ evaluate_statement_at_comptime(struct honey_ast_node* stmt,
     }
 
     case HONEY_AST_VAR_DECL: {
-      // Evaluate initializer
+      // evaluate initializer
       struct honey_comptime_value init_val = make_invalid();
 
       if (stmt->data.var_decl.value) {
@@ -406,12 +541,12 @@ evaluate_statement_at_comptime(struct honey_ast_node* stmt,
         }
       }
 
-      // Add to locals
+      // add to locals
       return add_local(ctx, stmt->data.var_decl.name, init_val);
     }
 
     case HONEY_AST_ASSIGNMENT: {
-      // Evaluate new value
+      // evaluate new value
       struct honey_comptime_value new_val =
         evaluate_expr_in_context(stmt->data.assignment.value, ctx);
 
@@ -420,7 +555,7 @@ evaluate_statement_at_comptime(struct honey_ast_node* stmt,
         return false;
       }
 
-      // Find and update the variable
+      // find and update the variable
       struct honey_comptime_value* var =
         lookup_local(ctx, stmt->data.assignment.name);
 
@@ -440,10 +575,6 @@ evaluate_statement_at_comptime(struct honey_ast_node* stmt,
   }
 }
 
-// ============================================================================
-// Comptime function call evaluation
-// ============================================================================
-
 static struct honey_comptime_value
 evaluate_comptime_function_call(struct honey_symbol* func_sym,
                                 struct honey_comptime_value* arg_values,
@@ -451,7 +582,7 @@ evaluate_comptime_function_call(struct honey_symbol* func_sym,
                                 struct honey_symbol_table* symtab,
                                 int recursion_depth)
 {
-  // Check recursion depth
+  // check recursion depth
   if (recursion_depth > MAX_COMPTIME_RECURSION) {
     honey_error("comptime recursion depth exceeded (max: %d)",
                 MAX_COMPTIME_RECURSION);
@@ -460,19 +591,19 @@ evaluate_comptime_function_call(struct honey_symbol* func_sym,
 
   struct honey_ast_node* func_node = func_sym->func.func_node;
 
-  // Verify argument count
+  // verify argument count
   if (arg_count != func_node->data.func_decl.param_count) {
     honey_error("wrong number of arguments to comptime function '%s'",
                 func_sym->name);
     return make_invalid();
   }
 
-  // Create execution context
+  // create execution context
   struct honey_comptime_execution_context* ctx =
     create_comptime_context(symtab);
   ctx->recursion_depth = recursion_depth + 1;
 
-  // Bind parameters
+  // bind parameters
   ctx->params_count = arg_count;
   if (arg_count > 0) {
     ctx->params = malloc(sizeof(struct honey_comptime_local_var) * arg_count);
@@ -484,7 +615,7 @@ evaluate_comptime_function_call(struct honey_symbol* func_sym,
     }
   }
 
-  // Execute function body
+  // execute function body
   bool success =
     evaluate_block_at_comptime(func_node->data.func_decl.body, ctx);
 

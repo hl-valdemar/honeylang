@@ -196,11 +196,12 @@ some_closure : closure(param: some_type): return_type = {
 # TUPLES
 
 # declarations
-some_tuple: {i32, []const u8} :: { 0, "hello?" } # (comptime)
-some_tuple: {i32, []const u8} = { 0, "hello?" } # (runtime)
+some_tuple: {i32, []const u8} :: { 0, "hello?" } # (comptime constant)
+some_tuple: {i32, []const u8} = { 0, "hello?" } # (runtime local)
 
 # destructuring
-{ first: i32, second: []const u8 } = some_tuple
+first: i32, second: []const u8 = some_tuple
+first: i32, second: []const u8 = { 43, "hello" }
 
 # IMPORTING FILES (aliasing scopes) (comptime) (like zig)
 # undecided, TODO
@@ -216,6 +217,9 @@ pub some_func :: func() void {
 some_func :: func() void {
   # private by default
 }
+
+# declaring comptime-capable functions (must be evaluable at compile time)
+some_comptime_func :: comptime func() void { }
 
 # test scopes for unit tests (like zig)
 some_test :: test {
