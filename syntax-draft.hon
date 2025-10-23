@@ -10,6 +10,13 @@ SOME_NAME :: some_value # automatic type resolution
 some_function :: func(param_1: some_type, parem_2: some_type) return_type { }
 function_wo_params :: func() return_type { }
 
+# declaring comptime-capable functions (must be evaluable at compile time)
+some_comptime_func :: comptime func() void { }
+
+# declaring a function following c call conventions
+some_c_func :: extern.c func() void { }
+some_comptime_c_func :: extern.c comptime func() void { }
+
 # error types (enum-like - zig inspired)
 SomeError :: error{
   something_happened,
@@ -141,6 +148,18 @@ structs: SomeStruct :: struct {
 }
 type: any other type (e.g. u16) (by name, not value)
 
+# accessing enum values
+SomeEnum :: enum {
+  first_category,
+  second_category,
+  third_category,
+}
+some_value := SomeEnum.first_category
+# or with namespace inference:
+some_value: SomeEnum = .second_category
+# conditionals
+if some_value == .third_category { }
+
 # CONTROL FLOW
 
 # if statements
@@ -217,9 +236,6 @@ pub some_func :: func() void {
 some_func :: func() void {
   # private by default
 }
-
-# declaring comptime-capable functions (must be evaluable at compile time)
-some_comptime_func :: comptime func() void { }
 
 # test scopes for unit tests (like zig)
 some_test :: test {
@@ -304,7 +320,7 @@ main :: func() void {
     hat := crows.hats[idx]
 
     # unwrap multiple optionals (maybe with support for boolean operations on the unwrapped values)
-    if (name? and hat?) |n, h : n == "Huginn" and h.brand == "Gucchi"| {
+    if (name? and hat?) |n, h : n == "Huginn" and h.brand == .gucchi| {
       print("{s}'s got that drip\n", {n})
     }
   }

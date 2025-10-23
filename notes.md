@@ -20,7 +20,7 @@
 - [ ] Control flow mechanisms (e.g. if statements, etc)
 - [ ] Allow for floating point values to be defined simply as `10` instead of `10.0`
 - [ ] Proper register allocation for smarter operations (e.g., less work -> faster computation)
-- [ ] Support arbitrary number of tokens, symbols, etc in a honey program (just requires manual resizing of arrays - heap allocation)
+- [ ] Support an arbitrary number of tokens, symbols, etc in a honey program (just requires manual resizing of arrays - heap allocation)
 - [ ] Improve handling of diagnostics - something like this, maybe:
       ```c
       struct honey_diagnostic {
@@ -36,6 +36,8 @@
 
       // pass around, accumulate errors, display all at once
       ```
+- [ ] Add a flag for toggling code emission with documentation in the form of comments (allows for smaller binaries when toggled off, as well as more informative code when toggled on)
+- [ ] Support namespace inference, e.g. `some_value == .first_item` instead of `some_value == SomeEnum.first_item`
 
 ## Things I like in Programming
 
