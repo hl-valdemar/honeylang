@@ -1,5 +1,5 @@
-PI :: 3.14
-SOME_VALUE :: 42
+SOME_VALUE :: 42.0
+PI :: 3.14 + SOME_VALUE
 
 main :: func() void {
   return SOME_VALUE

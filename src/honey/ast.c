@@ -1,10 +1,10 @@
-#include "ast.h"
+#include "honey/ast.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 const char*
-unary_op_kind_to_text(enum honey_unary_op_kind kind)
+honey_unary_op_kind_to_text(enum honey_unary_op_kind kind)
 {
   switch (kind) {
     case HONEY_UNARY_OP_NEG:
@@ -17,7 +17,7 @@ unary_op_kind_to_text(enum honey_unary_op_kind kind)
 }
 
 const char*
-binary_op_kind_to_text(enum honey_binary_op_kind kind)
+honey_binary_op_kind_to_text(enum honey_binary_op_kind kind)
 {
   switch (kind) {
     case HONEY_BINARY_OP_ADD:
@@ -208,7 +208,7 @@ honey_ast_print(struct honey_ast_node* node, int indent)
       break;
 
     case HONEY_AST_UNARY_OP:
-      printf("unary op: %s\n", unary_op_kind_to_text(node->data.unary_op.op));
+      printf("unary op: %s\n", honey_unary_op_kind_to_text(node->data.unary_op.op));
       for (int i = 0; i < indent + 1; i += 1)
         printf("  ");
       printf("operand:\n");
@@ -217,7 +217,7 @@ honey_ast_print(struct honey_ast_node* node, int indent)
 
     case HONEY_AST_BINARY_OP:
       printf("binary op: %s\n",
-             binary_op_kind_to_text(node->data.binary_op.op));
+             honey_binary_op_kind_to_text(node->data.binary_op.op));
 
       for (int i = 0; i < indent + 1; i += 1)
         printf("  ");

@@ -1,7 +1,7 @@
 #ifndef HONEY_CONTEXT_H
 #define HONEY_CONTEXT_H
 
-#include "token.h"
+#include "honey/token.h"
 
 #define HONEY_MAX_TOKENS 1024
 

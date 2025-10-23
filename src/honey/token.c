@@ -1,4 +1,4 @@
-#include "token.h"
+#include "honey/token.h"
 
 const char*
 honey_token_kind_to_text(enum honey_token_kind kind)

@@ -1,7 +1,7 @@
 #ifndef HONEY_STACKFRAME_H
 #define HONEY_STACKFRAME_H
 
-#include "semantic.h"
+#include "honey/semantic.h"
 #include <stdbool.h>
 
 // represents a local variable on the stack

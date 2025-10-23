@@ -1,7 +1,7 @@
 #ifndef HONEY_SEMANTIC_H
 #define HONEY_SEMANTIC_H
 
-#include "ast.h"
+#include "honey/ast.h"
 #include <stdbool.h>
 #include <stdint.h>
 

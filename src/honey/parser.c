@@ -1,8 +1,8 @@
-#include "parser.h"
-#include "context.h"
+#include "honey/parser.h"
+#include "honey/context.h"
 #include "honey/ast.h"
 #include "honey/token.h"
-#include "log.h"
+#include "honey/log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

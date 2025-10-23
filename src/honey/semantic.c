@@ -1,6 +1,7 @@
-#include "semantic.h"
+#include "honey/semantic.h"
 #include "honey/ast.h"
-#include "log.h"
+#include "honey/comptime.h"
+#include "honey/log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -69,6 +70,33 @@ honey_type_kind_to_text(enum honey_type_kind kind)
 }
 
 static bool
+comptime_value_fits_type(struct honey_comptime_value value,
+                         enum honey_type_kind type)
+{
+  switch (type) {
+    case HONEY_TYPE_I8:
+    case HONEY_TYPE_I16:
+    case HONEY_TYPE_I32:
+    case HONEY_TYPE_I64:
+    case HONEY_TYPE_U8:
+    case HONEY_TYPE_U16:
+    case HONEY_TYPE_U32:
+    case HONEY_TYPE_U64:
+      // integer types accept only integers, no implicit conversion!
+      // TODO: add range checking (e.g., i8 must be -128..127)
+      return value.kind == HONEY_COMPTIME_INT;
+
+    case HONEY_TYPE_F32:
+    case HONEY_TYPE_F64:
+      // float types accept only floats, no implicit conversion!
+      return value.kind == HONEY_COMPTIME_FLOAT;
+
+    default:
+      return false;
+  }
+}
+
+static bool
 analyze_comptime_decl(struct honey_ast_node* node,
                       struct honey_symbol_table* symtab)
 {
@@ -77,6 +105,7 @@ analyze_comptime_decl(struct honey_ast_node* node,
     return false;
   }
 
+  // check for duplicate definitions
   for (int i = 0; i < symtab->count; i += 1) {
     if (strcmp(symtab->symbols[i].name, node->data.comptime_decl.name) == 0) {
       honey_error("comptime constant \"%s%s%s\" is already defined",
@@ -92,42 +121,73 @@ analyze_comptime_decl(struct honey_ast_node* node,
   sym->name = strdup(node->data.comptime_decl.name);
   sym->kind = HONEY_SYMBOL_COMPTIME;
 
-  // infer or check type from value
-  if (node->data.comptime_decl.value->kind == HONEY_AST_LITERAL_INT) {
-    // if explicit type given, use it; otherwise default to i64
-    if (node->data.comptime_decl.explicit_type) {
-      sym->type.kind =
-        honey_resolve_type_name(node->data.comptime_decl.explicit_type);
-      if (sym->type.kind == HONEY_TYPE_UNKNOWN) {
-        honey_error("unknown type \"%s\"",
-                    node->data.comptime_decl.explicit_type);
-        return false;
-      }
-    } else {
-      sym->type.kind = HONEY_TYPE_I64;
-    }
+  // try to evaluate comptime expression
+  struct honey_comptime_value result =
+    honey_comptime_eval(node->data.comptime_decl.value, symtab);
 
-    sym->comptime_value.int_value =
-      node->data.comptime_decl.value->data.int_literal;
-
-  } else if (node->data.comptime_decl.value->kind == HONEY_AST_LITERAL_FLOAT) {
-    if (node->data.comptime_decl.explicit_type) {
-      sym->type.kind =
-        honey_resolve_type_name(node->data.comptime_decl.explicit_type);
-      if (sym->type.kind == HONEY_TYPE_UNKNOWN) {
-        honey_error("unknown type \"%s\"",
-                    node->data.comptime_decl.explicit_type);
-        return false;
-      }
-    } else {
-      sym->type.kind = HONEY_TYPE_F64;
-    }
-
-    sym->comptime_value.float_value =
-      node->data.comptime_decl.value->data.float_literal;
-  } else {
-    honey_error("const value must be a literal");
+  if (result.kind == HONEY_COMPTIME_INVALID) {
+    honey_error(
+      "comptime declaration \"%s%s%s\" contains non-comptime expression",
+      ANSI_COLOR_RED,
+      node->data.comptime_decl.name,
+      ANSI_COLOR_RESET);
+    symtab->count -= 1;
+    free(sym->name);
     return false;
+  }
+
+  // determine the type
+  enum honey_type_kind resolved_type;
+
+  if (node->data.comptime_decl.explicit_type) {
+    resolved_type =
+      honey_resolve_type_name(node->data.comptime_decl.explicit_type);
+
+    if (resolved_type == HONEY_TYPE_UNKNOWN) {
+      honey_error("unknown type \"%s%s%s\" in comptime expression",
+                  ANSI_COLOR_RED,
+                  node->data.comptime_decl.explicit_type,
+                  ANSI_COLOR_RESET);
+      symtab->count -= 1;
+      free(sym->name);
+      return false;
+    }
+
+    // type validation check
+    if (!comptime_value_fits_type(result, resolved_type)) {
+      if (result.kind == HONEY_COMPTIME_INT) {
+        honey_error("cannot assign integer value to type \"%s\"",
+                    honey_type_kind_to_text(resolved_type));
+      } else if (result.kind == HONEY_COMPTIME_FLOAT) {
+        honey_error("cannot assign floating point value to type \"%s\"",
+                    honey_type_kind_to_text(resolved_type));
+      }
+
+      symtab->count -= 1;
+      free(sym->name);
+      return false;
+    }
+  } else {
+    // infer type from computed value
+    if (result.kind == HONEY_COMPTIME_INT) {
+      resolved_type = HONEY_TYPE_I64; // default to i64 integers for now
+    } else if (result.kind == HONEY_COMPTIME_FLOAT) {
+      resolved_type = HONEY_TYPE_F64; // default to f64 floats for now
+    } else {
+      // this shouldn't happen if honey_eval_comptime works correctly
+      honey_error("internal error: couldn't infer type for comptime constant");
+      symtab->count -= 1;
+      free(sym->name);
+      return false;
+    }
+  }
+
+  // store type and value based on computed result
+  sym->type.kind = resolved_type;
+  if (result.kind == HONEY_COMPTIME_INT) {
+    sym->comptime_value.int_value = result.int_value;
+  } else if (result.kind == HONEY_COMPTIME_FLOAT) {
+    sym->comptime_value.float_value = result.float_value;
   }
 
   return true;

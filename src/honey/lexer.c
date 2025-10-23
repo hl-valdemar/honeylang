@@ -1,7 +1,7 @@
-#include "lexer.h"
-#include "context.h"
+#include "honey/lexer.h"
+#include "honey/context.h"
 #include "honey/token.h"
-#include "log.h"
+#include "honey/log.h"
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdio.h>

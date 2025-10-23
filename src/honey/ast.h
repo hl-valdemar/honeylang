@@ -163,6 +163,12 @@ honey_ast_create(enum honey_ast_kind kind);
 void
 honey_ast_destroy(struct honey_ast_node* node);
 
+const char*
+honey_unary_op_kind_to_text(enum honey_unary_op_kind kind);
+
+const char*
+honey_binary_op_kind_to_text(enum honey_binary_op_kind kind);
+
 void
 honey_ast_print(struct honey_ast_node* node, int indent);
 
