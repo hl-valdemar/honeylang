@@ -20,6 +20,7 @@ enum honey_token_kind
   HONEY_TOKEN_FLOAT,
 
   // keywords
+  HONEY_TOKEN_COMPTIME,
   HONEY_TOKEN_FUNC,
   HONEY_TOKEN_RETURN,
   HONEY_TOKEN_DEFER,

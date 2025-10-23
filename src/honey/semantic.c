@@ -6,6 +6,87 @@
 #include <stdlib.h>
 #include <string.h>
 
+struct dependency_info
+{
+  char* name;        // declaration name
+  char** depends_on; // array of symbol names this depends on
+  int depends_on_count;
+  bool evaluated; // has this been evaluated yet?
+  int index;      // original index in declarations array
+};
+
+/**
+ * Recursively finds all symbol names that an expression depends on
+ * @param expr The expression to analyze
+ * @param deps Pointer to array of dependency names (will be
+ * allocated/reallocated)
+ * @param dep_count Pointer to count of dependencies found
+ */
+static void
+find_dependencies_in_expr(struct honey_ast_node* expr,
+                          char*** deps,
+                          int* dep_count);
+
+/**
+ * Adds a dependency name to the deps array if not already present
+ * @param deps Pointer to array of dependency names
+ * @param dep_count Pointer to count of dependencies
+ * @param name The symbol name to add
+ */
+static void
+add_dependency(char*** deps, int* dep_count, const char* name);
+
+/**
+ * Checks if a name is already in the dependencies array
+ */
+static bool
+has_dependency(char** deps, int dep_count, const char* name);
+
+/**
+ * Builds dependency info for all comptime declarations
+ * @param declarations All AST declarations
+ * @param count Total number of declarations
+ * @param symtab Symbol table (for checking if symbols exist)
+ * @param out_comptime_count Output parameter for number of comptime decls found
+ * @return Array of dependency_info structs (only for comptime decls)
+ */
+static struct dependency_info*
+build_dependency_graph(struct honey_ast_node** declarations,
+                       int count,
+                       struct honey_symbol_table* symtab,
+                       int* out_comptime_count);
+
+/**
+ * Performs topological sort using Kahn's algorithm
+ * @param deps Array of dependency_info structs
+ * @param count Number of items in deps array
+ * @param has_cycle Output parameter - set to true if cycle detected
+ * @return Array of indices in evaluation order, or NULL if cycle detected
+ */
+static int*
+topological_sort(struct dependency_info* deps, int count, bool* has_cycle);
+
+/**
+ * Helper: finds the index of a declaration by name in the deps array
+ * @return Index in deps array, or -1 if not found
+ */
+static int
+find_dep_index(struct dependency_info* deps, int count, const char* name);
+
+/**
+ * Reports which declarations form a dependency cycle
+ * @param deps Array of dependency_info structs
+ * @param count Number of items
+ */
+static void
+report_dependency_cycle(struct dependency_info* deps, int count);
+
+/**
+ * Frees all memory associated with dependency_info array
+ */
+static void
+cleanup_dependency_info(struct dependency_info* deps, int count);
+
 enum honey_type_kind
 honey_resolve_type_name(const char* name)
 {
@@ -233,7 +314,8 @@ analyze_func_decl(struct honey_ast_node* node,
   symtab->count += 1;
   sym->name = strdup(node->data.func_decl.name);
   sym->kind = HONEY_SYMBOL_FUNCTION;
-  sym->func_node = node;
+  sym->func.func_node = node;
+  sym->func.is_comptime = node->data.func_decl.is_comptime;
 
   // build function type
   sym->type.kind = HONEY_TYPE_FUNCTION;
@@ -347,22 +429,44 @@ honey_analyze(struct honey_ast_node** declarations,
         return false;
     }
 
-    // only return on error
     if (!success) {
       return false;
     }
   }
 
-  // second pass: evaluate comptime expressions
-  for (int i = 0; i < count; i += 1) {
-    struct honey_ast_node* ast = declarations[i];
+  // second pass: evaluate comptime expressions in dependency order
+  int comptime_count = 0;
+  struct dependency_info* dep_info =
+    build_dependency_graph(declarations, count, symtab, &comptime_count);
 
-    if (ast->kind == HONEY_AST_COMPTIME_DECL) {
-      if (!evaluate_comptime_decl(ast, symtab)) {
-        return false;
-      }
+  if (comptime_count == 0) {
+    // no comptime declarations, we're done
+    return true;
+  }
+
+  bool has_cycle = false;
+  int* eval_order = topological_sort(dep_info, comptime_count, &has_cycle);
+
+  if (has_cycle) {
+    report_dependency_cycle(dep_info, comptime_count);
+    cleanup_dependency_info(dep_info, comptime_count);
+    return false;
+  }
+
+  // evaluate in dependency order
+  for (int i = 0; i < comptime_count; i++) {
+    int dep_idx = eval_order[i];
+    int decl_idx = dep_info[dep_idx].index;
+
+    if (!evaluate_comptime_decl(declarations[decl_idx], symtab)) {
+      cleanup_dependency_info(dep_info, comptime_count);
+      free(eval_order);
+      return false;
     }
   }
+
+  cleanup_dependency_info(dep_info, comptime_count);
+  free(eval_order);
 
   return true;
 }
@@ -430,4 +534,283 @@ honey_type_size(enum honey_type_kind type)
     default:
       return 8;
   }
+}
+
+static bool
+has_dependency(char** deps, int dep_count, const char* name)
+{
+  for (int i = 0; i < dep_count; i++) {
+    if (strcmp(deps[i], name) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void
+add_dependency(char*** deps, int* dep_count, const char* name)
+{
+  // don't add duplicates
+  if (has_dependency(*deps, *dep_count, name)) {
+    return;
+  }
+
+  // reallocate array
+  *deps = realloc(*deps, sizeof(char*) * (*dep_count + 1));
+  (*deps)[*dep_count] = strdup(name);
+  (*dep_count)++;
+}
+
+static void
+find_dependencies_in_expr(struct honey_ast_node* expr,
+                          char*** deps,
+                          int* dep_count)
+{
+  if (!expr)
+    return;
+
+  switch (expr->kind) {
+    case HONEY_AST_NAME:
+      // this is a reference to another symbol
+      add_dependency(deps, dep_count, expr->data.name.identifier);
+      break;
+
+    case HONEY_AST_BINARY_OP:
+      find_dependencies_in_expr(expr->data.binary_op.left, deps, dep_count);
+      find_dependencies_in_expr(expr->data.binary_op.right, deps, dep_count);
+      break;
+
+    case HONEY_AST_UNARY_OP:
+      find_dependencies_in_expr(expr->data.unary_op.operand, deps, dep_count);
+      break;
+
+    case HONEY_AST_LITERAL_INT:
+    case HONEY_AST_LITERAL_FLOAT:
+      // literals have no dependencies
+      break;
+
+    case HONEY_AST_CALL_EXPR:
+      // add function name as dependency
+      add_dependency(deps, dep_count, expr->data.call_expr.function_name);
+      // also check arguments
+      for (int i = 0; i < expr->data.call_expr.argument_count; i++) {
+        find_dependencies_in_expr(
+          expr->data.call_expr.arguments[i], deps, dep_count);
+      }
+      break;
+
+    default:
+      // for other node types, no dependencies (or not yet supported)
+      break;
+  }
+}
+
+static struct dependency_info*
+build_dependency_graph(struct honey_ast_node** declarations,
+                       int count,
+                       struct honey_symbol_table* symtab,
+                       int* out_comptime_count)
+{
+  // first pass: count comptime declarations
+  int comptime_count = 0;
+  for (int i = 0; i < count; i++) {
+    if (declarations[i]->kind == HONEY_AST_COMPTIME_DECL) {
+      comptime_count++;
+    }
+  }
+
+  *out_comptime_count = comptime_count;
+
+  if (comptime_count == 0) {
+    return NULL;
+  }
+
+  // allocate dependency info array
+  struct dependency_info* dep_info =
+    malloc(sizeof(struct dependency_info) * comptime_count);
+
+  // second pass: build dependency info for each comptime declaration
+  int dep_idx = 0;
+  for (int i = 0; i < count; i++) {
+    if (declarations[i]->kind != HONEY_AST_COMPTIME_DECL) {
+      continue;
+    }
+
+    struct dependency_info* info = &dep_info[dep_idx];
+    info->name = strdup(declarations[i]->data.comptime_decl.name);
+    info->depends_on = NULL;
+    info->depends_on_count = 0;
+    info->evaluated = false;
+    info->index = i; // original index in declarations array
+
+    // find dependencies in the value expression
+    find_dependencies_in_expr(declarations[i]->data.comptime_decl.value,
+                              &info->depends_on,
+                              &info->depends_on_count);
+
+    // filter out dependencies that aren't comptime constants
+    // (keep only dependencies that refer to other comptime declarations)
+    int filtered_count = 0;
+    for (int j = 0; j < info->depends_on_count; j++) {
+      bool is_comptime = false;
+
+      // check if this dependency is a comptime constant
+      for (int k = 0; k < symtab->count; k++) {
+        if (strcmp(symtab->symbols[k].name, info->depends_on[j]) == 0) {
+          if (symtab->symbols[k].kind == HONEY_SYMBOL_COMPTIME) {
+            is_comptime = true;
+          }
+          break;
+        }
+      }
+
+      // keep this dependency
+      if (is_comptime) {
+        info->depends_on[filtered_count] = info->depends_on[j];
+        filtered_count++;
+      } else {
+        // free the string we're not keeping
+        free(info->depends_on[j]);
+      }
+    }
+    info->depends_on_count = filtered_count;
+
+    dep_idx++;
+  }
+
+  return dep_info;
+}
+
+static int
+find_dep_index(struct dependency_info* deps, int count, const char* name)
+{
+  for (int i = 0; i < count; i++) {
+    if (strcmp(deps[i].name, name) == 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static int*
+topological_sort(struct dependency_info* deps, int count, bool* has_cycle)
+{
+  if (count == 0) {
+    *has_cycle = false;
+    return NULL;
+  }
+
+  int* result = malloc(sizeof(int) * count);
+  int result_count = 0;
+
+  // calculate in-degrees (number of dependencies for each node)
+  int* in_degree = calloc(count, sizeof(int));
+
+  for (int i = 0; i < count; i++) {
+    for (int j = 0; j < deps[i].depends_on_count; j++) {
+      // find which declaration this dependency refers to
+      int dep_idx = find_dep_index(deps, count, deps[i].depends_on[j]);
+
+      if (dep_idx != -1) {
+        // this is a dependency on another comptime constant
+        in_degree[i]++;
+      }
+      // if dep_idx == -1, it's a dependency on something else (like a function)
+      // which we can ignore for ordering purposes
+    }
+  }
+
+  // queue all nodes with in-degree 0 (no dependencies)
+  int* queue = malloc(sizeof(int) * count);
+  int queue_head = 0;
+  int queue_tail = 0;
+
+  for (int i = 0; i < count; i++) {
+    if (in_degree[i] == 0) {
+      queue[queue_tail++] = i;
+    }
+  }
+
+  // process queue
+  while (queue_head < queue_tail) {
+    int current = queue[queue_head++];
+    result[result_count++] = current;
+
+    // for each declaration that depends on 'current', reduce its in-degree
+    for (int i = 0; i < count; i++) {
+      if (i == current)
+        continue;
+
+      // check if declaration i depends on current
+      for (int j = 0; j < deps[i].depends_on_count; j++) {
+        if (strcmp(deps[i].depends_on[j], deps[current].name) == 0) {
+          in_degree[i]--;
+          if (in_degree[i] == 0) {
+            queue[queue_tail++] = i;
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  free(in_degree);
+  free(queue);
+
+  // check if we processed all nodes
+  if (result_count != count) {
+    // cycle detected!
+    *has_cycle = true;
+    free(result);
+    return NULL;
+  }
+
+  *has_cycle = false;
+  return result;
+}
+
+static void
+report_dependency_cycle(struct dependency_info* deps, int count)
+{
+  honey_error("circular dependency detected in comptime declarations:");
+
+  // try to find and report at least one cycle
+  // simple approach: find a node that's part of a cycle and trace it
+  bool* visited = calloc(count, sizeof(bool));
+  bool* rec_stack = calloc(count, sizeof(bool));
+
+  // this is a simplified cycle finder - just reports that a cycle exists
+  // a more sophisticated version would trace the actual cycle path
+  for (int i = 0; i < count; i++) {
+    if (deps[i].depends_on_count > 0) {
+      honey_error("  '%s' depends on:", deps[i].name);
+      for (int j = 0; j < deps[i].depends_on_count; j++) {
+        honey_error("    - %s", deps[i].depends_on[j]);
+      }
+    }
+  }
+
+  free(visited);
+  free(rec_stack);
+}
+
+static void
+cleanup_dependency_info(struct dependency_info* deps, int count)
+{
+  if (!deps)
+    return;
+
+  for (int i = 0; i < count; i++) {
+    free(deps[i].name);
+
+    for (int j = 0; j < deps[i].depends_on_count; j++) {
+      free(deps[i].depends_on[j]);
+    }
+
+    if (deps[i].depends_on) {
+      free(deps[i].depends_on);
+    }
+  }
+
+  free(deps);
 }

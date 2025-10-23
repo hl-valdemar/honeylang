@@ -108,6 +108,8 @@ check_keyword(const char* name)
     return HONEY_TOKEN_MUT;
   if (strcmp(name, "test") == 0)
     return HONEY_TOKEN_TEST;
+  if (strcmp(name, "comptime") == 0)
+    return HONEY_TOKEN_COMPTIME;
 
   return HONEY_TOKEN_NAME;
 }

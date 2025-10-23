@@ -2,6 +2,7 @@
 #define HONEY_SEMANTIC_H
 
 #include "honey/ast.h"
+#include "honey/comptime.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -49,14 +50,14 @@ struct honey_symbol
   struct honey_type type;
 
   // for constants
-  union
-  {
-    int64_t int_value;
-    double float_value;
-  } comptime_value;
+  struct honey_comptime_value comptime_value;
 
-  // for functions, keep reference to ast node
-  struct honey_ast_node* func_node;
+  // for functions
+  struct
+  {
+    struct honey_ast_node* func_node;
+    bool is_comptime;
+  } func;
 
   // for test scopes, keep reference to ast node
   struct honey_ast_node* test_node;

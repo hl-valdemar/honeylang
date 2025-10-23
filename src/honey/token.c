@@ -6,6 +6,8 @@ honey_token_kind_to_text(enum honey_token_kind kind)
   switch (kind) {
     case HONEY_TOKEN_UNKNOWN:
       return "HONEY_TOKEN_UNKNOWN";
+    case HONEY_TOKEN_COMPTIME:
+      return "HONEY_TOKEN_COMPTIME";
     case HONEY_TOKEN_NAME:
       return "HONEY_TOKEN_NAME";
     case HONEY_TOKEN_DOUBLE_COLON:

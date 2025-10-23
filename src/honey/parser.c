@@ -1,8 +1,8 @@
 #include "honey/parser.h"
-#include "honey/context.h"
 #include "honey/ast.h"
-#include "honey/token.h"
+#include "honey/context.h"
 #include "honey/log.h"
+#include "honey/token.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -445,7 +445,7 @@ parse_assignment(struct honey_parser* p)
 
 // parse function declaration
 // name :: func(params) type { body }
-// name :: func() type { body }
+// name :: comptime func(params) type { body }
 static struct honey_ast_node*
 parse_func_decl(struct honey_parser* p)
 {
@@ -463,6 +463,11 @@ parse_func_decl(struct honey_parser* p)
   if (!expect(p, HONEY_TOKEN_DOUBLE_COLON, "expected \"::\"")) {
     honey_ast_destroy(node);
     return NULL;
+  }
+
+  // check for comptime keyword
+  if (match(p, HONEY_TOKEN_COMPTIME)) {
+    node->data.func_decl.is_comptime = true;
   }
 
   // expect "func" keyword

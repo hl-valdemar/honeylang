@@ -422,7 +422,7 @@ emit_function(FILE* f,
               struct honey_symbol* sym,
               struct honey_symbol_table* symtab)
 {
-  struct honey_ast_node* func = sym->func_node;
+  struct honey_ast_node* func = sym->func.func_node;
 
   // get function requirements
   bool is_leaf = false;

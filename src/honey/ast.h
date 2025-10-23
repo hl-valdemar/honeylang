@@ -65,10 +65,10 @@ struct honey_ast_node
 
       // parameters (array of ast_name nodes with type annotations)
       struct honey_ast_node** params;
-      int param_count;
 
-      // return type (null if none specified)
-      char* return_type;
+      int param_count;
+      char* return_type; // return type (null if none specified)
+      bool is_comptime;  // whether function should be comptime-capable
 
       // function body (ast_block)
       struct honey_ast_node* body;
