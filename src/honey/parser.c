@@ -131,6 +131,19 @@ parse_primary(struct honey_parser* p)
       break;
     }
 
+    case HONEY_TOKEN_BOOL: {
+      node = honey_ast_create(HONEY_AST_LITERAL_BOOL);
+      if (strcmp(tok->value, "true") == 0)
+        node->data.bool_literal = true;
+      else if (strcmp(tok->value, "false") == 0)
+        node->data.bool_literal = false;
+      else
+        honey_error(
+          "invalid boolean value \"%s\", must be either \"true\" or \"false\"",
+          tok->value);
+      break;
+    }
+
     case HONEY_TOKEN_NAME: {
       char* name = strdup(tok->value);
       advance_token(p);
@@ -179,9 +192,7 @@ parse_primary(struct honey_parser* p)
 static struct honey_ast_node*
 parse_unary(struct honey_parser* p)
 {
-  if (check(p, HONEY_TOKEN_MINUS)) {
-    advance_token(p);
-
+  if (match(p, HONEY_TOKEN_MINUS)) {
     // note: disallow chaining, e.g. '--x', as this has ambiguous semantics
     // across different languages
 

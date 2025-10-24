@@ -13,6 +13,7 @@
   X(HONEY_AST_ASSIGNMENT)                                                      \
   X(HONEY_AST_LITERAL_INT)                                                     \
   X(HONEY_AST_LITERAL_FLOAT)                                                   \
+  X(HONEY_AST_LITERAL_BOOL)                                                    \
   X(HONEY_AST_RETURN_STMT)                                                     \
   X(HONEY_AST_DEFER_STMT)                                                      \
   X(HONEY_AST_IF_STMT)                                                         \
@@ -185,6 +186,9 @@ struct honey_ast_node
 
     // float literal
     double float_literal;
+
+    // boolean literal
+    bool bool_literal;
 
     // name reference (also used for parameters with type)
     struct

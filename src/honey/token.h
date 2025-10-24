@@ -7,6 +7,7 @@
   X(HONEY_TOKEN_EOF)                                                           \
   X(HONEY_TOKEN_MUT)                                                           \
   X(HONEY_TOKEN_NAME)                                                          \
+  X(HONEY_TOKEN_BOOL)                                                          \
   X(HONEY_TOKEN_COLON)                                                         \
   X(HONEY_TOKEN_DOUBLE_COLON)                                                  \
   X(HONEY_TOKEN_EQUAL)                                                         \

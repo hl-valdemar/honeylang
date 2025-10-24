@@ -112,6 +112,10 @@ check_keyword(const char* name)
     return HONEY_TOKEN_COMPTIME;
   if (strcmp(name, "if") == 0)
     return HONEY_TOKEN_IF;
+  if (strcmp(name, "else") == 0)
+    return HONEY_TOKEN_ELSE;
+  if (strcmp(name, "true") == 0 || strcmp(name, "false") == 0)
+    return HONEY_TOKEN_BOOL;
 
   return HONEY_TOKEN_NAME;
 }
