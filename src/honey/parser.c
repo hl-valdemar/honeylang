@@ -230,7 +230,15 @@ parse_expression(struct honey_parser* p)
   if (!left)
     return NULL;
 
-  while (check(p, HONEY_TOKEN_PLUS)) {
+  struct honey_token* next_tok = peek_token(p, 1);
+
+  while (next_tok && (next_tok->kind == HONEY_TOKEN_PLUS ||
+                      next_tok->kind == HONEY_TOKEN_GREATER ||
+                      next_tok->kind == HONEY_TOKEN_LESS ||
+                      next_tok->kind == HONEY_TOKEN_GREATER_EQUAL ||
+                      next_tok->kind == HONEY_TOKEN_LESS_EQUAL ||
+                      next_tok->kind == HONEY_TOKEN_DOUBLE_EQUAL)) {
+
     advance_token(p);
 
     struct honey_ast_node* right = parse_term(p);
@@ -358,6 +366,72 @@ parse_defer_stmt(struct honey_parser* p)
   return defer_node;
 }
 
+// parse: if expr { body } else { body }
+static struct honey_ast_node*
+parse_if_stmt(struct honey_parser* p)
+{
+  // parse "if"
+  if (!expect(p, HONEY_TOKEN_IF, "expected \"if\"")) {
+    return NULL;
+  }
+
+  struct honey_ast_node* node = honey_ast_create(HONEY_AST_IF_STMT);
+
+  // parse boolean expression (the gard)
+  node->data.if_stmt.gard = parse_expression(p);
+  if (!node->data.if_stmt.gard) {
+    honey_ast_destroy(node);
+    return NULL;
+  }
+
+  // parse the "if" body
+  node->data.if_stmt.if_body = parse_block(p);
+  if (!node->data.if_stmt.if_body) {
+    honey_ast_destroy(node);
+    return NULL;
+  }
+
+  struct honey_token* tok = current_token(p);
+  struct honey_token* next_tok = peek_token(p, 1);
+
+  // parse potential "else if" blocks
+  while (tok && tok->kind == HONEY_TOKEN_ELSE && next_tok &&
+         next_tok->kind == HONEY_TOKEN_IF) {
+    // consume "else if" tokens
+    advance_token(p);
+    advance_token(p);
+
+    int else_if_idx = node->data.if_stmt.else_if_count;
+
+    // parse "else if" gard
+    node->data.if_stmt.else_ifs[else_if_idx]->gard = parse_expression(p);
+    if (!node->data.if_stmt.else_ifs[else_if_idx]->gard) {
+      honey_ast_destroy(node);
+      return NULL;
+    }
+
+    // parse "else if" body
+    node->data.if_stmt.else_ifs[else_if_idx]->body = parse_block(p);
+    if (!node->data.if_stmt.else_ifs[else_if_idx]->body) {
+      honey_ast_destroy(node);
+      return NULL;
+    }
+
+    node->data.if_stmt.else_if_count += 1;
+  }
+
+  // parse "else"
+  if (match(p, HONEY_TOKEN_ELSE)) {
+    node->data.if_stmt.else_body = parse_block(p);
+    if (!node->data.if_stmt.else_body) {
+      honey_ast_destroy(node);
+      return NULL;
+    }
+  }
+
+  return node;
+}
+
 static struct honey_ast_node*
 parse_statement(struct honey_parser* p)
 {
@@ -365,6 +439,8 @@ parse_statement(struct honey_parser* p)
     return parse_return_stmt(p);
   if (check(p, HONEY_TOKEN_DEFER))
     return parse_defer_stmt(p);
+  if (check(p, HONEY_TOKEN_IF))
+    return parse_if_stmt(p);
 
   struct honey_token* next_tok = peek_token(p, 1);
 

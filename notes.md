@@ -20,8 +20,11 @@ Once the C ABI is supported, I should be able to start developing the compiler i
 - [x] Implement fuzz testing
 - [x] Comptime evaluation of simple expressions
 - [x] Comptime execution context with dependency tracking (allows for comptime function calls)
-- [ ] Figure out how imports should work
+- [x] Figure out how imports should work
         - more like zig (verbose), rust (less verbose), or odin (minimally verbose, but also a bit opaque)?
+- [ ] Implement remaining arithmetic and boolean operations
+    - [ ] arithmetic
+    - [ ] boolean
 - [ ] Check all tests to make sure they actually test properly!
 - [ ] Type inference on variable declaration (optional type declaration, allows for the `a := 10` syntax as opposed to `a: i32 = 10`)
         - probably requires a peer resolution system to avoid unnecessary manual type casting (i.e., what context is the variable used in?)

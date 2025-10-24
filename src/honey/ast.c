@@ -7,12 +7,11 @@ const char*
 honey_unary_op_kind_to_text(enum honey_unary_op_kind kind)
 {
   switch (kind) {
-    case HONEY_UNARY_OP_NEG:
-      return "HONEY_UNARY_OP_NEG";
-    case HONEY_UNARY_OP_NOT:
-      return "HONEY_UNARY_OP_NOT";
-    case HONEY_UNARY_OP_BITNOT:
-      return "HONEY_UNARY_OP_BITNOT";
+#define X(name)                                                                \
+  case name:                                                                   \
+    return #name;
+    HONEY_UNARY_OP_KINDS
+#undef X
   }
 }
 
@@ -20,14 +19,11 @@ const char*
 honey_binary_op_kind_to_text(enum honey_binary_op_kind kind)
 {
   switch (kind) {
-    case HONEY_BINARY_OP_ADD:
-      return "HONEY_BINARY_OP_ADD";
-    case HONEY_BINARY_OP_SUB:
-      return "HONEY_BINARY_OP_SUB";
-    case HONEY_BINARY_OP_MUL:
-      return "HONEY_BINARY_OP_MUL";
-    case HONEY_BINARY_OP_DIV:
-      return "HONEY_BINARY_OP_DIV";
+#define X(name)                                                                \
+  case name:                                                                   \
+    return #name;
+    HONEY_BINARY_OP_KINDS
+#undef X
   }
 }
 
@@ -72,6 +68,16 @@ honey_ast_destroy(struct honey_ast_node* node)
       free(node->data.call_expr.function_name);
       for (int i = 0; i < node->data.call_expr.argument_count; i += 1)
         honey_ast_destroy(node->data.call_expr.arguments[i]);
+      break;
+
+    case HONEY_AST_IF_STMT:
+      honey_ast_destroy(node->data.if_stmt.gard);
+      honey_ast_destroy(node->data.if_stmt.if_body);
+      honey_ast_destroy(node->data.if_stmt.else_body);
+      for (int i = 0; i < node->data.if_stmt.else_if_count; i += 1) {
+        honey_ast_destroy(node->data.if_stmt.else_ifs[i]->gard);
+        honey_ast_destroy(node->data.if_stmt.else_ifs[i]->body);
+      }
       break;
 
     case HONEY_AST_BLOCK:
@@ -149,6 +155,11 @@ honey_ast_print(struct honey_ast_node* node, int indent)
       honey_ast_print(node->data.comptime_decl.value, indent + 1);
       break;
 
+    case HONEY_AST_IF_STMT:
+      printf("if_stmt:\n");
+      honey_ast_print(node->data.if_stmt.gard, indent + 1);
+      break;
+
     case HONEY_AST_FUNC_DECL:
       printf("func_decl: %s\n", node->data.func_decl.name);
 
@@ -208,7 +219,8 @@ honey_ast_print(struct honey_ast_node* node, int indent)
       break;
 
     case HONEY_AST_UNARY_OP:
-      printf("unary op: %s\n", honey_unary_op_kind_to_text(node->data.unary_op.op));
+      printf("unary op: %s\n",
+             honey_unary_op_kind_to_text(node->data.unary_op.op));
       for (int i = 0; i < indent + 1; i += 1)
         printf("  ");
       printf("operand:\n");

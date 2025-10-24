@@ -1,7 +1,7 @@
 #include "honey/lexer.h"
 #include "honey/context.h"
-#include "honey/token.h"
 #include "honey/log.h"
+#include "honey/token.h"
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -110,6 +110,8 @@ check_keyword(const char* name)
     return HONEY_TOKEN_TEST;
   if (strcmp(name, "comptime") == 0)
     return HONEY_TOKEN_COMPTIME;
+  if (strcmp(name, "if") == 0)
+    return HONEY_TOKEN_IF;
 
   return HONEY_TOKEN_NAME;
 }
@@ -261,6 +263,30 @@ honey_scan(struct honey_context* ctx, const char* src)
       advance_char(ctx);
       advance_char(ctx);
     }
+    // less than
+    else if (c == '<') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_LESS));
+      advance_char(ctx);
+    }
+    // greater than
+    else if (c == '>') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_GREATER));
+      advance_char(ctx);
+    }
+    // less then or equal
+    else if (c == '<' && peek_char_offset(ctx, 1) == '=') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_LESS_EQUAL));
+      // consume both
+      advance_char(ctx);
+      advance_char(ctx);
+    }
+    // greater than or equal
+    else if (c == '>' && peek_char_offset(ctx, 1) == '=') {
+      add_token(ctx, make_simple_token(HONEY_TOKEN_GREATER_EQUAL));
+      // consume both
+      advance_char(ctx);
+      advance_char(ctx);
+    }
     // plus
     else if (c == '+') {
       add_token(ctx, make_simple_token(HONEY_TOKEN_PLUS));
@@ -283,7 +309,8 @@ honey_scan(struct honey_context* ctx, const char* src)
     }
     // unknown character (warn and skip)
     else {
-      honey_warn("unknown character \"%s%c%s\" at %sline %d%s, %scolumn %d%s. skipping...",
+      honey_warn("unknown character \"%s%c%s\" at %sline %d%s, %scolumn %d%s. "
+                 "skipping...",
                  ANSI_COLOR_RED,
                  c,
                  ANSI_COLOR_RESET,

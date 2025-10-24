@@ -4,44 +4,66 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+// define all token kinds in one place
+#define HONEY_AST_KINDS                                                        \
+  X(HONEY_AST_COMPTIME_DECL)                                                   \
+  X(HONEY_AST_FUNC_DECL)                                                       \
+  X(HONEY_AST_TEST_DECL)                                                       \
+  X(HONEY_AST_VAR_DECL)                                                        \
+  X(HONEY_AST_ASSIGNMENT)                                                      \
+  X(HONEY_AST_LITERAL_INT)                                                     \
+  X(HONEY_AST_LITERAL_FLOAT)                                                   \
+  X(HONEY_AST_RETURN_STMT)                                                     \
+  X(HONEY_AST_DEFER_STMT)                                                      \
+  X(HONEY_AST_IF_STMT)                                                         \
+  X(HONEY_AST_NAME)                                                            \
+  X(HONEY_AST_BLOCK)                                                           \
+  X(HONEY_AST_UNARY_OP)                                                        \
+  X(HONEY_AST_BINARY_OP)                                                       \
+  X(HONEY_AST_CALL_EXPR)
+
 enum honey_ast_kind
 {
-  // declarations and assignment
-  HONEY_AST_COMPTIME_DECL, // NAME :: value
-  HONEY_AST_FUNC_DECL,     // NAME :: func(...) : type { ... }
-  HONEY_AST_TEST_DECL,     // NAME :: test { ... }
-  HONEY_AST_VAR_DECL,      // local variable declaration
-  HONEY_AST_ASSIGNMENT,    // local variable assignment
-
-  // literals
-  HONEY_AST_LITERAL_INT,   // 10
-  HONEY_AST_LITERAL_FLOAT, // 3.14
-
-  // statements
-  HONEY_AST_RETURN_STMT, // return expr
-  HONEY_AST_DEFER_STMT,  // defer statement
-
-  // other
-  HONEY_AST_NAME,      // identifier reference
-  HONEY_AST_BLOCK,     // { statements }
-  HONEY_AST_UNARY_OP,  // unary operation
-  HONEY_AST_BINARY_OP, // binary operation
-  HONEY_AST_CALL_EXPR, // function call
+#define X(name) name,
+  HONEY_AST_KINDS
+#undef X
 };
+
+#define HONEY_UNARY_OP_KINDS                                                   \
+  X(HONEY_UNARY_OP_NEG)                                                        \
+  X(HONEY_UNARY_OP_NOT)                                                        \
+  X(HONEY_UNARY_OP_BIT_NOT)
 
 enum honey_unary_op_kind
 {
-  HONEY_UNARY_OP_NEG,    // -x (negation)
-  HONEY_UNARY_OP_NOT,    // !x (logical not)
-  HONEY_UNARY_OP_BITNOT, // ~x (bitwise not)
+#define X(name) name,
+  HONEY_UNARY_OP_KINDS
+#undef X
 };
+
+#define HONEY_BINARY_OP_KINDS                                                  \
+  X(HONEY_BINARY_OP_ADD)                                                       \
+  X(HONEY_BINARY_OP_SUB)                                                       \
+  X(HONEY_BINARY_OP_MUL)                                                       \
+  X(HONEY_BINARY_OP_DIV)                                                       \
+  X(HONEY_BINARY_OP_OR)                                                        \
+  X(HONEY_BINARY_OP_AND)                                                       \
+  X(HONEY_BINARY_OP_LESS)                                                      \
+  X(HONEY_BINARY_OP_GREATER)                                                   \
+  X(HONEY_BINARY_OP_LESS_EQUAL)                                                \
+  X(HONEY_BINARY_OP_GREATER_EQUAL)                                             \
+  X(HONEY_BINARY_OP_EQUAL)                                                     \
+  X(HONEY_BINARY_OP_BIT_OR)                                                    \
+  X(HONEY_BINARY_OP_BIT_AND)                                                   \
+  X(HONEY_BINARY_OP_BIT_XOR)                                                   \
+  X(HONEY_BINARY_OP_BITSHIFT_LEFT)                                             \
+  X(HONEY_BINARY_OP_BITSHIFT_RIGHT)
 
 enum honey_binary_op_kind
 {
-  HONEY_BINARY_OP_ADD, // +
-  HONEY_BINARY_OP_SUB, // -
-  HONEY_BINARY_OP_MUL, // *
-  HONEY_BINARY_OP_DIV, // /
+#define X(name) name,
+  HONEY_BINARY_OP_KINDS
+#undef X
 };
 
 struct honey_ast_node
@@ -80,6 +102,22 @@ struct honey_ast_node
       char* name;                  // test name
       struct honey_ast_node* body; // AST_BLOCK
     } test_decl;
+
+    // if statement
+    struct
+    {
+      struct honey_ast_node* gard; // boolean expression
+      struct honey_ast_node* if_body;
+      struct honey_ast_node* else_body;
+
+      struct
+      {
+        struct honey_ast_node* gard;
+        struct honey_ast_node* body;
+      }** else_ifs;
+
+      int else_if_count;
+    } if_stmt;
 
     // variable declaration: name: type = value
     struct

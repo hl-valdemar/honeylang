@@ -1,43 +1,44 @@
 #ifndef HONEY_TOKEN_H
 #define HONEY_TOKEN_H
 
+// define all token kinds in one place
+#define HONEY_TOKEN_KINDS                                                      \
+  X(HONEY_TOKEN_UNKNOWN)                                                       \
+  X(HONEY_TOKEN_EOF)                                                           \
+  X(HONEY_TOKEN_MUT)                                                           \
+  X(HONEY_TOKEN_NAME)                                                          \
+  X(HONEY_TOKEN_COLON)                                                         \
+  X(HONEY_TOKEN_DOUBLE_COLON)                                                  \
+  X(HONEY_TOKEN_EQUAL)                                                         \
+  X(HONEY_TOKEN_DOUBLE_EQUAL)                                                  \
+  X(HONEY_TOKEN_INT)                                                           \
+  X(HONEY_TOKEN_FLOAT)                                                         \
+  X(HONEY_TOKEN_COMPTIME)                                                      \
+  X(HONEY_TOKEN_FUNC)                                                          \
+  X(HONEY_TOKEN_RETURN)                                                        \
+  X(HONEY_TOKEN_DEFER)                                                         \
+  X(HONEY_TOKEN_TEST)                                                          \
+  X(HONEY_TOKEN_IF)                                                            \
+  X(HONEY_TOKEN_ELSE)                                                          \
+  X(HONEY_TOKEN_LBRACE)                                                        \
+  X(HONEY_TOKEN_RBRACE)                                                        \
+  X(HONEY_TOKEN_LPAREN)                                                        \
+  X(HONEY_TOKEN_RPAREN)                                                        \
+  X(HONEY_TOKEN_COMMA)                                                         \
+  X(HONEY_TOKEN_PLUS)                                                          \
+  X(HONEY_TOKEN_MINUS)                                                         \
+  X(HONEY_TOKEN_STAR)                                                          \
+  X(HONEY_TOKEN_SLASH)                                                         \
+  X(HONEY_TOKEN_GREATER)                                                       \
+  X(HONEY_TOKEN_LESS)                                                          \
+  X(HONEY_TOKEN_GREATER_EQUAL)                                                 \
+  X(HONEY_TOKEN_LESS_EQUAL)
+
 enum honey_token_kind
 {
-  // special tokens
-  HONEY_TOKEN_UNKNOWN,
-  HONEY_TOKEN_EOF,
-
-  // assignment
-  HONEY_TOKEN_MUT,
-  HONEY_TOKEN_NAME,
-  HONEY_TOKEN_COLON,        // :
-  HONEY_TOKEN_DOUBLE_COLON, // ::
-  HONEY_TOKEN_EQUAL,        // =
-  HONEY_TOKEN_DOUBLE_EQUAL, // ==
-
-  // types
-  HONEY_TOKEN_INT,
-  HONEY_TOKEN_FLOAT,
-
-  // keywords
-  HONEY_TOKEN_COMPTIME,
-  HONEY_TOKEN_FUNC,
-  HONEY_TOKEN_RETURN,
-  HONEY_TOKEN_DEFER,
-  HONEY_TOKEN_TEST,
-
-  // delimiters
-  HONEY_TOKEN_LBRACE, // {
-  HONEY_TOKEN_RBRACE, // }
-  HONEY_TOKEN_LPAREN, // (
-  HONEY_TOKEN_RPAREN, // )
-  HONEY_TOKEN_COMMA,  // ,
-
-  // binary operators
-  HONEY_TOKEN_PLUS,  // +
-  HONEY_TOKEN_MINUS, // -
-  HONEY_TOKEN_STAR,  // *
-  HONEY_TOKEN_SLASH, // /
+#define X(name) name,
+  HONEY_TOKEN_KINDS
+#undef X
 };
 
 const char*
@@ -48,7 +49,7 @@ struct honey_token
   enum honey_token_kind kind;
   char* value;
 
-  // for better error reporting
+  // for error reporting
   int line;
   int column;
 };
