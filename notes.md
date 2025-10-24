@@ -1,5 +1,14 @@
 # Notes
 
+## Roadmap (v0.1.0)
+
+- [ ] Enforce strong typing
+- [ ] Implement remaining arithmetic and boolean operations
+- [ ] Implement control flow (if, while, for)
+- [ ] Add support for external function call conventions (to support the C ABI)
+
+Once the C ABI is supported, I should be able to start developing the compiler in the Honey language itself.
+
 ## Todo
 
 - [x] Defer statements (affect code generation significantly - need to track scope exits)
@@ -39,6 +48,7 @@
 - [ ] Add a flag for toggling code emission with documentation in the form of comments (allows for smaller binaries when toggled off, as well as more informative code when toggled on)
 - [ ] Support namespace inference, e.g. `some_value == .first_item` instead of `some_value == SomeEnum.first_item`
 - [ ] Support functions using external calling conventions: `f :: extern.c func() void { }`
+- [ ] Support inline assembly
 
 ## Things I like in Programming
 
