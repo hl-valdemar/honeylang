@@ -77,7 +77,9 @@ honey_ast_destroy(struct honey_ast_node* node)
       for (int i = 0; i < node->data.if_stmt.else_if_count; i += 1) {
         honey_ast_destroy(node->data.if_stmt.else_ifs[i]->guard);
         honey_ast_destroy(node->data.if_stmt.else_ifs[i]->body);
+        free(node->data.if_stmt.else_ifs[i]); // free struct itself
       }
+      free(node->data.if_stmt.else_ifs); // free the array
       break;
 
     case HONEY_AST_BLOCK:

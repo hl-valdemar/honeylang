@@ -388,6 +388,12 @@ parse_if_stmt(struct honey_parser* p)
 
   struct honey_ast_node* node = honey_ast_create(HONEY_AST_IF_STMT);
 
+  // allocate space for potential "else if"s
+  int capacity = 4;
+  node->data.if_stmt.else_ifs =
+    malloc(sizeof(*node->data.if_stmt.else_ifs) * capacity);
+  node->data.if_stmt.else_if_count = 0;
+
   // parse boolean expression (the guard)
   node->data.if_stmt.guard = parse_expression(p);
   if (!node->data.if_stmt.guard) {
@@ -412,7 +418,20 @@ parse_if_stmt(struct honey_parser* p)
     advance_token(p);
     advance_token(p);
 
+    // allocate the struct for this else-if
     int else_if_idx = node->data.if_stmt.else_if_count;
+
+    // grow array if needed
+    if (else_if_idx >= capacity) {
+      capacity *= 2;
+      node->data.if_stmt.else_ifs =
+        realloc(node->data.if_stmt.else_ifs,
+                sizeof(*node->data.if_stmt.else_ifs) * capacity);
+    }
+
+    // allocate the else-if struct
+    node->data.if_stmt.else_ifs[else_if_idx] =
+      malloc(sizeof(*node->data.if_stmt.else_ifs[else_if_idx]));
 
     // parse "else if" guard
     node->data.if_stmt.else_ifs[else_if_idx]->guard = parse_expression(p);
@@ -429,6 +448,10 @@ parse_if_stmt(struct honey_parser* p)
     }
 
     node->data.if_stmt.else_if_count += 1;
+
+    // refresh tokens
+    tok = current_token(p);
+    next_tok = peek_token(p, 1);
   }
 
   // parse "else"
