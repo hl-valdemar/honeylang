@@ -71,11 +71,11 @@ honey_ast_destroy(struct honey_ast_node* node)
       break;
 
     case HONEY_AST_IF_STMT:
-      honey_ast_destroy(node->data.if_stmt.gard);
+      honey_ast_destroy(node->data.if_stmt.guard);
       honey_ast_destroy(node->data.if_stmt.if_body);
       honey_ast_destroy(node->data.if_stmt.else_body);
       for (int i = 0; i < node->data.if_stmt.else_if_count; i += 1) {
-        honey_ast_destroy(node->data.if_stmt.else_ifs[i]->gard);
+        honey_ast_destroy(node->data.if_stmt.else_ifs[i]->guard);
         honey_ast_destroy(node->data.if_stmt.else_ifs[i]->body);
       }
       break;
@@ -129,6 +129,7 @@ honey_ast_destroy(struct honey_ast_node* node)
 
     case HONEY_AST_LITERAL_INT:
     case HONEY_AST_LITERAL_FLOAT:
+    case HONEY_AST_LITERAL_BOOL:
       // no heap data to free
       break;
   }
@@ -157,7 +158,42 @@ honey_ast_print(struct honey_ast_node* node, int indent)
 
     case HONEY_AST_IF_STMT:
       printf("if_stmt:\n");
-      honey_ast_print(node->data.if_stmt.gard, indent + 1);
+
+      // if guard
+      for (int i = 0; i < indent + 1; i += 1)
+        printf("  ");
+      printf("guard:\n");
+      honey_ast_print(node->data.if_stmt.guard, indent + 2);
+
+      // if body
+      for (int i = 0; i < indent + 1; i += 1)
+        printf("  ");
+      printf("if_body:\n");
+      honey_ast_print(node->data.if_stmt.if_body, indent + 2);
+
+      // else ifs
+      for (int i = 0; i < indent + 1; i += 1)
+        printf("  ");
+      printf("else_ifs:\n");
+      for (int i = 0; i < node->data.if_stmt.else_if_count; i += 1) {
+        for (int i = 0; i < indent + 2; i += 1)
+          printf("  ");
+        printf("else_if:\n");
+        for (int i = 0; i < indent + 3; i += 1)
+          printf("  ");
+        printf("guard:\n");
+        honey_ast_print(node->data.if_stmt.else_ifs[i]->guard, indent + 4);
+        for (int i = 0; i < indent + 3; i += 1)
+          printf("  ");
+        printf("else_if_body:\n");
+        honey_ast_print(node->data.if_stmt.else_ifs[i]->body, indent + 4);
+      }
+
+      // else body
+      for (int i = 0; i < indent + 1; i += 1)
+        printf("  ");
+      printf("else_body:\n");
+      honey_ast_print(node->data.if_stmt.else_body, indent + 2);
       break;
 
     case HONEY_AST_FUNC_DECL:
@@ -277,6 +313,10 @@ honey_ast_print(struct honey_ast_node* node, int indent)
 
     case HONEY_AST_LITERAL_FLOAT:
       printf("float_literal: %f\n", node->data.float_literal);
+      break;
+
+    case HONEY_AST_LITERAL_BOOL:
+      printf("bool_literal: %s\n", node->data.bool_literal ? "true" : "false");
       break;
 
     case HONEY_AST_NAME:

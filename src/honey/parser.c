@@ -388,9 +388,9 @@ parse_if_stmt(struct honey_parser* p)
 
   struct honey_ast_node* node = honey_ast_create(HONEY_AST_IF_STMT);
 
-  // parse boolean expression (the gard)
-  node->data.if_stmt.gard = parse_expression(p);
-  if (!node->data.if_stmt.gard) {
+  // parse boolean expression (the guard)
+  node->data.if_stmt.guard = parse_expression(p);
+  if (!node->data.if_stmt.guard) {
     honey_ast_destroy(node);
     return NULL;
   }
@@ -414,9 +414,9 @@ parse_if_stmt(struct honey_parser* p)
 
     int else_if_idx = node->data.if_stmt.else_if_count;
 
-    // parse "else if" gard
-    node->data.if_stmt.else_ifs[else_if_idx]->gard = parse_expression(p);
-    if (!node->data.if_stmt.else_ifs[else_if_idx]->gard) {
+    // parse "else if" guard
+    node->data.if_stmt.else_ifs[else_if_idx]->guard = parse_expression(p);
+    if (!node->data.if_stmt.else_ifs[else_if_idx]->guard) {
       honey_ast_destroy(node);
       return NULL;
     }

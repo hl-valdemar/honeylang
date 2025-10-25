@@ -110,6 +110,9 @@ honey_comptime_eval(struct honey_ast_node* expr,
             }
             result = left.int_value / right.int_value;
             break;
+
+          default: // other operations invalid for now
+            return make_invalid();
         }
         return make_int(result);
       }
@@ -134,6 +137,9 @@ honey_comptime_eval(struct honey_ast_node* expr,
             }
             result = left.float_value / right.float_value;
             break;
+
+          default: // other operations invalid for now
+            return make_invalid();
         }
         return make_float(result);
       }

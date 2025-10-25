@@ -107,13 +107,13 @@ struct honey_ast_node
     // if statement
     struct
     {
-      struct honey_ast_node* gard; // boolean expression
+      struct honey_ast_node* guard; // boolean expression
       struct honey_ast_node* if_body;
       struct honey_ast_node* else_body;
 
       struct
       {
-        struct honey_ast_node* gard;
+        struct honey_ast_node* guard;
         struct honey_ast_node* body;
       }** else_ifs;
 
