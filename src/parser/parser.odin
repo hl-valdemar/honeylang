@@ -15,11 +15,10 @@ import "../lexer"
 import "../logger"
 import "../scope"
 
-Scope :: scope.Scope
 Token :: lexer.Token
 TokenKind :: lexer.TokenKind
 
-LOG_SCOPE :: Scope.parser
+LOG_SCOPE :: scope.Scope.parser
 
 ParserError :: enum {}
 

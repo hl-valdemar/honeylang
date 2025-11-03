@@ -1,10 +1,38 @@
 package semantic
 
+import "../logger"
 import "../parser"
+import "../scope"
 
-SymbolType :: enum {}
+LOG_SCOPE :: scope.Scope.semantic
 
-SymbolValue :: union {}
+SymbolType :: enum {
+	unknown,
+	bool,
+
+	// integers
+	u8,
+	u64,
+	i8,
+	i64,
+
+	// floats
+	f16,
+	f64,
+}
+
+SymbolValue :: union {
+	PendingValue,
+	ComptimeValue,
+}
+
+PendingValue :: struct {} // just a tag
+
+ComptimeValue :: union {
+	bool,
+	i64, // default int type
+	f64, // default float type
+}
 
 Symbol :: struct {
 	name:  string,
@@ -19,12 +47,11 @@ SymbolKind :: enum {
 
 SymbolTable :: struct {
 	symbols: [dynamic]Symbol,
-	count:   int,
 }
 
 symtab_make :: proc() -> SymbolTable {
 	symbols := make([dynamic]Symbol, 0, 10)
-	return SymbolTable{symbols = symbols, count = 0}
+	return SymbolTable{symbols = symbols}
 }
 
 symtab_destroy :: proc(symtab: ^SymbolTable) {
@@ -42,4 +69,77 @@ init :: proc(program: ^parser.AstNode) -> Semantic {
 
 deinit :: proc(s: ^Semantic) {}
 
-analyze :: proc(s: ^Semantic) {}
+collect_symbols :: proc(s: ^Semantic) -> bool {
+	success := true
+
+	p := s.program.(parser.Program)
+	for &decl in p.declarations {
+		#partial switch decl.kind {
+		case .comptime:
+			success = register_comptime_decl(s, &decl)
+		case:
+			logger.fatal(LOG_SCOPE, "unexpected AST node, expected declaration")
+			success = false
+		}
+
+		// break only if something went wrong
+		if !success do return false
+	}
+
+	return success
+}
+
+analyze :: proc(s: ^Semantic) -> bool {
+	// first pass: collect symbols
+	if !collect_symbols(s) do return false
+
+	// TODO: second pass - evaluate comptime expressions in dependency order
+
+	return true
+}
+
+register_comptime_decl :: proc(s: ^Semantic, decl: ^parser.Declaration) -> bool {
+	for symbol in s.symtab.symbols {
+		if symbol.name == decl.name {
+			logger.fatal(LOG_SCOPE, "comptime constant \"%s\" is already defined", symbol.name)
+			return false
+		}
+	}
+
+	symbol := Symbol {
+		name  = decl.name,
+		kind  = .comptime,
+		type  = .unknown,
+		value = PendingValue{},
+	}
+
+	if type, ok := decl.type.?; ok {
+		switch t in type {
+		case parser.NamedType:
+			symbol.type = resolve_type_name(t.name)
+			if symbol.type == .unknown {
+				logger.fatal(LOG_SCOPE, "unknown type \"%s\" in comptime expression", t.name)
+				return false
+			}
+
+		case parser.PointerType:
+			return false
+		}
+	}
+
+	append(&s.symtab.symbols, symbol)
+	return true
+}
+
+resolve_type_name :: proc(name: string) -> SymbolType {
+	switch name {
+	case "bool":
+		return .bool
+	case "i64":
+		return .i64
+	case "f64":
+		return .f64
+	case:
+		return .unknown
+	}
+}

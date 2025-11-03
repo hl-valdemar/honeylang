@@ -9,9 +9,7 @@ import "semantic"
 import "core:fmt"
 import "core:os"
 
-Scope :: scope.Scope
-
-LOG_SCOPE :: Scope.pipeline
+LOG_SCOPE :: scope.Scope.pipeline
 
 main :: proc() {
 	logger.init({term_enabled = true})
@@ -21,7 +19,7 @@ main :: proc() {
 		logger.enable_file_logging("logs.txt")
 	}
 
-  // get source file
+	// get source file
 	if len(os.args) < 2 {
 		logger.fatal(LOG_SCOPE, "usage: %s <source-file>", os.args[0])
 		os.exit(1)
@@ -65,8 +63,13 @@ main :: proc() {
 	s := semantic.init(p.ast)
 	defer semantic.deinit(&s)
 
+	semantic.analyze(&s)
+
 	fmt.printf("\n::[[ semantic analysis ]]::\n")
-	fmt.printf("collected %d symbols:\n\n", 0)
+	fmt.printf("collected %d symbols:\n\n", len(s.symtab.symbols[:]))
+	for symbol in s.symtab.symbols {
+		fmt.printf("(%s) %s: %s = %v\n", symbol.kind, symbol.name, symbol.type, symbol.value)
+	}
 
 
 	fmt.printf("\n::[[ code emission ]]::\n")

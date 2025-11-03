@@ -6,9 +6,7 @@ import "../scope"
 import "core:unicode"
 import "core:unicode/utf8"
 
-Scope :: scope.Scope
-
-LOG_SCOPE :: Scope.lexer
+LOG_SCOPE :: scope.Scope.lexer
 
 // = = = = = = = = = = = = = =
 // Lexer Implementation

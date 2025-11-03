@@ -8,7 +8,7 @@ import "core:os"
 import "core:strings"
 import "core:time"
 
-Scope :: scope.Scope
+LOG_SCOPE :: scope.Scope.logger
 
 // = = = = = = = = = = = =
 // Logger Utilities
@@ -96,7 +96,7 @@ level_max_width :: proc() -> int {
 
 scope_max_width :: proc() -> int {
 	max := 0
-	for scope in Scope {
+	for scope in scope.Scope {
 		if max < len(fmt.tprint(scope)) {
 			max = len(fmt.tprint(scope))
 		}
@@ -108,7 +108,7 @@ scope_max_width :: proc() -> int {
 enable_file_logging :: proc(filepath: string) -> bool {
 	handle, err := os.open(filepath, os.O_CREATE | os.O_WRONLY | os.O_APPEND, 0o644)
 	if err != os.ERROR_NONE {
-		error(Scope.lexer, "failed to open log file:", filepath)
+		error(LOG_SCOPE, "failed to open log file:", filepath)
 		return false
 	}
 
