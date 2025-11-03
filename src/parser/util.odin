@@ -35,7 +35,7 @@ advance :: proc(p: ^Parser) {
 	p.next_token_idx += 1
 }
 
-make_program :: proc(declarations: [dynamic]Declaration) -> ^AstNode {
+program_make :: proc(declarations: [dynamic]Declaration) -> ^AstNode {
 	node := new(AstNode)
 	node^ = Program {
 		declarations = declarations,
@@ -44,7 +44,7 @@ make_program :: proc(declarations: [dynamic]Declaration) -> ^AstNode {
 }
 
 // create a complete declaration node
-make_declaration :: proc(
+declaration_make :: proc(
 	name: string,
 	type: ^Type,
 	value: ^AstNode,
@@ -60,7 +60,7 @@ make_declaration :: proc(
 	return node
 }
 
-make_identifier :: proc(tok: Token) -> (^AstNode, bool) {
+identifier_make :: proc(tok: Token) -> (^AstNode, bool) {
 	val, ok := tok.value.?
 	if !ok {
 		logger.fatal(LOG_SCOPE, "identifier has no value")
@@ -74,7 +74,7 @@ make_identifier :: proc(tok: Token) -> (^AstNode, bool) {
 	return node, true
 }
 
-make_boolean_literal :: proc(tok: Token) -> (^AstNode, bool) {
+boolean_make :: proc(tok: Token) -> (^AstNode, bool) {
 	val, ok := tok.value.?
 	if !ok {
 		logger.fatal(LOG_SCOPE, "boolean has no value")

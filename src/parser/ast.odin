@@ -118,20 +118,20 @@ print_type :: proc(type_node: Maybe(^Type), indent := 0) {
 	}
 }
 
-destroy_ast :: proc(node: ^AstNode) {
+ast_destroy :: proc(node: ^AstNode) {
 	if node == nil do return
 
 	switch n in node {
 	case Program:
 		for &decl in n.declarations {
-			destroy_decl(&decl)
+			decl_destroy(&decl)
 		}
 		delete(n.declarations)
 
 	case Declaration:
-		destroy_ast(n.value)
+		ast_destroy(n.value)
 		if type, ok := n.type.?; ok {
-			destroy_type(type)
+			type_destroy(type)
 		}
 
 	case Identifier, Literal:
@@ -141,21 +141,21 @@ destroy_ast :: proc(node: ^AstNode) {
 	free(node)
 }
 
-destroy_decl :: proc(decl: ^Declaration) {
+decl_destroy :: proc(decl: ^Declaration) {
 	if decl == nil do return
-	destroy_ast(decl.value)
+	ast_destroy(decl.value)
 	if type, ok := decl.type.?; ok {
-		destroy_type(type)
+		type_destroy(type)
 	}
 	free(decl)
 }
 
-destroy_type :: proc(node: ^Type) {
+type_destroy :: proc(node: ^Type) {
 	if node == nil do return
 
 	switch n in node {
 	case PointerType:
-		destroy_type(n.pointee)
+		type_destroy(n.pointee)
 
 	case NamedType:
 	// no children

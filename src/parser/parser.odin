@@ -34,7 +34,7 @@ init :: proc(tokens: []Token) -> Parser {
 }
 
 deinit :: proc(p: ^Parser) {
-	destroy_ast(p.ast)
+	ast_destroy(p.ast)
 }
 
 parse_primary :: proc(p: ^Parser) -> (^AstNode, bool) {
@@ -45,10 +45,10 @@ parse_primary :: proc(p: ^Parser) -> (^AstNode, bool) {
 
 	#partial switch tok.kind {
 	case .identifier:
-		node, ok = make_identifier(tok)
+		node, ok = identifier_make(tok)
 
 	case .boolean:
-		node, ok = make_boolean_literal(tok)
+		node, ok = boolean_make(tok)
 
 	case:
 		// unexpected token type
@@ -84,7 +84,7 @@ parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 	if !ok do return nil, false
 
 	// create node with all fields at once
-	return make_declaration(name, type, value, .comptime), true
+	return declaration_make(name, type, value, .comptime), true
 }
 
 // expect identifier and return its value
@@ -140,7 +140,7 @@ parse_program :: proc(p: ^Parser) -> (^AstNode, bool) {
 		}
 	}
 
-	return make_program(declarations), true
+	return program_make(declarations), true
 }
 
 parse :: proc(p: ^Parser) -> bool {

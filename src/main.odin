@@ -49,7 +49,7 @@ main :: proc() {
 	defer semantic.deinit(&s)
 
 	fmt.printf("\n::[[ semantic analysis ]]::\n")
-	fmt.printf("collected %d symbols:\n\n", 1)
+	fmt.printf("collected %d symbols:\n\n", 0)
 
 
 	fmt.printf("\n::[[ code emission ]]::\n")
