@@ -54,6 +54,21 @@ Literal :: struct {
 
 LiteralValue :: union {
 	bool,
+
+	// ints
+	u8,
+	u16,
+	u32,
+	u64,
+	i8,
+	i16,
+	i32,
+	i64,
+
+	// floats
+	f16,
+	f32,
+	f64,
 }
 
 print_indent :: proc(indent: int) {

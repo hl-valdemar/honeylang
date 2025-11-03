@@ -21,7 +21,24 @@ main :: proc() {
 		logger.enable_file_logging("logs.txt")
 	}
 
-	l := lexer.init("DEBUG :: true")
+  // get source file
+	if len(os.args) < 2 {
+		logger.fatal(LOG_SCOPE, "usage: %s <source-file>", os.args[0])
+		os.exit(1)
+	}
+
+	// read source file
+	filepath := os.args[1]
+	source_bytes, ok := os.read_entire_file(filepath)
+	if !ok {
+		logger.fatal(LOG_SCOPE, "failed to read file: %s", filepath)
+		os.exit(1)
+	}
+	defer delete(source_bytes)
+
+	source := string(source_bytes)
+
+	l := lexer.init(source)
 	defer lexer.deinit(&l)
 
 	if ok := lexer.scan(&l); !ok {

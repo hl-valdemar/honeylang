@@ -1,6 +1,9 @@
 package parser
 
 import "../logger"
+import "core:strconv"
+import "core:strings"
+import "core:unicode"
 
 peek_offset :: proc(p: ^Parser, offset: int) -> Maybe(Token) {
 	if p.next_token_idx + offset < len(p.tokens) {
@@ -44,12 +47,7 @@ program_make :: proc(declarations: [dynamic]Declaration) -> ^AstNode {
 }
 
 // create a complete declaration node
-declaration_make :: proc(
-	name: string,
-	type: ^Type,
-	value: ^AstNode,
-	kind: DeclKind,
-) -> ^AstNode {
+make_declaration :: proc(name: string, type: ^Type, value: ^AstNode, kind: DeclKind) -> ^AstNode {
 	node := new(AstNode)
 	node^ = Declaration {
 		name  = name,
@@ -60,7 +58,7 @@ declaration_make :: proc(
 	return node
 }
 
-identifier_make :: proc(tok: Token) -> (^AstNode, bool) {
+make_identifier :: proc(tok: Token) -> (^AstNode, bool) {
 	val, ok := tok.value.?
 	if !ok {
 		logger.fatal(LOG_SCOPE, "identifier has no value")
@@ -74,7 +72,22 @@ identifier_make :: proc(tok: Token) -> (^AstNode, bool) {
 	return node, true
 }
 
-boolean_make :: proc(tok: Token) -> (^AstNode, bool) {
+make_type :: proc(tok: Token) -> (^Type, bool) {
+	val, ok := tok.value.?
+	if !ok {
+		logger.fatal(LOG_SCOPE, "type has no value")
+		return nil, false
+	}
+
+	node := new(Type)
+	node^ = NamedType {
+		name = val,
+	}
+
+	return node, true
+}
+
+make_boolean :: proc(tok: Token) -> (^AstNode, bool) {
 	val, ok := tok.value.?
 	if !ok {
 		logger.fatal(LOG_SCOPE, "boolean has no value")
@@ -90,5 +103,40 @@ boolean_make :: proc(tok: Token) -> (^AstNode, bool) {
 	node^ = Literal {
 		value = val == "true",
 	}
+	return node, true
+}
+
+make_number :: proc(tok: Token) -> (^AstNode, bool) {
+	val, ok := tok.value.?
+	if !ok {
+		logger.fatal(LOG_SCOPE, "number has no value")
+		return nil, false
+	}
+
+	node := new(AstNode)
+
+	has_decimal := strings.contains(val, ".")
+	if has_decimal {
+		// parse as f64 (default)
+		num, ok := strconv.parse_f64(val)
+		if !ok {
+			logger.error(LOG_SCOPE, "failed to parse float: %s", val)
+			return nil, false
+		}
+		node^ = Literal {
+			value = num,
+		}
+	} else {
+		// parse as i64 (default)
+		num, ok := strconv.parse_i64(val)
+		if !ok {
+			logger.error(LOG_SCOPE, "failed to parse integer: %s", val)
+			return nil, false
+		}
+		node^ = Literal {
+			value = num,
+		}
+	}
+
 	return node, true
 }

@@ -1,4 +1,4 @@
-BUILD_DIR = ./build
+BUILD_DIR = build
 BIN_NAME = honey
 
 .PHONY: run debug release clean

@@ -45,10 +45,13 @@ parse_primary :: proc(p: ^Parser) -> (^AstNode, bool) {
 
 	#partial switch tok.kind {
 	case .identifier:
-		node, ok = identifier_make(tok)
+		node, ok = make_identifier(tok)
 
 	case .boolean:
-		node, ok = boolean_make(tok)
+		node, ok = make_boolean(tok)
+
+	case .number:
+		node, ok = make_number(tok)
 
 	case:
 		// unexpected token type
@@ -84,7 +87,7 @@ parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 	if !ok do return nil, false
 
 	// create node with all fields at once
-	return declaration_make(name, type, value, .comptime), true
+	return make_declaration(name, type, value, .comptime), true
 }
 
 // expect identifier and return its value
@@ -110,11 +113,7 @@ parse_type :: proc(p: ^Parser, err_msg: string) -> (^Type, bool) {
 		return nil, false
 	}
 
-	node := new(Type)
-	node^ = NamedType {
-		name = tok.value.?,
-	}
-	return node, true
+	return make_type(tok)
 }
 
 parse_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
@@ -128,8 +127,15 @@ parse_program :: proc(p: ^Parser) -> (^AstNode, bool) {
 	declarations := make([dynamic]Declaration)
 
 	for {
+		if _, ok := peek(p).?; !ok {
+			break // successfully parsed all tokens
+		}
+
 		node, ok := parse_decl(p)
-		if !ok do break
+		if !ok {
+			logger.error(LOG_SCOPE, "failed to parse declaration")
+			return nil, false
+		}
 
 		#partial switch n in node {
 		case Declaration:
@@ -137,6 +143,7 @@ parse_program :: proc(p: ^Parser) -> (^AstNode, bool) {
 
 		case:
 			logger.fatal(LOG_SCOPE, "expected declaration in program")
+			return nil, false
 		}
 	}
 
