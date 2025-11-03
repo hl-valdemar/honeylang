@@ -1,4 +1,4 @@
 # comptime constants
 DEBUG :: true
-PI :: 3.14
+PI: f32 :: 3.14
 ANSWER :: 42

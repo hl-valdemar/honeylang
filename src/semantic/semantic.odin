@@ -4,6 +4,8 @@ import "../logger"
 import "../parser"
 import "../scope"
 
+import "core:fmt"
+
 LOG_SCOPE :: scope.Scope.semantic
 
 SymbolType :: enum {
@@ -18,6 +20,7 @@ SymbolType :: enum {
 
 	// floats
 	f16,
+	f32,
 	f64,
 }
 
@@ -31,6 +34,7 @@ PendingValue :: struct {} // just a tag
 ComptimeValue :: union {
 	bool,
 	i64, // default int type
+	f32,
 	f64, // default float type
 }
 
@@ -137,9 +141,17 @@ resolve_type_name :: proc(name: string) -> SymbolType {
 		return .bool
 	case "i64":
 		return .i64
+	case "f32":
+		return .f32
 	case "f64":
 		return .f64
 	case:
 		return .unknown
+	}
+}
+
+print_symtab :: proc(symtab: ^SymbolTable) {
+	for symbol in symtab.symbols {
+		fmt.printf("(%s) %s: %s = %v\n", symbol.kind, symbol.name, symbol.type, symbol.value)
 	}
 }

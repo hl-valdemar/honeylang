@@ -67,10 +67,7 @@ main :: proc() {
 
 	fmt.printf("\n::[[ semantic analysis ]]::\n")
 	fmt.printf("collected %d symbols:\n\n", len(s.symtab.symbols[:]))
-	for symbol in s.symtab.symbols {
-		fmt.printf("(%s) %s: %s = %v\n", symbol.kind, symbol.name, symbol.type, symbol.value)
-	}
-
+  semantic.print_symtab(&s.symtab)
 
 	fmt.printf("\n::[[ code emission ]]::\n")
 	fmt.printf("nothing yet to see...\n\n")
