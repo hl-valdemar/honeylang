@@ -4,7 +4,6 @@ import "lexer"
 import "logger"
 import "parser"
 import "scope"
-import "semantic"
 
 import "core:fmt"
 import "core:os"
@@ -24,26 +23,26 @@ main :: proc() {
 	l := lexer.init("DEBUG :: true")
 	defer lexer.deinit(&l)
 
-	tokens, ok := lexer.scan(&l)
-	if !ok {
+	if ok := lexer.scan(&l); !ok {
 		logger.fatal(LOG_SCOPE, "failed to scan honey source code")
 		os.exit(1)
 	}
 
 	fmt.printf("\n::[[ lexing ]]::\n")
-	fmt.printf("generated %d tokens:\n\n", len(tokens))
-	for tok in tokens do fmt.println(lexer.token_to_string(tok))
+	fmt.printf("generated %d tokens:\n\n", len(l.tokens))
+	for tok in l.tokens do fmt.println(lexer.token_to_string(tok))
 
-	p := parser.init(tokens[:])
+	p := parser.init(l.tokens[:])
+	defer parser.deinit(&p)
 
-	ast: ^parser.AstNode
-	ast, ok = parser.parse(&p)
-	if !ok {
+	if ok := parser.parse(&p); !ok {
 		logger.fatal(LOG_SCOPE, "failed to parse tokens")
 		os.exit(1)
 	}
 
 	fmt.printf("\n::[[ parsing ]]::\n")
 	fmt.printf("generated ast:\n\n")
-  parser.print_ast(ast);
+	parser.print_ast(p.ast)
+
+
 }

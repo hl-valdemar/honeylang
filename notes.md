@@ -1,5 +1,11 @@
 # Notes
 
+## Compiler overview
+
+```
+TODO
+```
+
 ## Roadmap (v0.1.0)
 
 ## Todo

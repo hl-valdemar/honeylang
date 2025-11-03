@@ -10,8 +10,8 @@ TokenKind :: enum {
 	slash,
 
 	// assignment operators
-	double_colon,
 	colon,
+	double_colon,
 	equal,
 
 	// comparison operators
@@ -54,7 +54,7 @@ TokenKind :: enum {
 
 Token :: struct {
 	kind:  TokenKind,
-	value: Maybe([]rune),
+	value: Maybe(string),
 }
 
 token_to_string :: proc(tok: Token) -> string {
