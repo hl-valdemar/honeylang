@@ -16,7 +16,7 @@ Program :: struct {
 Declaration :: struct {
 	kind:  DeclKind,
 	name:  string,
-	type:  Maybe(^Type),
+	type:  Maybe(^TypeNode),
 	value: ^AstNode,
 }
 
@@ -29,7 +29,7 @@ DeclKind :: enum {
 	mutable,
 }
 
-Type :: union {
+TypeNode :: union {
 	NamedType,
 	PointerType,
 	// ArrayType,
@@ -41,7 +41,7 @@ NamedType :: struct {
 }
 
 PointerType :: struct {
-	pointee: ^Type,
+	pointee: ^TypeNode,
 }
 
 Identifier :: struct {
@@ -116,7 +116,7 @@ print_decl :: proc(decl: ^Declaration, indent := 0) {
 	print_ast(decl.value, indent + 1)
 }
 
-print_type :: proc(type_node: Maybe(^Type), indent := 0) {
+print_type :: proc(type_node: Maybe(^TypeNode), indent := 0) {
 	print_indent(indent)
 
 	node, ok := type_node.?
@@ -165,7 +165,7 @@ decl_destroy :: proc(decl: ^Declaration) {
 	free(decl)
 }
 
-type_destroy :: proc(node: ^Type) {
+type_destroy :: proc(node: ^TypeNode) {
 	if node == nil do return
 
 	switch n in node {

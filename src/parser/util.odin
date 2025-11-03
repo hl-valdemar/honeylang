@@ -3,7 +3,6 @@ package parser
 import "../logger"
 import "core:strconv"
 import "core:strings"
-import "core:unicode"
 
 peek_offset :: proc(p: ^Parser, offset: int) -> Maybe(Token) {
 	if p.next_token_idx + offset < len(p.tokens) {
@@ -47,7 +46,7 @@ program_make :: proc(declarations: [dynamic]Declaration) -> ^AstNode {
 }
 
 // create a complete declaration node
-make_declaration :: proc(name: string, type: ^Type, value: ^AstNode, kind: DeclKind) -> ^AstNode {
+make_declaration :: proc(name: string, type: ^TypeNode, value: ^AstNode, kind: DeclKind) -> ^AstNode {
 	node := new(AstNode)
 	node^ = Declaration {
 		name  = name,
@@ -72,14 +71,14 @@ make_identifier :: proc(tok: Token) -> (^AstNode, bool) {
 	return node, true
 }
 
-make_type :: proc(tok: Token) -> (^Type, bool) {
+make_type :: proc(tok: Token) -> (^TypeNode, bool) {
 	val, ok := tok.value.?
 	if !ok {
 		logger.fatal(LOG_SCOPE, "type has no value")
 		return nil, false
 	}
 
-	node := new(Type)
+	node := new(TypeNode)
 	node^ = NamedType {
 		name = val,
 	}

@@ -2,7 +2,20 @@ package semantic
 
 import "../parser"
 
-Symbol :: struct {}
+SymbolType :: enum {}
+
+SymbolValue :: union {}
+
+Symbol :: struct {
+	name:  string,
+	kind:  SymbolKind,
+	type:  SymbolType,
+	value: SymbolValue,
+}
+
+SymbolKind :: enum {
+	comptime,
+}
 
 SymbolTable :: struct {
 	symbols: [dynamic]Symbol,

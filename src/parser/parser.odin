@@ -69,7 +69,7 @@ parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 	if !ok do return nil, false
 
 	// parse optional type
-	type: ^Type = nil
+	type: ^TypeNode = nil
 	if match(p, .colon) {
 		type, ok = parse_type(p, "expected type in comptime declaration")
 		if !ok do return nil, false
@@ -104,7 +104,7 @@ parse_identifier :: proc(p: ^Parser, err_msg: string) -> (string, bool) {
 }
 
 // parse a type node
-parse_type :: proc(p: ^Parser, err_msg: string) -> (^Type, bool) {
+parse_type :: proc(p: ^Parser, err_msg: string) -> (^TypeNode, bool) {
 	tok, ok := peek(p).?
 	if !ok do return nil, false
 
