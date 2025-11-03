@@ -3,15 +3,20 @@ package parser
 import "core:fmt"
 
 AstNode :: union {
+	Program,
 	Declaration,
 	Identifier,
 	Literal,
 }
 
+Program :: struct {
+	declarations: [dynamic]Declaration,
+}
+
 Declaration :: struct {
 	kind:  DeclKind,
 	name:  string,
-	type:  Maybe(^TypeNode),
+	type:  Maybe(^Type),
 	value: ^AstNode,
 }
 
@@ -24,7 +29,7 @@ DeclKind :: enum {
 	mutable,
 }
 
-TypeNode :: union {
+Type :: union {
 	NamedType,
 	PointerType,
 	// ArrayType,
@@ -36,7 +41,7 @@ NamedType :: struct {
 }
 
 PointerType :: struct {
-	pointee: ^TypeNode,
+	pointee: ^Type,
 }
 
 Identifier :: struct {
@@ -65,16 +70,14 @@ print_ast :: proc(node: ^AstNode, indent := 0) {
 	print_indent(indent)
 
 	// TODO: remove the `#partial` directive
-	#partial switch n in node {
+	#partial switch &n in node {
+	case Program:
+		for &decl in n.declarations {
+			print_decl(&decl, indent)
+		}
+
 	case Declaration:
-		fmt.printf("declaration (%v):\n", n.kind)
-
-		print_indent(indent + 1)
-		fmt.printf("name: %s\n", n.name)
-
-		print_type_node(n.type, indent + 1)
-
-		print_ast(n.value, indent + 1)
+		print_decl(&n, indent)
 
 	case Identifier:
 		print_indent(indent)
@@ -85,7 +88,20 @@ print_ast :: proc(node: ^AstNode, indent := 0) {
 	}
 }
 
-print_type_node :: proc(type_node: Maybe(^TypeNode), indent := 0) {
+print_decl :: proc(decl: ^Declaration, indent := 0) {
+	print_indent(indent)
+
+	fmt.printf("declaration (%v):\n", decl.kind)
+
+	print_indent(indent + 1)
+	fmt.printf("name: %s\n", decl.name)
+
+	print_type(decl.type, indent + 1)
+
+	print_ast(decl.value, indent + 1)
+}
+
+print_type :: proc(type_node: Maybe(^Type), indent := 0) {
 	print_indent(indent)
 
 	node, ok := type_node.?
@@ -106,10 +122,16 @@ destroy_ast :: proc(node: ^AstNode) {
 	if node == nil do return
 
 	switch n in node {
+	case Program:
+		for &decl in n.declarations {
+			destroy_decl(&decl)
+		}
+		delete(n.declarations)
+
 	case Declaration:
 		destroy_ast(n.value)
-		if type_node, ok := n.type.?; ok {
-			destroy_type(type_node)
+		if type, ok := n.type.?; ok {
+			destroy_type(type)
 		}
 
 	case Identifier, Literal:
@@ -119,7 +141,16 @@ destroy_ast :: proc(node: ^AstNode) {
 	free(node)
 }
 
-destroy_type :: proc(node: ^TypeNode) {
+destroy_decl :: proc(decl: ^Declaration) {
+	if decl == nil do return
+	destroy_ast(decl.value)
+	if type, ok := decl.type.?; ok {
+		destroy_type(type)
+	}
+	free(decl)
+}
+
+destroy_type :: proc(node: ^Type) {
 	if node == nil do return
 
 	switch n in node {

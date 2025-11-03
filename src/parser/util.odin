@@ -35,10 +35,18 @@ advance :: proc(p: ^Parser) {
 	p.next_token_idx += 1
 }
 
+make_program :: proc(declarations: [dynamic]Declaration) -> ^AstNode {
+	node := new(AstNode)
+	node^ = Program {
+		declarations = declarations,
+	}
+	return node
+}
+
 // create a complete declaration node
 make_declaration :: proc(
 	name: string,
-	type: ^TypeNode,
+	type: ^Type,
 	value: ^AstNode,
 	kind: DeclKind,
 ) -> ^AstNode {

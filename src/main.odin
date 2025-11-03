@@ -4,6 +4,7 @@ import "lexer"
 import "logger"
 import "parser"
 import "scope"
+import "semantic"
 
 import "core:fmt"
 import "core:os"
@@ -41,8 +42,16 @@ main :: proc() {
 	}
 
 	fmt.printf("\n::[[ parsing ]]::\n")
-	fmt.printf("generated ast:\n\n")
+	fmt.printf("parsed %d declarations:\n\n", len(p.ast.(parser.Program).declarations))
 	parser.print_ast(p.ast)
 
+	s := semantic.init(p.ast)
+	defer semantic.deinit(&s)
 
+	fmt.printf("\n::[[ semantic analysis ]]::\n")
+	fmt.printf("collected %d symbols:\n\n", 1)
+
+
+	fmt.printf("\n::[[ code emission ]]::\n")
+	fmt.printf("nothing yet to see...\n\n")
 }

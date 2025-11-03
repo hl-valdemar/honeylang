@@ -66,7 +66,7 @@ parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 	if !ok do return nil, false
 
 	// parse optional type
-	type: ^TypeNode = nil
+	type: ^Type = nil
 	if match(p, .colon) {
 		type, ok = parse_type(p, "expected type in comptime declaration")
 		if !ok do return nil, false
@@ -101,7 +101,7 @@ parse_identifier :: proc(p: ^Parser, err_msg: string) -> (string, bool) {
 }
 
 // parse a type node
-parse_type :: proc(p: ^Parser, err_msg: string) -> (^TypeNode, bool) {
+parse_type :: proc(p: ^Parser, err_msg: string) -> (^Type, bool) {
 	tok, ok := peek(p).?
 	if !ok do return nil, false
 
@@ -110,7 +110,7 @@ parse_type :: proc(p: ^Parser, err_msg: string) -> (^TypeNode, bool) {
 		return nil, false
 	}
 
-	node := new(TypeNode)
+	node := new(Type)
 	node^ = NamedType {
 		name = tok.value.?,
 	}
@@ -124,8 +124,27 @@ parse_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 	return nil, false
 }
 
+parse_program :: proc(p: ^Parser) -> (^AstNode, bool) {
+	declarations := make([dynamic]Declaration)
+
+	for {
+		node, ok := parse_decl(p)
+		if !ok do break
+
+		#partial switch n in node {
+		case Declaration:
+			append(&declarations, n)
+
+		case:
+			logger.fatal(LOG_SCOPE, "expected declaration in program")
+		}
+	}
+
+	return make_program(declarations), true
+}
+
 parse :: proc(p: ^Parser) -> bool {
-	node, ok := parse_decl(p)
-	p.ast = node
+	program, ok := parse_program(p)
+	p.ast = program
 	return ok
 }
