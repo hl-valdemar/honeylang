@@ -39,6 +39,10 @@ advance :: proc(lex: ^Lexer) {
 	lex.next_src_idx += 1
 }
 
+advance_n :: proc(lex: ^Lexer, n: int) {
+	lex.next_src_idx += n
+}
+
 peek :: proc(lex: ^Lexer) -> Maybe(rune) {
 	if lex.next_src_idx < len(lex.src) {
 		return lex.src[lex.next_src_idx]
@@ -164,16 +168,21 @@ scan :: proc(lex: ^Lexer) -> bool {
 		} else if unicode.is_digit(r) { 	// numbers
 			num_tok := scan_number(lex)
 			append(&lex.tokens, num_tok)
+		} else if r == '-' {
+			advance(lex)
+			append(&lex.tokens, Token{kind = .minus})
+		} else if r == '*' {
+			advance(lex)
+			append(&lex.tokens, Token{kind = .star})
 		} else if r == ':' {
 			// double colon
 			if next, ok := peek_offset(lex, 1).?; ok && next == ':' {
+				advance_n(lex, 2)
 				append(&lex.tokens, Token{kind = .double_colon})
-				advance(lex)
-				advance(lex)
 			} else {
 				// single colon
-				append(&lex.tokens, Token{kind = .colon})
 				advance(lex)
+				append(&lex.tokens, Token{kind = .colon})
 			}
 		} else {
 			// unknown character

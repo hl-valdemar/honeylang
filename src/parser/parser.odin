@@ -62,6 +62,47 @@ parse_primary :: proc(p: ^Parser) -> (^AstNode, bool) {
 	return node, ok
 }
 
+parse_unary :: proc(p: ^Parser) -> (^AstNode, bool) {
+	tok, ok := peek(p).?
+	if !ok do return nil, false
+
+	if check(p, .minus) || check(p, .logical_not) {
+		advance(p)
+
+		op := resolve_unary_op_kind(tok.kind).?
+		if op == nil {
+			logger.fatal(LOG_SCOPE, "failed to resolve op kind in unary")
+			return nil, false
+		}
+
+		// parse the operand
+		operand, ok := parse_primary(p)
+		if !ok {
+			logger.fatal(LOG_SCOPE, "failed to parse operand in unary")
+			return nil, false
+		}
+
+		// parse unary
+		return make_unary(operand, op), true
+	}
+
+	// else parse primary
+	return parse_program(p)
+}
+
+resolve_unary_op_kind :: proc(tok_kind: TokenKind) -> Maybe(UnaryOpKind) {
+	#partial switch tok_kind {
+	case .minus:
+		return .negate
+	case .logical_not:
+		return .logical_not
+	case:
+		logger.fatal(LOG_SCOPE, "unexpected token in unary expression: %v", tok_kind)
+		return nil
+	}
+	return nil
+}
+
 parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 	// parse name
 	name, ok := parse_identifier(p, "expected identifier in comptime declaration")
@@ -82,11 +123,11 @@ parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 
 	// parse value
 	value: ^AstNode
-	value, ok = parse_primary(p)
+	value, ok = parse_unary(p)
 	if !ok do return nil, false
 
 	// create node with all fields at once
-	return make_declaration(name, type, value, .comptime), true
+	return make_declaration(name, type, value, .const), true
 }
 
 // expect identifier and return its value

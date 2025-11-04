@@ -7,6 +7,7 @@ AstNode :: union {
 	Declaration,
 	Identifier,
 	Literal,
+	UnaryOp,
 }
 
 Program :: struct {
@@ -21,8 +22,9 @@ Declaration :: struct {
 }
 
 DeclKind :: enum {
+	func,
 	// compile-time constant
-	comptime,
+	const,
 	// runtime constant
 	immutable,
 	// runtime mutable
@@ -56,6 +58,16 @@ LiteralValue :: union {
 	bool,
 	i64,
 	f64,
+}
+
+UnaryOp :: struct {
+	operand: ^AstNode,
+	op:      UnaryOpKind,
+}
+
+UnaryOpKind :: enum {
+	negate,
+	logical_not,
 }
 
 print_indent :: proc(indent: int) {
@@ -135,6 +147,9 @@ ast_destroy :: proc(node: ^AstNode) {
 		if type, ok := n.type.?; ok {
 			type_destroy(type)
 		}
+
+	case UnaryOp:
+		ast_destroy(n.operand)
 
 	case Identifier, Literal:
 	// no children

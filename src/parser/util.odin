@@ -46,13 +46,27 @@ program_make :: proc(declarations: [dynamic]Declaration) -> ^AstNode {
 }
 
 // create a complete declaration node
-make_declaration :: proc(name: string, type: ^TypeNode, value: ^AstNode, kind: DeclKind) -> ^AstNode {
+make_declaration :: proc(
+	name: string,
+	type: ^TypeNode,
+	value: ^AstNode,
+	kind: DeclKind,
+) -> ^AstNode {
 	node := new(AstNode)
 	node^ = Declaration {
 		name  = name,
 		type  = type,
 		value = value,
 		kind  = kind,
+	}
+	return node
+}
+
+make_unary :: proc(operand: ^AstNode, op: UnaryOpKind) -> ^AstNode {
+	node := new(AstNode)
+	node^ = UnaryOp {
+		operand = operand,
+		op    = op,
 	}
 	return node
 }
