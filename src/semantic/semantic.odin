@@ -17,10 +17,16 @@ EvalState :: enum {
 SymbolType :: enum {
 	bool,
 
-	// integers
+	// unsigned integers
 	u8,
+	u16,
+	u32,
 	u64,
+
+	// signed integers
 	i8,
+	i16,
+	i32,
 	i64,
 
 	// floats
@@ -37,9 +43,23 @@ PendingValue :: struct {} // just a tag
 
 ComptimeValue :: union {
 	bool,
-	i64, // default int type
-	f32,
-	f64, // default float type
+
+	// unsigned integers
+	u8,
+	u16,
+	u32,
+	u64,
+
+	// signed integers
+	i8,
+	i16,
+	i32, // default int type
+	i64,
+
+	// floats
+	f16,
+	f32, // default float type
+	f64,
 }
 
 Symbol :: struct {
@@ -117,12 +137,35 @@ resolve_type_name :: proc(name: string) -> Maybe(SymbolType) {
 	switch name {
 	case "bool":
 		return .bool
+
+	// signed integers
+	case "u8":
+		return .u8
+	case "u16":
+		return .u16
+	case "u32":
+		return .u32
+	case "u64":
+		return .u64
+
+	// signed integers
+	case "i8":
+		return .i8
+	case "i16":
+		return .i16
+	case "i32":
+		return .i32
 	case "i64":
 		return .i64
+
+	// floats
+	case "f16":
+		return .f16
 	case "f32":
 		return .f32
 	case "f64":
 		return .f64
+
 	case:
 		logger.fatal(LOG_SCOPE, "unknown type \"%s\" in comptime constant", name)
 		return nil
@@ -181,7 +224,7 @@ evaluate_symbol :: proc(s: ^Semantic, symbol: ^Symbol) -> bool {
 		// mark as evaluating
 		symbol.eval_state = .evaluating
 
-		value, ok := evaluate_expr(s, symbol.decl.value)
+		value, ok := evaluate_expr(s, symbol.decl.value, symbol.type)
 		if !ok do return false
 
 		// store and mark as done
@@ -215,10 +258,16 @@ evaluate_expr :: proc(
 		#partial switch v in node.value {
 		case bool:
 			return v, true
+		case u64:
+			return v, true
 		case i64:
 			return v, true
 		case f64:
 			return v, true
+
+		case:
+			logger.fatal(LOG_SCOPE, "unexpected data type from parsing stage when parsing literal")
+			return {}, false
 		}
 
 	case parser.Identifier:
@@ -229,6 +278,11 @@ evaluate_expr :: proc(
 			return {}, false
 		}
 
+		// infer type from context
+		if context_type != nil && symbol.type == nil {
+			symbol.type = context_type
+		}
+
 		// recursively evaluate
 		if !evaluate_symbol(s, symbol) do return {}, false
 
@@ -237,7 +291,7 @@ evaluate_expr :: proc(
 
 	case parser.UnaryOp:
 		// recursively evaluate the operand
-		operand_val, ok := evaluate_expr(s, node.operand)
+		operand_val, ok := evaluate_expr(s, node.operand, context_type)
 		if !ok do return {}, false
 
 		// extract ComptimeValue
@@ -274,11 +328,11 @@ evaluate_expr :: proc(
 
 	case parser.BinaryOp:
 		// recursively evaluate both operands
-		left_val, ok := evaluate_expr(s, node.left)
+		left_val, ok := evaluate_expr(s, node.left, context_type)
 		if !ok do return {}, false
 
 		right_val: SymbolValue
-		right_val, ok = evaluate_expr(s, node.right)
+		right_val, ok = evaluate_expr(s, node.right, context_type)
 		if !ok do return {}, false
 
 		// extract ComptimeValues
@@ -291,6 +345,62 @@ evaluate_expr :: proc(
 
 		// match on left type, ensure right matches
 		switch l in left_ct {
+		case u8:
+			r, ok := right_ct.(u8)
+			if !ok {
+				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
+				return {}, false
+			}
+			return eval_binary_u8(l, r, node.op)
+
+		case u16:
+			r, ok := right_ct.(u16)
+			if !ok {
+				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
+				return {}, false
+			}
+			return eval_binary_u16(l, r, node.op)
+
+		case u32:
+			r, ok := right_ct.(u32)
+			if !ok {
+				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
+				return {}, false
+			}
+			return eval_binary_u32(l, r, node.op)
+
+		case u64:
+			r, ok := right_ct.(u64)
+			if !ok {
+				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
+				return {}, false
+			}
+			return eval_binary_u64(l, r, node.op)
+
+		case i8:
+			r, ok := right_ct.(i8)
+			if !ok {
+				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
+				return {}, false
+			}
+			return eval_binary_i8(l, r, node.op)
+
+		case i16:
+			r, ok := right_ct.(i16)
+			if !ok {
+				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
+				return {}, false
+			}
+			return eval_binary_i16(l, r, node.op)
+
+		case i32:
+			r, ok := right_ct.(i32)
+			if !ok {
+				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
+				return {}, false
+			}
+			return eval_binary_i32(l, r, node.op)
+
 		case i64:
 			r, ok := right_ct.(i64)
 			if !ok {
@@ -298,6 +408,14 @@ evaluate_expr :: proc(
 				return {}, false
 			}
 			return eval_binary_i64(l, r, node.op)
+
+		case f16:
+			r, ok := right_ct.(f16)
+			if !ok {
+				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
+				return {}, false
+			}
+			return eval_binary_f16(l, r, node.op)
 
 		case f32:
 			r, ok := right_ct.(f32)
@@ -332,12 +450,73 @@ evaluate_expr :: proc(
 	return {}, false
 }
 
+apply_default_types :: proc(s: ^Semantic) -> bool {
+	for &symbol in s.symtab.symbols {
+		if symbol.kind != .const do continue
+		if symbol.type != nil do continue // already has a type
+
+		value, ok := symbol.value.?
+		if !ok {
+			logger.fatal(LOG_SCOPE, "symbol has no value: %s", symbol.name)
+			return false
+		}
+
+		comptime_val, ok_ct := value.(ComptimeValue)
+		if !ok_ct {
+			logger.fatal(LOG_SCOPE, "expected comptime value for symbol: %s", symbol.name)
+			return false
+		}
+
+		// assign default type based on value and range
+		#partial switch v in comptime_val {
+		case bool:
+			symbol.type = .bool
+
+		case u64:
+			// check if fits in u32
+			u32_val := u32(v)
+			if u64(u32_val) == v {
+				symbol.type = .u32
+			} else {
+				symbol.type = .u64
+			}
+
+		case i64:
+			// check if fits in i32
+			i32_val := i32(v)
+			if i64(i32_val) == v {
+				symbol.type = .i32
+			} else {
+				symbol.type = .i64
+			}
+
+		case f64:
+			// check if can be represented exactly in f32
+			f32_val := f32(v)
+			if f64(f32_val) == v {
+				symbol.type = .f32
+			} else {
+				symbol.type = .f64
+			}
+
+		case:
+			logger.fatal(LOG_SCOPE, "unexpected data type from parser when applying default types")
+			return false
+		}
+	}
+
+	return true
+}
+
 analyze :: proc(s: ^Semantic) -> bool {
 	// first pass: collect symbols
 	if !collect_symbols(s) do return false
 
 	// second pass: evaluate comptime expressions in dependency order
 	if !evaluate_constants(s) do return false
+
+	// third pass: apply default types to remainin untyped constants
+	if !apply_default_types(s) do return false
 
 	return true
 }

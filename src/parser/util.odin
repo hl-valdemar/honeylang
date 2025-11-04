@@ -141,7 +141,7 @@ make_number :: proc(tok: Token) -> (^AstNode, bool) {
 	has_decimal := strings.contains(val, ".")
 	if has_decimal {
 		// parse as f64 (default)
-		num, ok := strconv.parse_f64(val)
+		num, ok := strconv.parse_f64(val) // always encode as f64 in parsing stage
 		if !ok {
 			logger.error(LOG_SCOPE, "failed to parse float: %s", val)
 			return nil, false
@@ -151,7 +151,7 @@ make_number :: proc(tok: Token) -> (^AstNode, bool) {
 		}
 	} else {
 		// parse as i64 (default)
-		num, ok := strconv.parse_i64(val)
+		num, ok := strconv.parse_i64(val) // always encode as i64 in parsing stage
 		if !ok {
 			logger.error(LOG_SCOPE, "failed to parse integer: %s", val)
 			return nil, false

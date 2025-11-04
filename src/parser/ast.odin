@@ -57,8 +57,23 @@ Literal :: struct {
 
 LiteralValue :: union {
 	bool,
-	i64,
-	f64,
+
+	// unsigned integers
+	u8,
+	u16,
+	u32,
+	u64, // default value when parsing
+
+	// signed integers
+	i8,
+	i16,
+	i32,
+	i64, // default value when parsing
+
+	// floats
+	f16,
+	f32,
+	f64, // default value when parsing
 }
 
 UnaryOp :: struct {
