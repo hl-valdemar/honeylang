@@ -69,11 +69,8 @@ parse_unary :: proc(p: ^Parser) -> (^AstNode, bool) {
 	if check(p, .minus) || check(p, .logical_not) {
 		advance(p)
 
+		// resolve operation
 		op := resolve_unary_op_kind(tok.kind).?
-		if op == nil {
-			logger.fatal(LOG_SCOPE, "failed to resolve op kind in unary")
-			return nil, false
-		}
 
 		// parse the operand
 		operand, ok := parse_primary(p)
@@ -82,12 +79,11 @@ parse_unary :: proc(p: ^Parser) -> (^AstNode, bool) {
 			return nil, false
 		}
 
-		// parse unary
 		return make_unary(operand, op), true
 	}
 
 	// else parse primary
-	return parse_program(p)
+	return parse_primary(p)
 }
 
 resolve_unary_op_kind :: proc(tok_kind: TokenKind) -> Maybe(UnaryOpKind) {
@@ -101,6 +97,75 @@ resolve_unary_op_kind :: proc(tok_kind: TokenKind) -> Maybe(UnaryOpKind) {
 		return nil
 	}
 	return nil
+}
+
+parse_multiplicative :: proc(p: ^Parser) -> (^AstNode, bool) {
+	left, ok := parse_unary(p)
+	if !ok {
+		logger.fatal(LOG_SCOPE, "failed to parse left-hand side in binary op")
+		return nil, false
+	}
+
+	tok: Token
+	tok, ok = peek(p).?
+	if !ok do return nil, false
+
+	// expect multiplication or division
+	if !check(p, .star) && !check(p, .slash) {
+		logger.fatal(LOG_SCOPE, "expected \"*\" or \"/\" in multiplicative")
+		return nil, false
+	}
+
+	op := resolve_binary_op_kind(tok.kind).?
+	advance(p)
+
+	right: ^AstNode
+	right, ok = parse_unary(p)
+	if !ok {
+		logger.fatal(LOG_SCOPE, "failed to parse right-hand side in binary op")
+		return nil, false
+	}
+
+	return make_binary(left, right, op), true
+}
+
+resolve_binary_op_kind :: proc(tok_kind: TokenKind) -> Maybe(BinaryOpKind) {
+	#partial switch tok_kind {
+	// arithmetic
+	case .plus:
+		return .add
+	case .minus:
+		return .sub
+	case .star:
+		return .mul
+	case .slash:
+		return .div
+
+	// logical
+	case .logical_and:
+		return .logical_and
+	case .logical_or:
+		return .logical_or
+
+	// comparative
+	case .less:
+		return .less
+	case .greater:
+		return .greater
+	case .less_equal:
+		return .less_equal
+	case .greater_equal:
+		return .greater_equal
+
+	case:
+		logger.fatal(LOG_SCOPE, "unexpected token in unary expression: %v", tok_kind)
+		return nil
+	}
+	return nil
+}
+
+parse_expr :: proc(p: ^Parser) -> (^AstNode, bool) {
+	return parse_multiplicative(p)
 }
 
 parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
@@ -123,7 +188,7 @@ parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 
 	// parse value
 	value: ^AstNode
-	value, ok = parse_unary(p)
+	value, ok = parse_expr(p)
 	if !ok do return nil, false
 
 	// create node with all fields at once

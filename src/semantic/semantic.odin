@@ -225,7 +225,45 @@ evaluate_expr :: proc(s: ^Semantic, expr: ^parser.AstNode) -> (SymbolValue, bool
 		// recursively evaluate
 		if !evaluate_symbol(s, symbol) do return {}, false
 
+		// symbol value must not be nil at this point
 		return symbol.value.?, true
+
+	case parser.UnaryOp:
+		// recursively evaluate the operand
+		operand_value, ok := evaluate_expr(s, node.operand)
+		if !ok do return {}, false
+
+		// extract ComptimeValue
+		comptime_val: ComptimeValue
+		comptime_val, ok = operand_value.(ComptimeValue)
+		if !ok {
+			logger.fatal(LOG_SCOPE, "expected comptime value in unary operation")
+			return {}, false
+		}
+
+		// apply the unary operation
+		#partial switch node.op {
+		case .negate:
+			#partial switch v in comptime_val {
+			case i64:
+				return -v, true
+			case f64:
+				return -v, true
+			case f32:
+				return -v, true
+			case:
+				logger.fatal(LOG_SCOPE, "cannot negate non-numeric value")
+				return {}, false
+			}
+		case .logical_not:
+			#partial switch v in comptime_val {
+			case bool:
+				return !v, true
+			case:
+				logger.fatal(LOG_SCOPE, "cannot apply logical not to non-boolean value")
+				return {}, false
+			}
+		}
 
 	case:
 		logger.fatal(LOG_SCOPE, "unsupported expression in constant")

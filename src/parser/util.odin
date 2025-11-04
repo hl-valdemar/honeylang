@@ -66,6 +66,16 @@ make_unary :: proc(operand: ^AstNode, op: UnaryOpKind) -> ^AstNode {
 	node := new(AstNode)
 	node^ = UnaryOp {
 		operand = operand,
+		op      = op,
+	}
+	return node
+}
+
+make_binary :: proc(left: ^AstNode, right: ^AstNode, op: BinaryOpKind) -> ^AstNode {
+	node := new(AstNode)
+	node^ = BinaryOp {
+		left  = left,
+		right = right,
 		op    = op,
 	}
 	return node

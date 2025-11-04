@@ -3,4 +3,4 @@ DEBUG :: true
 PI: f32 :: 3.14
 ANSWER :: 42
 BAD_INDEX :: -1
-# PI_SQUARED :: PI * PI
+PI_SQUARED :: PI * PI

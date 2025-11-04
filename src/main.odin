@@ -58,7 +58,7 @@ main :: proc() {
 
 	fmt.printf("\n::[[ PARSING ]]::\n")
 	fmt.printf("Parsed %d declarations:\n\n", len(p.ast.(parser.Program).declarations))
-	parser.print_ast(p.ast)
+	parser.ast_print(p.ast)
 
 	s := semantic.init(p.ast)
 	defer semantic.deinit(&s)
@@ -70,7 +70,7 @@ main :: proc() {
 	semantic.print_symtab(&s.symtab)
 
 	fmt.printf("\nTyped AST:\n\n")
-	parser.print_ast(s.program)
+	parser.ast_print(s.program)
 
 	fmt.printf("\n::[[ CODE EMISSION ]]::\n")
 	fmt.printf("Nothing yet to see...\n\n")
