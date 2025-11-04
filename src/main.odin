@@ -44,8 +44,8 @@ main :: proc() {
 		os.exit(1)
 	}
 
-	fmt.printf("\n::[[ lexing ]]::\n")
-	fmt.printf("generated %d tokens:\n\n", len(l.tokens))
+	fmt.printf("\n::[[ LEXING ]]::\n")
+	fmt.printf("Generated %d tokens:\n\n", len(l.tokens))
 	for tok in l.tokens do fmt.println(lexer.token_to_string(tok))
 
 	p := parser.init(l.tokens[:])
@@ -56,8 +56,8 @@ main :: proc() {
 		os.exit(1)
 	}
 
-	fmt.printf("\n::[[ parsing ]]::\n")
-	fmt.printf("parsed %d declarations:\n\n", len(p.ast.(parser.Program).declarations))
+	fmt.printf("\n::[[ PARSING ]]::\n")
+	fmt.printf("Parsed %d declarations:\n\n", len(p.ast.(parser.Program).declarations))
 	parser.print_ast(p.ast)
 
 	s := semantic.init(p.ast)
@@ -65,10 +65,13 @@ main :: proc() {
 
 	semantic.analyze(&s)
 
-	fmt.printf("\n::[[ semantic analysis ]]::\n")
-	fmt.printf("collected %d symbols:\n\n", len(s.symtab.symbols[:]))
-  semantic.print_symtab(&s.symtab)
+	fmt.printf("\n::[[ SEMANTIC ANALYSIS ]]::\n")
+	fmt.printf("Collected %d symbols:\n\n", len(s.symtab.symbols[:]))
+	semantic.print_symtab(&s.symtab)
 
-	fmt.printf("\n::[[ code emission ]]::\n")
-	fmt.printf("nothing yet to see...\n\n")
+	fmt.printf("\nTyped AST:\n\n")
+	parser.print_ast(s.program)
+
+	fmt.printf("\n::[[ CODE EMISSION ]]::\n")
+	fmt.printf("Nothing yet to see...\n\n")
 }
