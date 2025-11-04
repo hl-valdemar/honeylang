@@ -33,10 +33,32 @@ DeclKind :: enum {
 }
 
 TypeNode :: union {
+	LiteralType,
 	NamedType,
 	PointerType,
 	// ArrayType,
 	// etc...
+}
+
+LiteralType :: enum {
+	bool,
+
+	// unsigned integers
+	u8,
+	u16,
+	u32,
+	u64, // default value when parsing
+
+	// signed integers
+	i8,
+	i16,
+	i32,
+	i64, // default value when parsing
+
+	// floats
+	f16,
+	f32,
+	f64, // default value when parsing
 }
 
 NamedType :: struct {
@@ -214,6 +236,8 @@ print_type :: proc(type_node: Maybe(^TypeNode), indent := 0, is_last: []bool = {
 	}
 
 	switch n in node {
+	case LiteralType:
+		fmt.printf("type: %v\n", n)
 	case NamedType:
 		fmt.printf("type: %v\n", n.name)
 	case PointerType:
@@ -267,7 +291,7 @@ type_destroy :: proc(node: ^TypeNode) {
 	case PointerType:
 		type_destroy(n.pointee)
 
-	case NamedType:
+	case LiteralType, NamedType:
 	// no children
 	}
 

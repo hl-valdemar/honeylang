@@ -4,3 +4,5 @@ PI: f64 :: 3.14
 ANSWER :: 42
 BAD_INDEX :: -1
 PI_SQUARED :: PI * PI
+PI_CUBED :: PI * PI * PI
+INVALID :: ANSWER * PI  # ANSWER should be elavated to a float in this case (as X: f32 :: 42 is allowed)

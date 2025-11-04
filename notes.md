@@ -13,9 +13,11 @@ Source Code > Lexer: Token Stream ... > Parser: AST ........ > Semantic Analysis
 
 ## Roadmap (v0.1.0)
 
-- [ ] Strong typing
+- [x] Strong typing
 - [ ] Arithmetic and boolean operations (disregard modulo operation for now)
     - [ ] arithmetic
+        - [x] multiplicative
+        - [ ] additive
     - [ ] boolean
 - [ ] Control flow operations
     - [ ] if statements

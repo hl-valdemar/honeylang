@@ -583,6 +583,75 @@ apply_default_types :: proc(s: ^Semantic) -> bool {
 	return true
 }
 
+// type annotate ast
+update_ast :: proc(s: ^Semantic) -> bool {
+	program := s.program.(parser.Program)
+
+	for &decl in program.declarations {
+		// skip typed declarations
+		if decl.type != nil do continue
+
+		// find the symbol
+		symbol, ok_lookup := symtab_lookup(&s.symtab, decl.name).?
+		if !ok_lookup {
+			logger.fatal(LOG_SCOPE, "found unregistered declaration in AST (update_ast)")
+			return false
+		}
+
+		// get the type
+		sym_type, ok_symtype := symbol.type.?
+		if !ok_symtype {
+			logger.fatal(LOG_SCOPE, "found symbol without type in (update_ast)")
+			return false
+		}
+
+		// match the type
+		switch sym_type {
+		case .bool:
+			decl.type = new(parser.TypeNode)
+			decl.type.?^ = .bool
+
+		case .u8:
+			decl.type = new(parser.TypeNode)
+			decl.type.?^ = .u8
+		case .u16:
+			decl.type = new(parser.TypeNode)
+			decl.type.?^ = .u16
+		case .u32:
+			decl.type = new(parser.TypeNode)
+			decl.type.?^ = .u32
+		case .u64:
+			decl.type = new(parser.TypeNode)
+			decl.type.?^ = .u64
+
+		case .i8:
+			decl.type = new(parser.TypeNode)
+			decl.type.?^ = .i8
+		case .i16:
+			decl.type = new(parser.TypeNode)
+			decl.type.?^ = .i16
+		case .i32:
+			decl.type = new(parser.TypeNode)
+			decl.type.?^ = .i32
+		case .i64:
+			decl.type = new(parser.TypeNode)
+			decl.type.?^ = .i64
+
+		case .f16:
+			decl.type = new(parser.TypeNode)
+			decl.type.?^ = .f16
+		case .f32:
+			decl.type = new(parser.TypeNode)
+			decl.type.?^ = .f32
+		case .f64:
+			decl.type = new(parser.TypeNode)
+			decl.type.?^ = .f64
+		}
+	}
+
+	return true
+}
+
 analyze :: proc(s: ^Semantic) -> bool {
 	// first pass: collect symbols
 	if !collect_symbols(s) do return false
@@ -592,6 +661,9 @@ analyze :: proc(s: ^Semantic) -> bool {
 
 	// third pass: apply default types to remainin untyped constants
 	if !apply_default_types(s) do return false
+
+	// complete ast type annotation
+	if !update_ast(s) do return false
 
 	return true
 }
