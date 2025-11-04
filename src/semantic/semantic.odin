@@ -201,7 +201,14 @@ evaluate_symbol :: proc(s: ^Semantic, symbol: ^Symbol) -> bool {
 	return false
 }
 
-evaluate_expr :: proc(s: ^Semantic, expr: ^parser.AstNode) -> (SymbolValue, bool) {
+evaluate_expr :: proc(
+	s: ^Semantic,
+	expr: ^parser.AstNode,
+	context_type: Maybe(SymbolType) = nil,
+) -> (
+	SymbolValue,
+	bool,
+) {
 	#partial switch node in expr {
 	case parser.Literal:
 		// base case
@@ -230,12 +237,12 @@ evaluate_expr :: proc(s: ^Semantic, expr: ^parser.AstNode) -> (SymbolValue, bool
 
 	case parser.UnaryOp:
 		// recursively evaluate the operand
-		operand_value, ok := evaluate_expr(s, node.operand)
+		operand_val, ok := evaluate_expr(s, node.operand)
 		if !ok do return {}, false
 
 		// extract ComptimeValue
 		comptime_val: ComptimeValue
-		comptime_val, ok = operand_value.(ComptimeValue)
+		comptime_val, ok = operand_val.(ComptimeValue)
 		if !ok {
 			logger.fatal(LOG_SCOPE, "expected comptime value in unary operation")
 			return {}, false
@@ -265,10 +272,63 @@ evaluate_expr :: proc(s: ^Semantic, expr: ^parser.AstNode) -> (SymbolValue, bool
 			}
 		}
 
+	case parser.BinaryOp:
+		// recursively evaluate both operands
+		left_val, ok := evaluate_expr(s, node.left)
+		if !ok do return {}, false
+
+		right_val: SymbolValue
+		right_val, ok = evaluate_expr(s, node.right)
+		if !ok do return {}, false
+
+		// extract ComptimeValues
+		left_ct, ok_left := left_val.(ComptimeValue)
+		right_ct, ok_right := right_val.(ComptimeValue)
+		if !ok_left || !ok_right {
+			logger.fatal(LOG_SCOPE, "expected comptime values in binary operation")
+			return {}, false
+		}
+
+		// match on left type, ensure right matches
+		switch l in left_ct {
+		case i64:
+			r, ok := right_ct.(i64)
+			if !ok {
+				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
+				return {}, false
+			}
+			return eval_binary_i64(l, r, node.op)
+
+		case f32:
+			r, ok := right_ct.(f32)
+			if !ok {
+				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
+				return {}, false
+			}
+			return eval_binary_f32(l, r, node.op)
+
+		case f64:
+			r, ok := right_ct.(f64)
+			if !ok {
+				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
+				return {}, false
+			}
+			return eval_binary_f64(l, r, node.op)
+
+		case bool:
+			r, ok := right_ct.(bool)
+			if !ok {
+				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
+				return {}, false
+			}
+			return eval_binary_bool(l, r, node.op)
+		}
+
 	case:
 		logger.fatal(LOG_SCOPE, "unsupported expression in constant")
 		return {}, false
 	}
+
 	return {}, false
 }
 

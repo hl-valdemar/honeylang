@@ -106,27 +106,26 @@ parse_multiplicative :: proc(p: ^Parser) -> (^AstNode, bool) {
 		return nil, false
 	}
 
-	tok: Token
-	tok, ok = peek(p).?
-	if !ok do return nil, false
-
 	// expect multiplication or division
-	if !check(p, .star) && !check(p, .slash) {
-		logger.fatal(LOG_SCOPE, "expected \"*\" or \"/\" in multiplicative")
-		return nil, false
+	for check(p, .star) || check(p, .slash) {
+		tok, ok := peek(p).?
+		if !ok do break
+
+		op := resolve_binary_op_kind(tok.kind).?
+		advance(p)
+
+		right: ^AstNode
+		right, ok = parse_unary(p)
+		if !ok {
+			logger.fatal(LOG_SCOPE, "failed to parse right-hand side in binary op")
+			ast_destroy(left)
+			return nil, false
+		}
+
+		left = make_binary(left, right, op)
 	}
 
-	op := resolve_binary_op_kind(tok.kind).?
-	advance(p)
-
-	right: ^AstNode
-	right, ok = parse_unary(p)
-	if !ok {
-		logger.fatal(LOG_SCOPE, "failed to parse right-hand side in binary op")
-		return nil, false
-	}
-
-	return make_binary(left, right, op), true
+	return left, true
 }
 
 resolve_binary_op_kind :: proc(tok_kind: TokenKind) -> Maybe(BinaryOpKind) {

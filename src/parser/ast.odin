@@ -156,6 +156,8 @@ ast_print :: proc(node: ^AstNode, indent := 0, is_last: []bool = {}) {
 		print_indent(indent + 1, new_is_last[:])
 		fmt.printf("op: %v\n", n.op)
 
+		ast_print(n.left, indent + 1, new_is_last[:])
+
 		new_is_last[len(new_is_last) - 1] = true // right is last
 		ast_print(n.right, indent + 1, new_is_last[:])
 
