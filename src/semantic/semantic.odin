@@ -254,15 +254,30 @@ evaluate_expr :: proc(
 ) {
 	#partial switch node in expr {
 	case parser.Literal:
-		// base case
+		// base case - convert to context type if provided
 		#partial switch v in node.value {
 		case bool:
 			return v, true
+
 		case u64:
+			// if context type is specified, convert to that type
+			if ctx_type, ok := context_type.?; ok {
+				return convert_uint_to_type(v, ctx_type)
+			}
 			return v, true
+
 		case i64:
+			// if context type is specified, convert to that type
+			if ctx_type, ok := context_type.?; ok {
+				return convert_int_to_type(v, ctx_type)
+			}
 			return v, true
+
 		case f64:
+			// if context type is specified, convert to that type
+			if ctx_type, ok := context_type.?; ok {
+				return convert_float_to_type(v, ctx_type)
+			}
 			return v, true
 
 		case:
@@ -287,7 +302,29 @@ evaluate_expr :: proc(
 		if !evaluate_symbol(s, symbol) do return {}, false
 
 		// symbol value must not be nil at this point
-		return symbol.value.?, true
+		value := symbol.value.?
+
+		// get the actual ComptimeValue
+		comptime_val, val_ok := value.(ComptimeValue)
+		if !val_ok {
+			logger.fatal(LOG_SCOPE, "expected comptime value for symbol: %s", node.name)
+			return {}, false
+		}
+
+		// if context type is specified and different from symbol's type, convert
+		if ctx_type, ctx_ok := context_type.?; ctx_ok {
+			symbol_type := infer_type_from_value(comptime_val)
+			if symbol.type != nil {
+				symbol_type = symbol.type.?
+			}
+
+			// only convert if types differ
+			if ctx_type != symbol_type {
+				return convert_comptime_value_to_type(comptime_val, ctx_type)
+			}
+		}
+
+		return value, true
 
 	case parser.UnaryOp:
 		// recursively evaluate the operand
@@ -306,14 +343,23 @@ evaluate_expr :: proc(
 		#partial switch node.op {
 		case .negate:
 			#partial switch v in comptime_val {
+			case i8:
+				return -v, true
+			case i16:
+				return -v, true
+			case i32:
+				return -v, true
 			case i64:
 				return -v, true
-			case f64:
+			case f16:
 				return -v, true
 			case f32:
 				return -v, true
+			case f64:
+				return -v, true
+
 			case:
-				logger.fatal(LOG_SCOPE, "cannot negate non-numeric value")
+				logger.fatal(LOG_SCOPE, "cannot negate non-numeric / unsigned value")
 				return {}, false
 			}
 		case .logical_not:
@@ -327,18 +373,31 @@ evaluate_expr :: proc(
 		}
 
 	case parser.BinaryOp:
-		// recursively evaluate both operands
-		left_val, ok := evaluate_expr(s, node.left, context_type)
-		if !ok do return {}, false
+		// for binary operations, we need to determine the type both operands should be.
+		// if we have a context type, use it; otherwise, evaluate left first to get its type.
+		operation_type := context_type
 
-		right_val: SymbolValue
-		right_val, ok = evaluate_expr(s, node.right, context_type)
-		if !ok do return {}, false
+		// if no context type, evaluate left to infer the operation type
+		if operation_type == nil {
+			left_val_temp, ok := evaluate_expr(s, node.left)
+			if !ok do return {}, false
+
+			if left_ct, ok := left_val_temp.(ComptimeValue); ok {
+				operation_type = infer_type_from_value(left_ct)
+			}
+		}
+
+		// now evaluate both operands with the operation type
+		left_val, ok_left_val := evaluate_expr(s, node.left, operation_type)
+		if !ok_left_val do return {}, false
+
+		right_val, ok_right_val := evaluate_expr(s, node.right, context_type)
+		if !ok_right_val do return {}, false
 
 		// extract ComptimeValues
-		left_ct, ok_left := left_val.(ComptimeValue)
-		right_ct, ok_right := right_val.(ComptimeValue)
-		if !ok_left || !ok_right {
+		left_ct, ok_left_ct := left_val.(ComptimeValue)
+		right_ct, ok_right_ct := right_val.(ComptimeValue)
+		if !ok_left_ct || !ok_right_ct {
 			logger.fatal(LOG_SCOPE, "expected comptime values in binary operation")
 			return {}, false
 		}
@@ -472,6 +531,12 @@ apply_default_types :: proc(s: ^Semantic) -> bool {
 		case bool:
 			symbol.type = .bool
 
+		case u8:
+			symbol.type = .u8
+		case u16:
+			symbol.type = .u16
+		case u32:
+			symbol.type = .u32
 		case u64:
 			// check if fits in u32
 			u32_val := u32(v)
@@ -481,6 +546,12 @@ apply_default_types :: proc(s: ^Semantic) -> bool {
 				symbol.type = .u64
 			}
 
+		case i8:
+			symbol.type = .i8
+		case i16:
+			symbol.type = .i16
+		case i32:
+			symbol.type = .i32
 		case i64:
 			// check if fits in i32
 			i32_val := i32(v)
@@ -490,6 +561,10 @@ apply_default_types :: proc(s: ^Semantic) -> bool {
 				symbol.type = .i64
 			}
 
+		case f16:
+			symbol.type = .f16
+		case f32:
+			symbol.type = .f32
 		case f64:
 			// check if can be represented exactly in f32
 			f32_val := f32(v)
