@@ -5,7 +5,7 @@ DEBUG :: true
 BAD_INDEX :: -1
 
 # type is explicitly declared
-PI: f64 :: 3.14
+PI :: 3.14
 
 # type is inferred from the context in which it's first used
 ANSWER :: 42  # type is pending
