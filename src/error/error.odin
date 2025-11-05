@@ -20,7 +20,7 @@ CompilerError :: struct {
 	kind:     ErrorKind,
 	message:  string,
 	location: Maybe(SourceLocation),
-	notes:    [dynamic]string, // Additional context
+	notes:    [dynamic]string, // additional context
 }
 
 ErrorList :: [dynamic]CompilerError
@@ -58,8 +58,10 @@ has_errors :: proc(errors: ^ErrorList) -> bool {
 // pretty print errors
 print_errors :: proc(errors: ^ErrorList) {
 	for err in errors {
-		// TODO:
-		//   format like: "error: undefined identifier 'x' at main.hon:12:5"
-		//   with source context and color coding
+		if loc, ok := err.location.?; ok {
+			fmt.printf("error: %s at %s:%d:%d\n", err.message, loc.file, loc.line, loc.column)
+		} else {
+			fmt.printf("error: %s\n", err.message)
+		}
 	}
 }

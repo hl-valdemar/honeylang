@@ -46,8 +46,12 @@ main :: proc() {
 	defer error.deinit(&errors)
 
 	lexer.scan(&l, &errors)
-	// logger.fatal(LOG_SCOPE, "failed to scan honey source code")
-	// os.exit(1)
+	if len(errors) > 0 {
+    error.print_errors(&errors)
+		// for e in errors do logger.fatal(LOG_SCOPE, "%v", e)
+		// for e in errors do fmt.printf("%v\n", e)
+		os.exit(1)
+	}
 
 	fmt.printf("\n::[[ LEXING ]]::\n")
 	fmt.printf("Generated %d tokens:\n\n", len(l.tokens))

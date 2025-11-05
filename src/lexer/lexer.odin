@@ -155,6 +155,7 @@ scan :: proc(lex: ^Lexer, errors: ^error.ErrorList) {
 			}
 		} else {
 			// unknown character
+			advance(lex)
 			error.add_error(
 				errors,
 				.lexer_unrecognized_char,
