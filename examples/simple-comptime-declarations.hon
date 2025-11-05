@@ -1,9 +1,20 @@
 # comptime constants
+
+# type is inferred from the immediate value, when not used in any context (though this results in a warning from the compiler about unused declarations)
 DEBUG :: true
-PI: f64 :: 3.14
-ANSWER :: 42
 BAD_INDEX :: -1
-PI_SQUARED :: PI * PI
-PI_CUBED :: PI * PI * PI
-SHOULD_WORK :: ANSWER * PI  # ANSWER should be promoted to f64 in this case
-X: f32 :: 10  # should be accepted as an f32 (even though it's declared without decimals - becomes 10.0 f32)
+
+# type is explicitly declared
+PI: f64 :: 3.14
+
+# type is inferred from the context in which it's first used
+ANSWER :: 42  # type is pending
+PI_SQUARED :: PI * PI  # PI has type f64, so PI_SQUARED resolves to f64
+PI_CUBED :: PI * PI * PI  # same for PI_CUBED
+
+# ANSWER is finally used, so it's type can be resolved.
+# the type of the context is f64 due to PI, so ANSWER's type resolves to f64
+SHOULD_WORK :: ANSWER * PI
+
+# floats can be declared without decimals (either explicitly or inferred from the context)
+X: f32 :: 10

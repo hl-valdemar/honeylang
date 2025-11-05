@@ -296,6 +296,27 @@ evaluate_expr :: proc(
 		// infer type from context
 		if context_type != nil && symbol.type == nil {
 			symbol.type = context_type
+
+			// if symbol is already evaluated, convert the stored value to match the new type
+			if symbol.eval_state == .evaluated {
+				if old_value, ok_val := symbol.value.?; ok_val {
+					if comptime_val, ok_ct := old_value.(ComptimeValue); ok_ct {
+						new_value, ok_conv := convert_comptime_value_to_type(
+							comptime_val,
+							context_type.?,
+						)
+						if !ok_conv {
+							logger.fatal(
+								LOG_SCOPE,
+								"failed to convert symbol value to inferred type for: %s",
+								node.name,
+							)
+							return {}, false
+						}
+						symbol.value = new_value
+					}
+				}
+			}
 		}
 
 		// recursively evaluate
