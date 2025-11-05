@@ -373,31 +373,56 @@ evaluate_expr :: proc(
 		}
 
 	case parser.BinaryOp:
-		// for binary operations, we need to determine the type both operands should be.
-		// if we have a context type, use it; otherwise, evaluate left first to get its type.
-		operation_type := context_type
+		// first, evaluate both operands without context to get their natural types
+		left_val_untyped, ok_left := evaluate_expr(s, node.left)
+		if !ok_left do return {}, false
 
-		// if no context type, evaluate left to infer the operation type
-		if operation_type == nil {
-			left_val_temp, ok := evaluate_expr(s, node.left)
-			if !ok do return {}, false
+		right_val_untyped, ok_right := evaluate_expr(s, node.right)
+		if !ok_right do return {}, false
 
-			if left_ct, ok := left_val_temp.(ComptimeValue); ok {
-				operation_type = infer_type_from_value(left_ct)
+		// get the comptime values
+		left_ct_untyped, ok_left_ct := left_val_untyped.(ComptimeValue)
+		right_ct_untyped, ok_right_ct := right_val_untyped.(ComptimeValue)
+		if !ok_left_ct || !ok_right_ct {
+			logger.fatal(LOG_SCOPE, "expected comptime values in binary operation")
+			return {}, false
+		}
+
+		// infer the types from the values
+		left_type := infer_type_from_value(left_ct_untyped)
+		right_type := infer_type_from_value(right_ct_untyped)
+
+		// find the common type (with type promotion)
+		operation_type, ok_common := find_common_type(left_type, right_type).?
+		if !ok_common {
+			logger.fatal(
+				LOG_SCOPE,
+				"incompatible types in binary operation: %v and %v",
+				left_type,
+				right_type,
+			)
+			return {}, false
+		}
+
+		// if context type is provided and wider, use that instead
+		if ctx_type, ok_ctx := context_type.?; ok_ctx {
+			if common, ok_common_ctx := find_common_type(operation_type, ctx_type).?;
+			   ok_common_ctx {
+				operation_type = common
 			}
 		}
 
-		// now evaluate both operands with the operation type
+		// now evaluate both operands with the common type
 		left_val, ok_left_val := evaluate_expr(s, node.left, operation_type)
 		if !ok_left_val do return {}, false
 
-		right_val, ok_right_val := evaluate_expr(s, node.right, context_type)
+		right_val, ok_right_val := evaluate_expr(s, node.right, operation_type)
 		if !ok_right_val do return {}, false
 
 		// extract ComptimeValues
-		left_ct, ok_left_ct := left_val.(ComptimeValue)
-		right_ct, ok_right_ct := right_val.(ComptimeValue)
-		if !ok_left_ct || !ok_right_ct {
+		left_ct, ok_left_ct2 := left_val.(ComptimeValue)
+		right_ct, ok_right_ct2 := right_val.(ComptimeValue)
+		if !ok_left_ct2 || !ok_right_ct2 {
 			logger.fatal(LOG_SCOPE, "expected comptime values in binary operation")
 			return {}, false
 		}

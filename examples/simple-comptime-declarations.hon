@@ -5,4 +5,5 @@ ANSWER :: 42
 BAD_INDEX :: -1
 PI_SQUARED :: PI * PI
 PI_CUBED :: PI * PI * PI
-INVALID :: ANSWER * PI  # ANSWER should be elavated to a float in this case (as X: f32 :: 42 is allowed)
+SHOULD_WORK :: ANSWER * PI  # ANSWER should be promoted to f64 in this case
+X: f32 :: 10  # should be accepted as an f32 (even though it's declared without decimals - becomes 10.0 f32)

@@ -330,6 +330,12 @@ convert_uint_to_type :: proc(v: u64, target_type: SymbolType) -> (SymbolValue, b
 		return i32(v), true
 	case .i64:
 		return i64(v), true
+	case .f16:
+		return f16(v), true
+	case .f32:
+		return f32(v), true
+	case .f64:
+		return f64(v), true
 
 	case:
 		logger.fatal(LOG_SCOPE, "cannot convert uint to type: %v", target_type)
@@ -355,6 +361,12 @@ convert_int_to_type :: proc(v: i64, target_type: SymbolType) -> (SymbolValue, bo
 		return i32(v), true
 	case .i64:
 		return v, true
+	case .f16:
+		return f16(v), true
+	case .f32:
+		return f32(v), true
+	case .f64:
+		return f64(v), true
 
 	case:
 		logger.fatal(LOG_SCOPE, "cannot convert int to type: %v", target_type)
@@ -442,3 +454,83 @@ convert_comptime_value_to_type :: proc(
 	}
 	return {}, false
 }
+
+// type promotion rules: can we promote from_type to to_type?
+can_promote_type :: proc(from_type: SymbolType, to_type: SymbolType) -> bool {
+	// same type - always ok
+	if from_type == to_type do return true
+
+	// integer to float promotion (always allowed)
+	#partial switch to_type {
+	case .f16, .f32, .f64:
+		#partial switch from_type {
+		case .u8, .u16, .u32, .u64, .i8, .i16, .i32, .i64:
+			return true
+		}
+	}
+
+	// signed integer to wider signed integer
+	#partial switch from_type {
+	case .i8:
+		#partial switch to_type {
+		case .i16, .i32, .i64:
+			return true
+		}
+	case .i16:
+		#partial switch to_type {
+		case .i32, .i64:
+			return true
+		}
+	case .i32:
+		#partial switch to_type {
+		case .i64:
+			return true
+		}
+	}
+
+	// unsigned integer to wider unsigned integer
+	#partial switch from_type {
+	case .u8:
+		#partial switch to_type {
+		case .u16, .u32, .u64:
+			return true
+		}
+	case .u16:
+		#partial switch to_type {
+		case .u32, .u64:
+			return true
+		}
+	case .u32:
+		#partial switch to_type {
+		case .u64:
+			return true
+		}
+	}
+
+	// float to wider float
+	#partial switch from_type {
+	case .f16:
+		#partial switch to_type {
+		case .f32, .f64:
+			return true
+		}
+	case .f32:
+		#partial switch to_type {
+		case .f64:
+			return true
+		}
+	}
+
+	return false
+}
+
+// find the common type between two types (the wider one that both can promote to)
+find_common_type :: proc(type1: SymbolType, type2: SymbolType) -> Maybe(SymbolType) {
+	if type1 == type2 do return type1
+
+	if can_promote_type(type1, type2) do return type2
+	if can_promote_type(type2, type1) do return type1
+
+	return nil
+}
+
