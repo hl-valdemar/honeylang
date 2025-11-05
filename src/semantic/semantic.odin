@@ -334,7 +334,12 @@ evaluate_expr :: proc(
 
 		// if context type is specified and different from symbol's type, convert
 		if ctx_type, ctx_ok := context_type.?; ctx_ok {
-			symbol_type := infer_type_from_value(comptime_val)
+			symbol_type, ok_symtype := infer_type_from_value(comptime_val).?
+			if !ok_symtype {
+				logger.fatal(LOG_SCOPE, "failed to infer type from value")
+				return {}, false
+			}
+
 			if symbol.type != nil {
 				symbol_type = symbol.type.?
 			}
@@ -410,8 +415,17 @@ evaluate_expr :: proc(
 		}
 
 		// infer the types from the values
-		left_type := infer_type_from_value(left_ct_untyped)
-		right_type := infer_type_from_value(right_ct_untyped)
+		left_type, ok_left_type := infer_type_from_value(left_ct_untyped).?
+		if !ok_left_type {
+			logger.fatal(LOG_SCOPE, "failed to infer type from value")
+			return {}, false
+		}
+
+		right_type, ok_right_type := infer_type_from_value(right_ct_untyped).?
+		if !ok_right_type {
+			logger.fatal(LOG_SCOPE, "failed to infer type from value")
+			return {}, false
+		}
 
 		// find the common type (with type promotion)
 		operation_type, ok_common := find_common_type(left_type, right_type).?

@@ -388,7 +388,7 @@ convert_float_to_type :: proc(v: f64, target_type: SymbolType) -> (SymbolValue, 
 	}
 }
 
-infer_type_from_value :: proc(value: ComptimeValue) -> SymbolType {
+infer_type_from_value :: proc(value: ComptimeValue) -> Maybe(SymbolType) {
 	switch v in value {
 	case bool:
 		return .bool
@@ -399,6 +399,12 @@ infer_type_from_value :: proc(value: ComptimeValue) -> SymbolType {
 	case u32:
 		return .u32
 	case u64:
+		// apply default type policy: parser uses u64 as intermediate representation
+		// default to u32 if the value fits, otherwise use u64
+		u32_val := u32(v)
+		if u64(u32_val) == v {
+			return .u32
+		}
 		return .u64
 	case i8:
 		return .i8
@@ -407,15 +413,23 @@ infer_type_from_value :: proc(value: ComptimeValue) -> SymbolType {
 	case i32:
 		return .i32
 	case i64:
+		// apply default type policy: parser uses i64 as intermediate representation
+		// default to i32 if the value fits, otherwise use i64
+		i32_val := i32(v)
+		if i64(i32_val) == v {
+			return .i32
+		}
 		return .i64
 	case f16:
 		return .f16
 	case f32:
 		return .f32
 	case f64:
-		return .f64
+		// apply default type policy: parser uses f64 as intermediate representation
+		// always default to f32 (the parser's f64 is just for precision, not user intent)
+		return .f32
 	}
-	return .i32 // fallback
+	return nil // fallback
 }
 
 // convert a ComptimeValue to a target type
@@ -533,4 +547,3 @@ find_common_type :: proc(type1: SymbolType, type2: SymbolType) -> Maybe(SymbolTy
 
 	return nil
 }
-
