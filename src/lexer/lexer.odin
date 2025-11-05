@@ -24,6 +24,8 @@ init :: proc(name, src: string) -> Lexer {
 		src_file = {name = name, src = utf8.string_to_runes(src)},
 		next_src_idx = 0,
 		tokens = make([dynamic]Token, 0, 1000),
+		current_line = 1,
+		current_col = 1,
 	}
 }
 

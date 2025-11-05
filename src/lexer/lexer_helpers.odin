@@ -48,11 +48,7 @@ skip_whitespace_and_comments :: proc(lexer: ^Lexer) {
 				advance(lexer)
 				r, ok := peek(lexer).?
 				if !ok do break // eof in comment
-				if r == '\n' {
-					lexer.current_line += 1
-					lexer.current_col = 0
-					break
-				}
+				if r == '\n' do break
 			}
 			continue
 		}
