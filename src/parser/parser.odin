@@ -251,7 +251,7 @@ parse_program :: proc(p: ^Parser) -> (^AstNode, bool) {
 		}
 	}
 
-	return program_make(declarations), true
+	return make_program(declarations), true
 }
 
 parse :: proc(p: ^Parser) -> bool {
