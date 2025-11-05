@@ -36,6 +36,8 @@ main :: proc() {
 
 	source := string(source_bytes)
 
+	fmt.printf("\nCompiling: %s\n", filepath)
+
 	l := lexer.init(source)
 	defer lexer.deinit(&l)
 
