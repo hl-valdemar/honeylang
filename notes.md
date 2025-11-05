@@ -8,7 +8,8 @@ Source Code > Lexer: Token Stream ... > Parser: AST ........ > Semantic Analysis
               └─ Token classification   └─ AST construction    ├─ Type resolution             ├─ Register allocation
                                                                ├─ Type inference              └─ Assembly emission
                                                                ├─ Type checking
-                                                               └─ Comptime evaluation
+                                                               ├─ Comptime evaluation
+                                                               └─ Comptime constant inlining
 ```
 
 ## Roadmap (v0.1.0)
