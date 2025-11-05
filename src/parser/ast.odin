@@ -1,6 +1,6 @@
 package parser
 
-import "core:fmt"
+import "../error"
 
 AstNode :: union {
 	Program,
@@ -20,6 +20,12 @@ Declaration :: struct {
 	name:  string,
 	type:  Maybe(^TypeNode),
 	value: ^AstNode,
+	loc:   SourceSpan,
+}
+
+SourceSpan :: struct {
+	start: error.SourceLocation,
+	end:   error.SourceLocation,
 }
 
 DeclKind :: enum {

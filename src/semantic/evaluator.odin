@@ -3,6 +3,8 @@ package semantic
 import "../logger"
 import "../parser"
 
+import "base:intrinsics"
+
 evaluate_symbol :: proc(s: ^Semantic, symbol: ^Symbol) -> bool {
 	switch symbol.eval_state {
 	case .evaluated:
@@ -258,7 +260,7 @@ evaluate_expr :: proc(
 				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
 				return {}, false
 			}
-			return eval_binary_u8(l, r, node.op)
+			return eval_binary_numeric(u8, l, r, node.op)
 
 		case u16:
 			r, ok := right_ct.(u16)
@@ -266,7 +268,7 @@ evaluate_expr :: proc(
 				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
 				return {}, false
 			}
-			return eval_binary_u16(l, r, node.op)
+			return eval_binary_numeric(u16, l, r, node.op)
 
 		case u32:
 			r, ok := right_ct.(u32)
@@ -274,7 +276,7 @@ evaluate_expr :: proc(
 				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
 				return {}, false
 			}
-			return eval_binary_u32(l, r, node.op)
+			return eval_binary_numeric(u32, l, r, node.op)
 
 		case u64:
 			r, ok := right_ct.(u64)
@@ -282,7 +284,7 @@ evaluate_expr :: proc(
 				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
 				return {}, false
 			}
-			return eval_binary_u64(l, r, node.op)
+			return eval_binary_numeric(u64, l, r, node.op)
 
 		case i8:
 			r, ok := right_ct.(i8)
@@ -290,7 +292,7 @@ evaluate_expr :: proc(
 				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
 				return {}, false
 			}
-			return eval_binary_i8(l, r, node.op)
+			return eval_binary_numeric(i8, l, r, node.op)
 
 		case i16:
 			r, ok := right_ct.(i16)
@@ -298,7 +300,7 @@ evaluate_expr :: proc(
 				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
 				return {}, false
 			}
-			return eval_binary_i16(l, r, node.op)
+			return eval_binary_numeric(i16, l, r, node.op)
 
 		case i32:
 			r, ok := right_ct.(i32)
@@ -306,7 +308,7 @@ evaluate_expr :: proc(
 				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
 				return {}, false
 			}
-			return eval_binary_i32(l, r, node.op)
+			return eval_binary_numeric(i32, l, r, node.op)
 
 		case i64:
 			r, ok := right_ct.(i64)
@@ -314,7 +316,7 @@ evaluate_expr :: proc(
 				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
 				return {}, false
 			}
-			return eval_binary_i64(l, r, node.op)
+			return eval_binary_numeric(i64, l, r, node.op)
 
 		case f16:
 			r, ok := right_ct.(f16)
@@ -322,7 +324,7 @@ evaluate_expr :: proc(
 				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
 				return {}, false
 			}
-			return eval_binary_f16(l, r, node.op)
+			return eval_binary_numeric(f16, l, r, node.op)
 
 		case f32:
 			r, ok := right_ct.(f32)
@@ -330,7 +332,7 @@ evaluate_expr :: proc(
 				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
 				return {}, false
 			}
-			return eval_binary_f32(l, r, node.op)
+			return eval_binary_numeric(f32, l, r, node.op)
 
 		case f64:
 			r, ok := right_ct.(f64)
@@ -338,7 +340,7 @@ evaluate_expr :: proc(
 				logger.fatal(LOG_SCOPE, "type mismatch in binary operation")
 				return {}, false
 			}
-			return eval_binary_f64(l, r, node.op)
+			return eval_binary_numeric(f64, l, r, node.op)
 
 		case bool:
 			r, ok := right_ct.(bool)
@@ -369,7 +371,14 @@ eval_binary_bool :: proc(left, right: bool, op: parser.BinaryOpKind) -> (SymbolV
 	}
 }
 
-eval_binary_u8 :: proc(left, right: u8, op: parser.BinaryOpKind) -> (SymbolValue, bool) {
+eval_binary_numeric :: proc(
+	$T: typeid,
+	left, right: T,
+	op: parser.BinaryOpKind,
+) -> (
+	SymbolValue,
+	bool,
+) where intrinsics.type_is_numeric(T) {
 	#partial switch op {
 	case .add:
 		return left + right, true
@@ -378,9 +387,10 @@ eval_binary_u8 :: proc(left, right: u8, op: parser.BinaryOpKind) -> (SymbolValue
 	case .mul:
 		return left * right, true
 	case .div:
-		if right == 0 {
-			logger.fatal(LOG_SCOPE, "division by zero")
-			return {}, false
+		when !intrinsics.type_is_float(T) {
+			if right == 0 {
+				return {}, false // Handle via error list
+			}
 		}
 		return left / right, true
 	case .less:
@@ -391,276 +401,6 @@ eval_binary_u8 :: proc(left, right: u8, op: parser.BinaryOpKind) -> (SymbolValue
 		return left <= right, true
 	case .greater_equal:
 		return left >= right, true
-	case:
-		logger.fatal(LOG_SCOPE, "unsupported operation for u8: %v", op)
-		return {}, false
 	}
-}
-
-eval_binary_u16 :: proc(left, right: u16, op: parser.BinaryOpKind) -> (SymbolValue, bool) {
-	#partial switch op {
-	case .add:
-		return left + right, true
-	case .sub:
-		return left - right, true
-	case .mul:
-		return left * right, true
-	case .div:
-		if right == 0 {
-			logger.fatal(LOG_SCOPE, "division by zero")
-			return {}, false
-		}
-		return left / right, true
-	case .less:
-		return left < right, true
-	case .greater:
-		return left > right, true
-	case .less_equal:
-		return left <= right, true
-	case .greater_equal:
-		return left >= right, true
-	case:
-		logger.fatal(LOG_SCOPE, "unsupported operation for u16: %v", op)
-		return {}, false
-	}
-}
-
-eval_binary_u32 :: proc(left, right: u32, op: parser.BinaryOpKind) -> (SymbolValue, bool) {
-	#partial switch op {
-	case .add:
-		return left + right, true
-	case .sub:
-		return left - right, true
-	case .mul:
-		return left * right, true
-	case .div:
-		if right == 0 {
-			logger.fatal(LOG_SCOPE, "division by zero")
-			return {}, false
-		}
-		return left / right, true
-	case .less:
-		return left < right, true
-	case .greater:
-		return left > right, true
-	case .less_equal:
-		return left <= right, true
-	case .greater_equal:
-		return left >= right, true
-	case:
-		logger.fatal(LOG_SCOPE, "unsupported operation for u32: %v", op)
-		return {}, false
-	}
-}
-
-eval_binary_u64 :: proc(left, right: u64, op: parser.BinaryOpKind) -> (SymbolValue, bool) {
-	#partial switch op {
-	case .add:
-		return left + right, true
-	case .sub:
-		return left - right, true
-	case .mul:
-		return left * right, true
-	case .div:
-		if right == 0 {
-			logger.fatal(LOG_SCOPE, "division by zero")
-			return {}, false
-		}
-		return left / right, true
-	case .less:
-		return left < right, true
-	case .greater:
-		return left > right, true
-	case .less_equal:
-		return left <= right, true
-	case .greater_equal:
-		return left >= right, true
-	case:
-		logger.fatal(LOG_SCOPE, "unsupported operation for u64: %v", op)
-		return {}, false
-	}
-}
-
-eval_binary_i8 :: proc(left, right: i8, op: parser.BinaryOpKind) -> (SymbolValue, bool) {
-	#partial switch op {
-	case .add:
-		return left + right, true
-	case .sub:
-		return left - right, true
-	case .mul:
-		return left * right, true
-	case .div:
-		if right == 0 {
-			logger.fatal(LOG_SCOPE, "division by zero")
-			return {}, false
-		}
-		return left / right, true
-	case .less:
-		return left < right, true
-	case .greater:
-		return left > right, true
-	case .less_equal:
-		return left <= right, true
-	case .greater_equal:
-		return left >= right, true
-	case:
-		logger.fatal(LOG_SCOPE, "unsupported operation for i8: %v", op)
-		return {}, false
-	}
-}
-
-eval_binary_i16 :: proc(left, right: i16, op: parser.BinaryOpKind) -> (SymbolValue, bool) {
-	#partial switch op {
-	case .add:
-		return left + right, true
-	case .sub:
-		return left - right, true
-	case .mul:
-		return left * right, true
-	case .div:
-		if right == 0 {
-			logger.fatal(LOG_SCOPE, "division by zero")
-			return {}, false
-		}
-		return left / right, true
-	case .less:
-		return left < right, true
-	case .greater:
-		return left > right, true
-	case .less_equal:
-		return left <= right, true
-	case .greater_equal:
-		return left >= right, true
-	case:
-		logger.fatal(LOG_SCOPE, "unsupported operation for i16: %v", op)
-		return {}, false
-	}
-}
-
-eval_binary_i32 :: proc(left, right: i32, op: parser.BinaryOpKind) -> (SymbolValue, bool) {
-	#partial switch op {
-	case .add:
-		return left + right, true
-	case .sub:
-		return left - right, true
-	case .mul:
-		return left * right, true
-	case .div:
-		if right == 0 {
-			logger.fatal(LOG_SCOPE, "division by zero")
-			return {}, false
-		}
-		return left / right, true
-	case .less:
-		return left < right, true
-	case .greater:
-		return left > right, true
-	case .less_equal:
-		return left <= right, true
-	case .greater_equal:
-		return left >= right, true
-	case:
-		logger.fatal(LOG_SCOPE, "unsupported operation for i32: %v", op)
-		return {}, false
-	}
-}
-
-eval_binary_i64 :: proc(left, right: i64, op: parser.BinaryOpKind) -> (SymbolValue, bool) {
-	#partial switch op {
-	case .add:
-		return left + right, true
-	case .sub:
-		return left - right, true
-	case .mul:
-		return left * right, true
-	case .div:
-		if right == 0 {
-			logger.fatal(LOG_SCOPE, "division by zero")
-			return {}, false
-		}
-		return left / right, true
-	case .less:
-		return left < right, true
-	case .greater:
-		return left > right, true
-	case .less_equal:
-		return left <= right, true
-	case .greater_equal:
-		return left >= right, true
-	case:
-		logger.fatal(LOG_SCOPE, "unsupported operation for i64: %v", op)
-		return {}, false
-	}
-}
-
-eval_binary_f16 :: proc(left, right: f16, op: parser.BinaryOpKind) -> (SymbolValue, bool) {
-	#partial switch op {
-	case .add:
-		return left + right, true
-	case .sub:
-		return left - right, true
-	case .mul:
-		return left * right, true
-	case .div:
-		return left / right, true
-	case .less:
-		return left < right, true
-	case .greater:
-		return left > right, true
-	case .less_equal:
-		return left <= right, true
-	case .greater_equal:
-		return left >= right, true
-	case:
-		logger.fatal(LOG_SCOPE, "unsupported operation for f16: %v", op)
-		return {}, false
-	}
-}
-
-eval_binary_f32 :: proc(left, right: f32, op: parser.BinaryOpKind) -> (SymbolValue, bool) {
-	#partial switch op {
-	case .add:
-		return left + right, true
-	case .sub:
-		return left - right, true
-	case .mul:
-		return left * right, true
-	case .div:
-		return left / right, true
-	case .less:
-		return left < right, true
-	case .greater:
-		return left > right, true
-	case .less_equal:
-		return left <= right, true
-	case .greater_equal:
-		return left >= right, true
-	case:
-		logger.fatal(LOG_SCOPE, "unsupported operation for f32: %v", op)
-		return {}, false
-	}
-}
-
-eval_binary_f64 :: proc(left, right: f64, op: parser.BinaryOpKind) -> (SymbolValue, bool) {
-	#partial switch op {
-	case .add:
-		return left + right, true
-	case .sub:
-		return left - right, true
-	case .mul:
-		return left * right, true
-	case .div:
-		return left / right, true
-	case .less:
-		return left < right, true
-	case .greater:
-		return left > right, true
-	case .less_equal:
-		return left <= right, true
-	case .greater_equal:
-		return left >= right, true
-	case:
-		logger.fatal(LOG_SCOPE, "unsupported operation for f64: %v", op)
-		return {}, false
-	}
+	return {}, false
 }

@@ -1,5 +1,6 @@
 package lexer
 
+import "../error"
 import "core:fmt"
 
 TokenKind :: enum {
@@ -55,12 +56,26 @@ TokenKind :: enum {
 Token :: struct {
 	kind:  TokenKind,
 	value: Maybe(string),
+	loc:   error.SourceLocation,
 }
 
 token_to_string :: proc(tok: Token) -> string {
 	if val, ok := tok.value.?; ok {
-		return fmt.tprintf("%s: \"%s\"", tok.kind, val)
+		return fmt.tprintf(
+			"%s:%v:%v %s = \"%s\"",
+			tok.loc.file,
+			tok.loc.line,
+			tok.loc.column,
+			tok.kind,
+			val,
+		)
 	} else {
-		return fmt.tprintf("%s", tok.kind)
+		return fmt.tprintf(
+			"%s:%v:%v %s",
+			tok.loc.file,
+			tok.loc.line,
+			tok.loc.column,
+			tok.kind,
+		)
 	}
 }

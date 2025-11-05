@@ -1,6 +1,6 @@
 package lexer
 
-import "../logger"
+import "../error"
 import "../scope"
 
 import "core:unicode"
@@ -8,79 +8,28 @@ import "core:unicode/utf8"
 
 LOG_SCOPE :: scope.Scope.lexer
 
-// = = = = = = = = = = = = = =
-// Lexer Implementation
-// = = = = = = = = = = = = = =
-
-LexerError :: enum {
-	unrecognized_character,
-}
-
 Lexer :: struct {
-	src:          []rune,
-	next_src_idx: int,
+	src_file:     struct {
+		name: string,
+		src:  []rune,
+	},
 	tokens:       [dynamic]Token,
+	next_src_idx: int,
+	current_line: int,
+	current_col:  int,
 }
 
-init :: proc(src: string) -> Lexer {
+init :: proc(name, src: string) -> Lexer {
 	return Lexer {
-		src = utf8.string_to_runes(src),
+		src_file = {name = name, src = utf8.string_to_runes(src)},
 		next_src_idx = 0,
 		tokens = make([dynamic]Token, 0, 1000),
 	}
 }
 
 deinit :: proc(lex: ^Lexer) {
-	delete(lex.src)
+	delete(lex.src_file.src)
 	delete(lex.tokens)
-}
-
-advance :: proc(lex: ^Lexer) {
-	lex.next_src_idx += 1
-}
-
-advance_n :: proc(lex: ^Lexer, n: int) {
-	lex.next_src_idx += n
-}
-
-peek :: proc(lex: ^Lexer) -> Maybe(rune) {
-	if lex.next_src_idx < len(lex.src) {
-		return lex.src[lex.next_src_idx]
-	}
-	return nil
-}
-
-peek_offset :: proc(lex: ^Lexer, offset: int) -> Maybe(rune) {
-	if lex.next_src_idx + offset < len(lex.src) {
-		return lex.src[lex.next_src_idx + offset]
-	}
-	return nil
-}
-
-skip_whitespace_and_comments :: proc(lexer: ^Lexer) {
-	for {
-		r, ok := peek(lexer).?
-		if !ok do break // end of file
-
-		// consume whitespace
-		if unicode.is_space(r) {
-			advance(lexer)
-			continue
-		}
-
-		// consume comments
-		if r == '#' {
-			for {
-				advance(lexer)
-				r, ok := peek(lexer).?
-				if !ok do break // eof in comment
-				if r == '\n' do break
-			}
-			continue
-		}
-
-		break
-	}
 }
 
 check_keyword :: proc(ident_name: []rune) -> TokenKind {
@@ -92,6 +41,12 @@ check_keyword :: proc(ident_name: []rune) -> TokenKind {
 }
 
 scan_identifier :: proc(lex: ^Lexer) -> Token {
+	loc := error.SourceLocation {
+		file   = lex.src_file.name,
+		line   = lex.current_line,
+		column = lex.current_col,
+	}
+
 	start := lex.next_src_idx
 	end := start
 	for {
@@ -110,9 +65,10 @@ scan_identifier :: proc(lex: ^Lexer) -> Token {
 		end += 1
 	}
 
-	name := lex.src[start:end]
+	name := lex.src_file.src[start:end]
 	tok := Token {
 		kind = check_keyword(name),
+		loc  = loc,
 	}
 
 	if tok.kind == .identifier || tok.kind == .boolean {
@@ -123,6 +79,11 @@ scan_identifier :: proc(lex: ^Lexer) -> Token {
 }
 
 scan_number :: proc(lex: ^Lexer) -> Token {
+	loc := error.SourceLocation {
+		file   = lex.src_file.name,
+		line   = lex.current_line,
+		column = lex.current_col,
+	}
 	has_decimal := false
 
 	start := lex.next_src_idx
@@ -151,16 +112,22 @@ scan_number :: proc(lex: ^Lexer) -> Token {
 		}
 	}
 
-	val := utf8.runes_to_string(lex.src[start:end])
-	return Token{kind = .number, value = val}
+	val := utf8.runes_to_string(lex.src_file.src[start:end])
+	return Token{kind = .number, value = val, loc = loc}
 }
 
-scan :: proc(lex: ^Lexer) -> bool {
+scan :: proc(lex: ^Lexer, errors: ^error.ErrorList) {
 	for {
 		skip_whitespace_and_comments(lex)
 
 		r, ok := peek(lex).?
 		if !ok do break
+
+		loc := error.SourceLocation {
+			file   = lex.src_file.name,
+			line   = lex.current_line,
+			column = lex.current_col,
+		}
 
 		if unicode.is_letter(r) || r == '_' { 	// identifiers and keywords
 			ident_tok := scan_identifier(lex)
@@ -170,26 +137,29 @@ scan :: proc(lex: ^Lexer) -> bool {
 			append(&lex.tokens, num_tok)
 		} else if r == '-' {
 			advance(lex)
-			append(&lex.tokens, Token{kind = .minus})
+			append(&lex.tokens, Token{kind = .minus, loc = loc})
 		} else if r == '*' {
 			advance(lex)
-			append(&lex.tokens, Token{kind = .star})
+			append(&lex.tokens, Token{kind = .star, loc = loc})
 		} else if r == ':' {
 			// double colon
 			if next, ok := peek_offset(lex, 1).?; ok && next == ':' {
 				advance_n(lex, 2)
-				append(&lex.tokens, Token{kind = .double_colon})
+				append(&lex.tokens, Token{kind = .double_colon, loc = loc})
 			} else {
 				// single colon
 				advance(lex)
-				append(&lex.tokens, Token{kind = .colon})
+				append(&lex.tokens, Token{kind = .colon, loc = loc})
 			}
 		} else {
 			// unknown character
-			logger.warn(LOG_SCOPE, "unrecognized character \"%r\"", r)
-			return false
+			error.add_error(
+				errors,
+				.lexer_unrecognized_char,
+				loc,
+				"unrecognized character '%r'",
+				r,
+			)
 		}
 	}
-
-	return true
 }

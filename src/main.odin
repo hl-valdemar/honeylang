@@ -1,5 +1,6 @@
 package main
 
+import "error"
 import "lexer"
 import "logger"
 import "parser"
@@ -38,17 +39,19 @@ main :: proc() {
 
 	fmt.printf("\nCompiling: %s\n", filepath)
 
-	l := lexer.init(source)
+	l := lexer.init(filepath, source)
 	defer lexer.deinit(&l)
 
-	if ok := lexer.scan(&l); !ok {
-		logger.fatal(LOG_SCOPE, "failed to scan honey source code")
-		os.exit(1)
-	}
+	errors := error.init()
+	defer error.deinit(&errors)
+
+	lexer.scan(&l, &errors)
+	// logger.fatal(LOG_SCOPE, "failed to scan honey source code")
+	// os.exit(1)
 
 	fmt.printf("\n::[[ LEXING ]]::\n")
 	fmt.printf("Generated %d tokens:\n\n", len(l.tokens))
-	for tok in l.tokens do fmt.println(lexer.token_to_string(tok))
+	lexer.print_tokens(&l.tokens)
 
 	p := parser.init(l.tokens[:])
 	defer parser.deinit(&p)
