@@ -21,14 +21,13 @@ Comprehensive implementation of basic compile-time functionality in the Honey la
     - [x] lexer
     - [x] parser
     - [ ] semantic
-    - [ ] code emission
 - [ ] Arithmetic and boolean operations (disregard modulo operation for now)
     - [ ] arithmetic
         - [x] multiplicative
         - [ ] additive
     - [ ] boolean
 - [x] Comptime expression evaluation
-- [ ] Comptime constant inlining
+- [x] Comptime constant inlining
 
 ## Roadmap (v0.0.2)
 
@@ -50,6 +49,12 @@ Comprehensive implementation of basic runtime dependent operations in the Honey 
     - [ ] arrays
 - [ ] Proper register allocation in codegen
 - [ ] Collect parser errors instead of failing immediately
+
+## Roadmap (v0.0.3)
+
+Code emission.
+
+- [ ] Code emission diagnostics
 
 ## Ideology
 
