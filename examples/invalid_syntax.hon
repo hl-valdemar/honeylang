@@ -1,0 +1,28 @@
+# test file for lexer diagnostics
+
+# invalid characters that should trigger errors
+CONST1 :: 42 + 56        # '+' not implemented yet
+CONST2 :: 100 / 2        # '/' not implemented yet
+VALUE @ 123              # '@' is invalid
+TEST $ 456               # '$' is invalid
+
+# multiple errors in one line
+BAD :: 10 % 20 & 30      # '%', '&' are invalid
+
+# valid syntax mixed with invalid
+PI :: 3.14
+BROKEN :: PI ^ 2         # '^' is invalid
+
+# more invalid operators
+X :: (5 + 3)             # '(', ')', '+' are invalid
+Y :: {1, 2, 3}           # '{', '}', ',' are invalid
+Z :: [10]                # '[', ']' are invalid
+
+# comparisons not yet supported
+COMP :: 5 > 3            # '>' is invalid
+CHECK :: 10 == 10        # '=' is invalid (only ':' and '::' work)
+
+# invalid symbols
+WEIRD :: 100 ! 200       # '!' is invalid
+STRANGE :: 50 ~ 25       # '~' is invalid
+ODD :: 75 | 99           # '|' is invalid

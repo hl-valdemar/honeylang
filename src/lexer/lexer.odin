@@ -17,15 +17,17 @@ Lexer :: struct {
 	next_src_idx: int,
 	current_line: int,
 	current_col:  int,
+	errors:       ^error.ErrorList,
 }
 
-init :: proc(name, src: string) -> Lexer {
+init :: proc(name, src: string, errors: ^error.ErrorList) -> Lexer {
 	return Lexer {
 		src_file = {name = name, src = utf8.string_to_runes(src)},
 		next_src_idx = 0,
 		tokens = make([dynamic]Token, 0, 1000),
 		current_line = 1,
 		current_col = 1,
+		errors = errors,
 	}
 }
 
@@ -118,17 +120,20 @@ scan_number :: proc(lex: ^Lexer) -> Token {
 	return Token{kind = .number, value = val, loc = loc}
 }
 
-scan :: proc(lex: ^Lexer, errors: ^error.ErrorList) {
+scan :: proc(lex: ^Lexer) {
 	for {
 		skip_whitespace_and_comments(lex)
-
-		r, ok := peek(lex).?
-		if !ok do break
 
 		loc := error.SourceLocation {
 			file   = lex.src_file.name,
 			line   = lex.current_line,
 			column = lex.current_col,
+		}
+
+		r, ok := peek(lex).?
+		if !ok {
+			append(&lex.tokens, Token{kind = .eof, loc = loc})
+			break
 		}
 
 		if unicode.is_letter(r) || r == '_' { 	// identifiers and keywords
@@ -157,7 +162,7 @@ scan :: proc(lex: ^Lexer, errors: ^error.ErrorList) {
 			// unknown character
 			advance(lex)
 			error.add_error(
-				errors,
+				lex.errors,
 				.lexer_unrecognized_char,
 				loc,
 				"unrecognized character '%r'",

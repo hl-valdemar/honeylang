@@ -51,6 +51,9 @@ TokenKind :: enum {
 	right_curly_bracket,
 	left_square_bracket,
 	right_square_bracket,
+
+	// other
+	eof,
 }
 
 Token :: struct {
@@ -70,12 +73,6 @@ token_to_string :: proc(tok: Token) -> string {
 			val,
 		)
 	} else {
-		return fmt.tprintf(
-			"%s:%v:%v %s",
-			tok.loc.file,
-			tok.loc.line,
-			tok.loc.column,
-			tok.kind,
-		)
+		return fmt.tprintf("%s:%v:%v %s", tok.loc.file, tok.loc.line, tok.loc.column, tok.kind)
 	}
 }

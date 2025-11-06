@@ -231,8 +231,11 @@ parse_program :: proc(p: ^Parser) -> (^AstNode, bool) {
 	declarations := make([dynamic]Declaration)
 
 	for {
-		if _, ok := peek(p).?; !ok {
+		if tok, ok := peek(p).?; tok.kind == .eof {
+			advance(p) // consume for good measure
 			break // successfully parsed all tokens
+		} else if !ok {
+			logger.error(LOG_SCOPE, "unexpected end of file")
 		}
 
 		node, ok := parse_decl(p)

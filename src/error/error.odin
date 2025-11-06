@@ -29,8 +29,8 @@ init :: proc() -> ErrorList {
 	return make([dynamic]CompilerError)
 }
 
-deinit :: proc(errors: ^ErrorList) {
-	delete(errors^)
+deinit :: proc(errors: ErrorList) {
+	delete(errors)
 }
 
 // add error to list

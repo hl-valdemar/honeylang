@@ -39,15 +39,16 @@ main :: proc() {
 
 	fmt.printf("\nCompiling: %s\n", filepath)
 
-	l := lexer.init(filepath, source)
+  // track errors
+	errors := error.init()
+	defer error.deinit(errors)
+
+	l := lexer.init(filepath, source, &errors)
 	defer lexer.deinit(&l)
 
-	errors := error.init()
-	defer error.deinit(&errors)
-
-	lexer.scan(&l, &errors)
+	lexer.scan(&l)
 	if len(errors) > 0 {
-    error.print_errors(&errors)
+		error.print_errors(&errors)
 		// for e in errors do logger.fatal(LOG_SCOPE, "%v", e)
 		// for e in errors do fmt.printf("%v\n", e)
 		os.exit(1)
