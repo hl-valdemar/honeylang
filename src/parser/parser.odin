@@ -65,7 +65,6 @@ parse_primary :: proc(p: ^Parser) -> (^AstNode, bool) {
 	case .left_paren:
 		advance(p) // consume the left parenthesis
 		node, ok = parse_expr(p)
-		advance(p) // consume the right parenthesis
 
 	case:
 		// unexpected token type
@@ -93,10 +92,11 @@ parse_unary :: proc(p: ^Parser) -> (^AstNode, bool) {
 
 		// resolve operation
 		op := resolve_unary_op_kind(p, tok.kind).?
+		if !ok do return nil, false // error already reported in resolve_unary_op_kind
 
-		// parse the operand
-		operand, ok := parse_primary(p)
-		if !ok do return nil, false // error reported in parse_primary
+		// recursively call parse_unary to allow chaining
+		operand, ok := parse_unary(p)
+		if !ok do return nil, false
 
 		return make_unary(operand, op), true
 	}

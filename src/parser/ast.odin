@@ -126,63 +126,10 @@ BinaryOpKind :: enum {
 	logical_or,
 
 	// comparative
-  equal,
-  different,
+	equal,
+	different,
 	less,
 	greater,
 	less_equal,
 	greater_equal,
-}
-
-ast_destroy :: proc(node: ^AstNode) {
-	if node == nil do return
-
-	switch n in node {
-	case Program:
-		for &decl in n.declarations {
-			decl_destroy(&decl)
-		}
-		delete(n.declarations)
-
-	case Declaration:
-		ast_destroy(n.value)
-		if type, ok := n.type.?; ok {
-			type_destroy(type)
-		}
-
-	case UnaryOp:
-		ast_destroy(n.operand)
-
-	case BinaryOp:
-		ast_destroy(n.left)
-		ast_destroy(n.right)
-
-	case Identifier, Literal:
-	// no children
-	}
-
-	free(node)
-}
-
-decl_destroy :: proc(decl: ^Declaration) {
-	if decl == nil do return
-	ast_destroy(decl.value)
-	if type, ok := decl.type.?; ok {
-		type_destroy(type)
-	}
-	free(decl)
-}
-
-type_destroy :: proc(node: ^TypeNode) {
-	if node == nil do return
-
-	switch n in node {
-	case PointerType:
-		type_destroy(n.pointee)
-
-	case LiteralType, NamedType:
-	// no children
-	}
-
-	free(node)
 }
