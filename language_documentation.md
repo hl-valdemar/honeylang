@@ -14,6 +14,9 @@ Logical operators in the Honey language include `not`, `and`, and `or`, while `<
 
 ## Type Inference
 
+Types are inferred from the context in which they're first used.
+Once a type is determined for any given name, it will be locked in place and must be cast to the appropriate type explicitly if used in operations with different types.
+
 ```hon
 # type is inferred from the immediate value, when not used in any context (though this results in a warning from the compiler about unused declarations)
 DEBUG :: true
@@ -31,6 +34,6 @@ PI_CUBED :: PI * PI * PI  # same for PI_CUBED
 # the type of the context is f64 due to PI, so ANSWER's type resolves to f64
 SHOULD_WORK :: ANSWER * PI
 
-# floats can be declared without decimals (either explicitly or inferred from the context)
+# also, floats can be declared without decimals (either explicitly or inferred from the context)
 X: f32 :: 10
 ```
