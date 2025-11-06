@@ -242,19 +242,19 @@ inline_constants :: proc(s: ^Semantic) -> bool {
 }
 
 analyze :: proc(s: ^Semantic) -> bool {
-	// first pass: collect symbols
+	// first pass: collect symbols (symtab)
 	if !collect_symbols(s) do return false
 
-	// second pass: evaluate comptime expressions in dependency order
+	// second pass: evaluate comptime expressions in dependency order (symtab)
 	if !evaluate_constants(s) do return false
 
-	// third pass: apply default types to remainin untyped constants
+	// third pass: apply default types to remaining untyped constants (symtab)
 	if !apply_default_types(s) do return false
 
-	// complete ast type annotation
+	// fourth pass: complete ast type annotation (ast)
 	if !update_ast_types(s) do return false
 
-	// inline comptime constants
+	// inline comptime constants (ast)
 	if !inline_constants(s) do return false
 
 	return true

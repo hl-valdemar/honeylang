@@ -11,9 +11,11 @@
 
 package parser
 
+import "../error"
 import "../lexer"
-import "../logger"
 import "../scope"
+
+import "core:fmt"
 
 Token :: lexer.Token
 TokenKind :: lexer.TokenKind
@@ -26,10 +28,11 @@ Parser :: struct {
 	ast:            ^AstNode,
 	tokens:         []Token,
 	next_token_idx: int,
+	errors:         ^error.ErrorList,
 }
 
-init :: proc(tokens: []Token) -> Parser {
-	return Parser{ast = nil, tokens = tokens, next_token_idx = 0}
+init :: proc(tokens: []Token, errors: ^error.ErrorList) -> Parser {
+	return Parser{ast = nil, tokens = tokens, next_token_idx = 0, errors = errors}
 }
 
 deinit :: proc(p: ^Parser) {
@@ -38,7 +41,14 @@ deinit :: proc(p: ^Parser) {
 
 parse_primary :: proc(p: ^Parser) -> (^AstNode, bool) {
 	tok, ok := peek(p).?
-	if !ok do return nil, false
+	if !ok {
+		report_error(
+			p,
+			.parser_expected_primary_expr,
+			fmt.tprintf("expected expression, found unexpected end of file"),
+		)
+		return {}, false
+	}
 
 	node: ^AstNode
 
@@ -54,7 +64,7 @@ parse_primary :: proc(p: ^Parser) -> (^AstNode, bool) {
 
 	case:
 		// unexpected token type
-		logger.error(LOG_SCOPE, "unexpected token in primary expression: %v", tok.kind)
+		report_error(p, .parser_unexpected_token, "unexpected token '%v' in expression", tok.kind)
 		return nil, false
 	}
 
@@ -64,20 +74,24 @@ parse_primary :: proc(p: ^Parser) -> (^AstNode, bool) {
 
 parse_unary :: proc(p: ^Parser) -> (^AstNode, bool) {
 	tok, ok := peek(p).?
-	if !ok do return nil, false
+	if !ok {
+		report_error(
+			p,
+			.parser_expected_unary_expr,
+			fmt.tprintf("expected expression, found unexpected end of file"),
+		)
+		return {}, false
+	}
 
 	if check(p, .minus) || check(p, .logical_not) {
 		advance(p)
 
 		// resolve operation
-		op := resolve_unary_op_kind(tok.kind).?
+		op := resolve_unary_op_kind(p, tok.kind).?
 
 		// parse the operand
 		operand, ok := parse_primary(p)
-		if !ok {
-			logger.fatal(LOG_SCOPE, "failed to parse operand in unary")
-			return nil, false
-		}
+		if !ok do return nil, false // error reported in parse_primary
 
 		return make_unary(operand, op), true
 	}
@@ -86,14 +100,19 @@ parse_unary :: proc(p: ^Parser) -> (^AstNode, bool) {
 	return parse_primary(p)
 }
 
-resolve_unary_op_kind :: proc(tok_kind: TokenKind) -> Maybe(UnaryOpKind) {
+resolve_unary_op_kind :: proc(p: ^Parser, tok_kind: TokenKind) -> Maybe(UnaryOpKind) {
 	#partial switch tok_kind {
 	case .minus:
 		return .negate
 	case .logical_not:
 		return .logical_not
 	case:
-		logger.fatal(LOG_SCOPE, "unexpected token in unary expression: %v", tok_kind)
+		report_error(
+			p,
+			.parser_unexpected_token,
+			"unexpected token '%v' in unary expression",
+			tok_kind,
+		)
 		return nil
 	}
 	return nil
@@ -102,7 +121,7 @@ resolve_unary_op_kind :: proc(tok_kind: TokenKind) -> Maybe(UnaryOpKind) {
 parse_multiplicative :: proc(p: ^Parser) -> (^AstNode, bool) {
 	left, ok := parse_unary(p)
 	if !ok {
-		logger.fatal(LOG_SCOPE, "failed to parse left-hand side in binary op")
+		report_error(p, .parser_expected_expression, "expected unary expression")
 		return nil, false
 	}
 
@@ -111,13 +130,13 @@ parse_multiplicative :: proc(p: ^Parser) -> (^AstNode, bool) {
 		tok, ok := peek(p).?
 		if !ok do break
 
-		op := resolve_binary_op_kind(tok.kind).?
+		op := resolve_binary_op_kind(p, tok.kind).?
 		advance(p)
 
 		right: ^AstNode
 		right, ok = parse_unary(p)
 		if !ok {
-			logger.fatal(LOG_SCOPE, "failed to parse right-hand side in binary op")
+			report_error(p, .parser_unexpected_eof, "unexpected end of file in binary op")
 			ast_destroy(left)
 			return nil, false
 		}
@@ -128,7 +147,7 @@ parse_multiplicative :: proc(p: ^Parser) -> (^AstNode, bool) {
 	return left, true
 }
 
-resolve_binary_op_kind :: proc(tok_kind: TokenKind) -> Maybe(BinaryOpKind) {
+resolve_binary_op_kind :: proc(p: ^Parser, tok_kind: TokenKind) -> Maybe(BinaryOpKind) {
 	#partial switch tok_kind {
 	// arithmetic
 	case .plus:
@@ -157,7 +176,12 @@ resolve_binary_op_kind :: proc(tok_kind: TokenKind) -> Maybe(BinaryOpKind) {
 		return .greater_equal
 
 	case:
-		logger.fatal(LOG_SCOPE, "unexpected token in unary expression: %v", tok_kind)
+		report_error(
+			p,
+			.parser_unexpected_token,
+			"unexpected token '%v' in binary expression",
+			tok_kind,
+		)
 		return nil
 	}
 	return nil
@@ -170,25 +194,46 @@ parse_expr :: proc(p: ^Parser) -> (^AstNode, bool) {
 parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 	// expect name
 	name, ok := parse_identifier(p, "expected identifier in comptime declaration")
-	if !ok do return nil, false
+	if !ok do return nil, false // error reported by parse_identifier
 
 	// parse optional type
 	type: ^TypeNode = nil
 	if match(p, .colon) {
 		type, ok = parse_type(p, "expected type in comptime declaration")
-		if !ok do return nil, false
+		if !ok do return nil, false // error reported by parse_type
 	}
 
 	// parse ::
+	tok, ok_tok := peek(p).?
 	if !match(p, .double_colon) {
-		logger.fatal(LOG_SCOPE, "expected \"::\" in comptime declaration")
+		if ok_tok {
+			report_error(
+				p,
+				.parser_unexpected_token,
+				"expected '::' in comptime declaration, found '%v'",
+				tok.kind,
+			)
+		} else {
+			report_error(
+				p,
+				.parser_unexpected_token,
+				"expected '::' in comptime declaration, found unexpected end of file",
+			)
+		}
 		return nil, false
 	}
 
 	// parse value
 	value: ^AstNode
 	value, ok = parse_expr(p)
-	if !ok do return nil, false
+	if !ok {
+		report_error(
+			p,
+			.parser_unexpected_token,
+			"expected expression after '::' in comptime declaration",
+		)
+		return nil, false
+	}
 
 	// create node with all fields at once
 	return make_declaration(name, type, value, .const), true
@@ -197,10 +242,21 @@ parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 // expect identifier and return its value
 parse_identifier :: proc(p: ^Parser, err_msg: string) -> (string, bool) {
 	tok, ok := peek(p).?
-	if !ok do return {}, false
+	if !ok {
+		report_error(
+			p,
+			.parser_expected_identifier,
+			fmt.tprintf("%s, found unexpected end of file", err_msg),
+		)
+		return {}, false
+	}
 
 	if !match(p, .identifier) {
-		logger.fatal(LOG_SCOPE, err_msg)
+		report_error(
+			p,
+			.parser_expected_identifier,
+			fmt.tprintf("%s, found '%v'", err_msg, tok.kind),
+		)
 		return {}, false
 	}
 
@@ -210,10 +266,17 @@ parse_identifier :: proc(p: ^Parser, err_msg: string) -> (string, bool) {
 // parse a type node
 parse_type :: proc(p: ^Parser, err_msg: string) -> (^TypeNode, bool) {
 	tok, ok := peek(p).?
-	if !ok do return nil, false
+	if !ok {
+		report_error(
+			p,
+			.parser_expected_type,
+			fmt.tprintf("%s, found unexpected end of file", err_msg),
+		)
+		return {}, false
+	}
 
 	if !match(p, .identifier) {
-		logger.fatal(LOG_SCOPE, err_msg)
+		report_error(p, .parser_expected_type, fmt.tprintf("%s, found '%v'", err_msg, tok.kind))
 		return nil, false
 	}
 
@@ -235,13 +298,16 @@ parse_program :: proc(p: ^Parser) -> (^AstNode, bool) {
 			advance(p) // consume for good measure
 			break // successfully parsed all tokens
 		} else if !ok {
-			logger.error(LOG_SCOPE, "unexpected end of file")
+			report_error(p, .parser_unexpected_eof, "unexpected end of file")
+			return {}, false
 		}
 
 		node, ok := parse_decl(p)
 		if !ok {
-			logger.error(LOG_SCOPE, "failed to parse declaration")
-			return nil, false
+			return {}, false
+			// // error already reported, try to recover by skipping to next declaration
+			// synchronize(p)
+			// continue
 		}
 
 		#partial switch n in node {
@@ -249,8 +315,10 @@ parse_program :: proc(p: ^Parser) -> (^AstNode, bool) {
 			append(&declarations, n)
 
 		case:
-			logger.fatal(LOG_SCOPE, "expected declaration in program")
-			return nil, false
+			report_error(p, .parser_unexpected_token, "expected declaration in program")
+			return {}, false
+		// synchronize(p)
+		// continue
 		}
 	}
 

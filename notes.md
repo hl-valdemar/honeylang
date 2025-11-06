@@ -19,7 +19,7 @@ Comprehensive implementation of basic compile-time functionality in the Honey la
 - [x] Strong typing (proper type checking)
 - [ ] Proper diagnostics
     - [x] lexer
-    - [ ] parser
+    - [x] parser
     - [ ] semantic
     - [ ] code emission
 - [ ] Arithmetic and boolean operations (disregard modulo operation for now)
@@ -49,6 +49,7 @@ Comprehensive implementation of basic runtime dependent operations in the Honey 
     - [ ] structs
     - [ ] arrays
 - [ ] Proper register allocation in codegen
+- [ ] Collect parser errors instead of failing immediately
 
 ## Ideology
 

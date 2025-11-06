@@ -39,43 +39,48 @@ main :: proc() {
 
 	fmt.printf("\nCompiling: %s\n", filepath)
 
-  // track errors
+	fmt.printf("\n::[[ SOURCE ]]::\n")
+	fmt.print(source)
+
+	// track errors
 	errors := error.init()
 	defer error.deinit(errors)
+
+	fmt.printf("\n::[[ LEXING ]]::\n")
 
 	l := lexer.init(filepath, source, &errors)
 	defer lexer.deinit(&l)
 
 	lexer.scan(&l)
-	if len(errors) > 0 {
+	if error.has_errors(&errors) {
 		error.print_errors(&errors)
-		// for e in errors do logger.fatal(LOG_SCOPE, "%v", e)
-		// for e in errors do fmt.printf("%v\n", e)
 		os.exit(1)
 	}
 
-	fmt.printf("\n::[[ LEXING ]]::\n")
 	fmt.printf("Generated %d tokens:\n\n", len(l.tokens))
 	lexer.print_tokens(&l.tokens)
 
-	p := parser.init(l.tokens[:])
+	fmt.printf("\n::[[ PARSING ]]::\n")
+
+	p := parser.init(l.tokens[:], &errors)
 	defer parser.deinit(&p)
 
-	if ok := parser.parse(&p); !ok {
-		logger.fatal(LOG_SCOPE, "failed to parse tokens")
+	parser.parse(&p)
+	if error.has_errors(&errors) {
+		error.print_errors(&errors)
 		os.exit(1)
 	}
 
-	fmt.printf("\n::[[ PARSING ]]::\n")
 	fmt.printf("Parsed %d declarations:\n\n", len(p.ast.(parser.Program).declarations))
 	parser.ast_print(p.ast)
+
+	fmt.printf("\n::[[ SEMANTIC ANALYSIS ]]::\n")
 
 	s := semantic.init(p.ast)
 	defer semantic.deinit(&s)
 
 	semantic.analyze(&s)
 
-	fmt.printf("\n::[[ SEMANTIC ANALYSIS ]]::\n")
 	fmt.printf("Collected %d symbols:\n\n", len(s.symtab.symbols[:]))
 	semantic.print_symtab(&s.symtab)
 

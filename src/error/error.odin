@@ -4,7 +4,19 @@ import "core:fmt"
 
 ErrorKind :: enum {
 	lexer_unrecognized_char,
+
+	// parser errors
 	parser_unexpected_token,
+	parser_unexpected_eof,
+	parser_expected_identifier,
+	parser_expected_type,
+	parser_expected_expression,
+	parser_expected_primary_expr,
+	parser_expected_unary_expr,
+	parser_expected_multiplicative_expr,
+	parser_expected_additive_expr,
+
+	// semantic errors
 	semantic_undefined_identifier,
 	semantic_type_mismatch,
 	semantic_circular_dependency,

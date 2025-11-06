@@ -107,6 +107,6 @@ symbol_kind_from_decl :: proc(kind: parser.DeclKind) -> Maybe(SymbolKind) {
 
 print_symtab :: proc(symtab: ^SymbolTable) {
 	for symbol in symtab.symbols {
-		fmt.printf("(%s) %s: %s = %v\n", symbol.kind, symbol.name, symbol.type, symbol.value)
+		fmt.printf("[%s] %s: %s = %v\n", symbol.kind, symbol.name, symbol.type, symbol.value)
 	}
 }

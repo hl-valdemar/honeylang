@@ -1,5 +1,7 @@
 package parser
 
+import "../error"
+
 peek_offset :: proc(p: ^Parser, offset: int) -> Maybe(Token) {
 	if p.next_token_idx + offset < len(p.tokens) {
 		return p.tokens[p.next_token_idx + offset]
@@ -33,3 +35,40 @@ advance :: proc(p: ^Parser) {
 	p.next_token_idx += 1
 }
 
+report_error :: proc(p: ^Parser, kind: error.ErrorKind, fmt_str: string, args: ..any) {
+	tok, ok := peek(p).?
+	loc: Maybe(error.SourceLocation) = nil
+
+	if ok {
+		loc = tok.loc
+	}
+
+	error.add_error(p.errors, kind, loc, fmt_str, ..args)
+}
+
+report_error_at_token :: proc(
+	p: ^Parser,
+	tok: Token,
+	kind: error.ErrorKind,
+	fmt_str: string,
+	args: ..any,
+) {
+	error.add_error(p.errors, kind, tok.loc, fmt_str, ..args)
+}
+
+// panic-mode recovery: skip tokens until we find a synchronization point
+synchronize :: proc(p: ^Parser) {
+	for {
+		tok, ok := peek(p).?
+		if !ok do return // end of file
+
+		// look for start of a new declaration (identifier followed by : or ::)
+		if tok.kind == .identifier {
+			if check_offset(p, 1, .colon) || check_offset(p, 1, .double_colon) {
+				return // found what looks like a new declaration
+			}
+		}
+
+		advance(p)
+	}
+}
