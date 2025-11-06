@@ -62,6 +62,11 @@ parse_primary :: proc(p: ^Parser) -> (^AstNode, bool) {
 	case .number:
 		node, ok = make_number(tok)
 
+	case .left_paren:
+		advance(p) // consume the left parenthesis
+		node, ok = parse_expr(p)
+		advance(p) // consume the right parenthesis
+
 	case:
 		// unexpected token type
 		report_error(p, .parser_unexpected_token, "unexpected token '%v' in expression", tok.kind)
@@ -167,7 +172,7 @@ parse_comparative :: proc(p: ^Parser) -> (^AstNode, bool) {
 		if !ok do break
 
 		op, ok_op := resolve_binary_op_kind(p, tok.kind).?
-    if !ok_op do return nil, false // error reported in resolve_binary_op_kind
+		if !ok_op do return nil, false // error reported in resolve_binary_op_kind
 
 		advance(p)
 
@@ -185,8 +190,64 @@ parse_comparative :: proc(p: ^Parser) -> (^AstNode, bool) {
 	return left, true
 }
 
+parse_logical_and :: proc(p: ^Parser) -> (^AstNode, bool) {
+	left, ok := parse_comparative(p)
+	if !ok do return nil, false // error already reported in parse_comparative
+
+	// expect only logical and
+	for check(p, .logical_and) {
+		tok, ok := peek(p).?
+		if !ok do break
+
+		op, ok_op := resolve_binary_op_kind(p, tok.kind).?
+		if !ok_op do return nil, false // error reported in resolve_binary_op_kind
+
+		advance(p)
+
+		right: ^AstNode
+		right, ok = parse_comparative(p)
+		if !ok {
+			// error already reported in parse_comparative
+			ast_destroy(left)
+			return nil, false
+		}
+
+		left = make_binary(left, right, op)
+	}
+
+	return left, true
+}
+
+parse_logical_or :: proc(p: ^Parser) -> (^AstNode, bool) {
+	left, ok := parse_logical_and(p)
+	if !ok do return nil, false // error already reported in parse_logical_and
+
+	// expect only logical or
+	for check(p, .logical_or) {
+		tok, ok := peek(p).?
+		if !ok do break
+
+		op, ok_op := resolve_binary_op_kind(p, tok.kind).?
+		if !ok_op do return nil, false // error reported in resolve_binary_op_kind
+
+		advance(p)
+
+		right: ^AstNode
+		right, ok = parse_logical_and(p)
+		if !ok {
+			// error already reported in parse_logical_and
+			ast_destroy(left)
+			return nil, false
+		}
+
+		left = make_binary(left, right, op)
+	}
+
+	return left, true
+}
+
 parse_expr :: proc(p: ^Parser) -> (^AstNode, bool) {
-	return parse_comparative(p)
+	return parse_logical_or(p)
 }
 
 parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {

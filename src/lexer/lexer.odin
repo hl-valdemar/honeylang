@@ -38,8 +38,15 @@ deinit :: proc(lex: ^Lexer) {
 
 check_keyword :: proc(ident_name: []rune) -> TokenKind {
 	name := utf8.runes_to_string(ident_name)
-	if name == "true" || name == "false" {
+	switch name {
+	case "true", "false":
 		return .boolean
+	case "and":
+		return .logical_and
+	case "or":
+		return .logical_or
+	case "not":
+		return .logical_not
 	}
 	return .identifier
 }
@@ -75,7 +82,7 @@ scan_identifier :: proc(lex: ^Lexer) -> Token {
 		loc  = loc,
 	}
 
-	if tok.kind == .identifier || tok.kind == .boolean {
+	if tok.kind == .identifier || tok.kind == .boolean || tok.kind == .logical_and {
 		tok.value = utf8.runes_to_string(name)
 	}
 
@@ -154,6 +161,12 @@ scan :: proc(lex: ^Lexer) {
 		} else if r == '/' {
 			advance(lex)
 			append(&lex.tokens, Token{kind = .slash, loc = loc})
+		} else if r == '(' {
+			advance(lex)
+			append(&lex.tokens, Token{kind = .left_paren, loc = loc})
+		} else if r == ')' {
+			advance(lex)
+			append(&lex.tokens, Token{kind = .right_paren, loc = loc})
 		} else if r == ':' {
 			// double colon
 			if next, ok := peek_offset(lex, 1).?; ok && next == ':' {

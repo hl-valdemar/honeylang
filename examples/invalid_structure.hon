@@ -1,7 +1,7 @@
 # parser error test file - all characters and tokens are valid, but syntax is wrong
 
 # missing :: after type annotation
-#CONST1: i32 = 100
+CONST1: i32 = 100
 
 # missing expression after ::
 CONST2 ::

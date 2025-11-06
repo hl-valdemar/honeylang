@@ -1,0 +1,5 @@
+# semantics error test file - all structures are valid, but semantics are wrong
+
+# duplicate definitions
+BEST_NAME :: 42
+BEST_NAME :: 56

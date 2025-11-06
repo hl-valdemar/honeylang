@@ -32,3 +32,13 @@ IS_GREATER :: PI_CUBED > PI_SQUARED
 IS_GREATER_EQUAL :: Z <= PI
 IS_LESS_EQUAL :: X >= ANSWER
 
+TRUE_AND_TRUE :: true and true
+TRUE_AND_FALSE :: true and false
+TRUE_OR_TRUE :: true or true
+TRUE_OR_FALSE :: true or false
+
+NOT_TRUE :: not true
+NOT_NOT_TRUE :: not not true
+NOT_FALSE :: not false
+NOT_FALSE_OR_TRUE :: not (false or true)
+NOT_FALSE_OR_TRUE :: not (false or true)
