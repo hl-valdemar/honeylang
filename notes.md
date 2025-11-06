@@ -22,7 +22,7 @@ Comprehensive implementation of basic compile-time functionality in the Honey la
     - [x] parser
     - [ ] semantic
 - [ ] Arithmetic and boolean operations (disregard modulo operation for now)
-    - [ ] arithmetic
+    - [x] arithmetic
         - [x] multiplicative
         - [x] additive
     - [ ] boolean

@@ -110,6 +110,10 @@ resolve_binary_op_kind :: proc(p: ^Parser, tok_kind: TokenKind) -> Maybe(BinaryO
 		return .logical_or
 
 	// comparative
+	case .double_equal:
+		return .equal
+	case .not_equal:
+		return .different
 	case .less:
 		return .less
 	case .greater:

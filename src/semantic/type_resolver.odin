@@ -1,6 +1,5 @@
 package semantic
 
-import "../lexer"
 import "../logger"
 import "../parser"
 
@@ -179,3 +178,11 @@ resolve_type_name :: proc(name: string) -> Maybe(SymbolType) {
 	}
 }
 
+is_comparative :: proc(op: parser.BinaryOpKind) -> bool {
+	#partial switch op {
+	case .equal, .less, .greater, .less_equal, .greater_equal:
+		return true
+	case:
+		return false
+	}
+}

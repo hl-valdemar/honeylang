@@ -21,3 +21,14 @@ SOME_PI :: ANSWER * PI
 # some other operations
 Y :: X - 5 + 3
 Z :: Y / 2
+
+# comparisons
+IS_EQUAL :: ANSWER == ANSWER
+IS_DIFFERENT :: ANSWER != ANSWER
+
+IS_LESS :: PI < PI_SQUARED
+IS_GREATER :: PI_CUBED > PI_SQUARED
+
+IS_GREATER_EQUAL :: Z <= PI
+IS_LESS_EQUAL :: X >= ANSWER
+

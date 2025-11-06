@@ -152,8 +152,41 @@ parse_additive :: proc(p: ^Parser) -> (^AstNode, bool) {
 	return left, true
 }
 
+parse_comparative :: proc(p: ^Parser) -> (^AstNode, bool) {
+	left, ok := parse_additive(p)
+	if !ok do return nil, false // error already reported in parse_additive
+
+	// expect comparison
+	for check(p, .double_equal) ||
+	    check(p, .not_equal) ||
+	    check(p, .less) ||
+	    check(p, .greater) ||
+	    check(p, .less_equal) ||
+	    check(p, .greater_equal) {
+		tok, ok := peek(p).?
+		if !ok do break
+
+		op, ok_op := resolve_binary_op_kind(p, tok.kind).?
+    if !ok_op do return nil, false // error reported in resolve_binary_op_kind
+
+		advance(p)
+
+		right: ^AstNode
+		right, ok = parse_additive(p)
+		if !ok {
+			// error already reported in parse_additive
+			ast_destroy(left)
+			return nil, false
+		}
+
+		left = make_binary(left, right, op)
+	}
+
+	return left, true
+}
+
 parse_expr :: proc(p: ^Parser) -> (^AstNode, bool) {
-	return parse_additive(p)
+	return parse_comparative(p)
 }
 
 parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {

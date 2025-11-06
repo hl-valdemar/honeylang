@@ -164,6 +164,46 @@ scan :: proc(lex: ^Lexer) {
 				advance(lex)
 				append(&lex.tokens, Token{kind = .colon, loc = loc})
 			}
+		} else if r == '=' {
+			// double equal
+			if next, ok := peek_offset(lex, 1).?; ok && next == '=' {
+				advance_n(lex, 2)
+				append(&lex.tokens, Token{kind = .double_equal, loc = loc})
+			} else {
+				// single equal
+				advance(lex)
+				append(&lex.tokens, Token{kind = .equal, loc = loc})
+			}
+		} else if r == '!' {
+			// not equal (different)
+			if next, ok := peek_offset(lex, 1).?; ok && next == '=' {
+				advance_n(lex, 2)
+				append(&lex.tokens, Token{kind = .not_equal, loc = loc})
+			} else {
+				// logical not
+				advance(lex)
+				append(&lex.tokens, Token{kind = .logical_not, loc = loc})
+			}
+		} else if r == '<' {
+			// less equal
+			if next, ok := peek_offset(lex, 1).?; ok && next == '=' {
+				advance_n(lex, 2)
+				append(&lex.tokens, Token{kind = .less_equal, loc = loc})
+			} else {
+				// just less
+				advance(lex)
+				append(&lex.tokens, Token{kind = .less, loc = loc})
+			}
+		} else if r == '>' {
+			// greater equal
+			if next, ok := peek_offset(lex, 1).?; ok && next == '=' {
+				advance_n(lex, 2)
+				append(&lex.tokens, Token{kind = .greater_equal, loc = loc})
+			} else {
+				// just greater
+				advance(lex)
+				append(&lex.tokens, Token{kind = .greater, loc = loc})
+			}
 		} else {
 			// unknown character
 			advance(lex)

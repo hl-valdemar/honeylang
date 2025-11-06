@@ -126,6 +126,8 @@ BinaryOpKind :: enum {
 	logical_or,
 
 	// comparative
+  equal,
+  different,
 	less,
 	greater,
 	less_equal,

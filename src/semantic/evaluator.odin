@@ -91,10 +91,7 @@ evaluate_expr :: proc(
 			if symbol.eval_state == .evaluated {
 				if old_value, ok_val := symbol.value.?; ok_val {
 					if comptime_val, ok_ct := old_value.(ComptimeValue); ok_ct {
-						new_value, ok_conv := comptime_value_to_type(
-							comptime_val,
-							context_type.?,
-						)
+						new_value, ok_conv := comptime_value_to_type(comptime_val, context_type.?)
 						if !ok_conv {
 							logger.fatal(
 								LOG_SCOPE,
@@ -387,12 +384,15 @@ eval_binary_numeric :: proc(
 	case .mul:
 		return left * right, true
 	case .div:
-		when !intrinsics.type_is_float(T) {
-			if right == 0 {
-				return {}, false // Handle via error list
-			}
+		// division by zero
+		if right == 0 {
+			return {}, false // TODO: handle via error list
 		}
 		return left / right, true
+	case .equal:
+		return left == right, true
+	case .different:
+		return left != right, true
 	case .less:
 		return left < right, true
 	case .greater:

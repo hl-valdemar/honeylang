@@ -13,9 +13,10 @@ TokenKind :: enum {
 	// assignment operators
 	colon,
 	double_colon,
-	equal,
+  equal,
 
 	// comparison operators
+  not_equal,
 	double_equal,
 	less,
 	greater,
