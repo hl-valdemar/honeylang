@@ -1,11 +1,11 @@
-// PARSING ORDER (from tight to loose):
+// PARSING ORDER (from tight coupling to loose):
 // 1. primary (literals, names, parens)
-// 2. unary (-, !)
+// 2. unary (-, not)
 // 3. multiplicative (*, /)
 // 4. additive (+, -)
 // 5. comparison (<, >, <=, >=, ==, !=)
-// 6. logical and (&&)
-// 7. logical or (||)
+// 6. logical and
+// 7. logical or
 // 8. expression (pretty much just wraps logical or)
 // 9. statement
 
