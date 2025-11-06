@@ -145,9 +145,15 @@ scan :: proc(lex: ^Lexer) {
 		} else if r == '-' {
 			advance(lex)
 			append(&lex.tokens, Token{kind = .minus, loc = loc})
+		} else if r == '+' {
+			advance(lex)
+			append(&lex.tokens, Token{kind = .plus, loc = loc})
 		} else if r == '*' {
 			advance(lex)
 			append(&lex.tokens, Token{kind = .star, loc = loc})
+		} else if r == '/' {
+			advance(lex)
+			append(&lex.tokens, Token{kind = .slash, loc = loc})
 		} else if r == ':' {
 			// double colon
 			if next, ok := peek_offset(lex, 1).?; ok && next == ':' {

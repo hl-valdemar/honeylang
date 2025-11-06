@@ -17,3 +17,7 @@ PI_CUBED :: PI * PI * PI  # same for PI_CUBED
 # ANSWER is finally used, so it's type can be resolved.
 # the type of the context is f32 due to PI_EXPLICIT, so ANSWER's type resolves to f32
 SOME_PI :: ANSWER * PI
+
+# some other operations
+Y :: X - 5
+Z :: Y / 2
