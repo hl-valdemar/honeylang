@@ -23,13 +23,13 @@ LOG_SCOPE :: scope.Scope.parser
 ParserError :: enum {}
 
 Parser :: struct {
+	ast:            ^AstNode,
 	tokens:         []Token,
 	next_token_idx: int,
-	ast:            ^AstNode,
 }
 
 init :: proc(tokens: []Token) -> Parser {
-	return Parser{tokens = tokens, next_token_idx = 0, ast = nil}
+	return Parser{ast = nil, tokens = tokens, next_token_idx = 0}
 }
 
 deinit :: proc(p: ^Parser) {
@@ -168,7 +168,7 @@ parse_expr :: proc(p: ^Parser) -> (^AstNode, bool) {
 }
 
 parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
-	// parse name
+	// expect name
 	name, ok := parse_identifier(p, "expected identifier in comptime declaration")
 	if !ok do return nil, false
 
