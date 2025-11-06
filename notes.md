@@ -37,7 +37,11 @@ Comprehensive implementation of basic runtime dependent operations in the Honey 
 - [ ] Function declarations
     - [ ] stack frames
     - [ ] proper prologue/epilogue setup (depending on function properties, e.g. leaf-node, parameter count, etc.)
+    - [ ] proper stack alignment
+    - [ ] proper calling conventions adherence
+- [ ] Function calls
 - [ ] Control flow operations
+    - [ ] defer statements (run on scope exit)
     - [ ] if statements
     - [ ] while loops
     - [ ] for loops
@@ -46,14 +50,27 @@ Comprehensive implementation of basic runtime dependent operations in the Honey 
     - [ ] arrays
 - [ ] Proper register allocation in codegen
 
-## Todo
+## Ideology
 
-## Utilities
+- systems programming language
 
-### Logger
+- explicit operations over implicit operations
+    - especially when working with memory
 
-- [x] Configure the logger to only log debug messages when in debug mode
-- [ ] Buffer logs when writing to file (I/O bound operation, write in bulk)
+- simplicity over complexity
+
+- composition over inheritance
+
+- minimize (visual) clutter, increase ergonomics
+    - semicolons are unnecessary
+
+- types must be explicitly cast when required
+    - no implicit type casting
+
+## Notable features
+
+- functions as first-class citizens
+- defer statements
 
 ## Stack frames
 
