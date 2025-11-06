@@ -14,24 +14,29 @@ Source Code > Lexer: Token Stream ... > Parser: AST ........ > Semantic Analysis
 
 ## Roadmap (v0.1.0)
 
-- [x] Strong typing
+- [x] Strong typing (proper type checking)
+- [ ] Proper diagnostics
+    - [x] lexer
+    - [ ] parser
+    - [ ] semantic
+    - [ ] code emission
 - [ ] Arithmetic and boolean operations (disregard modulo operation for now)
     - [ ] arithmetic
         - [x] multiplicative
         - [ ] additive
     - [ ] boolean
+- [x] Comptime expression evaluation
 - [ ] Control flow operations
     - [ ] if statements
     - [ ] while loops
     - [ ] for loops
-- [ ] Proper register allocation
-- [ ] Datatypes
-    - [ ] structs
-    - [ ] arrays
+- [ ] Proper register allocation in codegen
 
 ## Roadmap (v0.2.0)
 
-- [ ] Comptime expression evaluation
+- [ ] Datatypes
+    - [ ] structs
+    - [ ] arrays
 
 ## Todo
 
