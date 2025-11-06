@@ -177,12 +177,3 @@ resolve_type_name :: proc(name: string) -> Maybe(SymbolType) {
 		return nil
 	}
 }
-
-is_comparative :: proc(op: parser.BinaryOpKind) -> bool {
-	#partial switch op {
-	case .equal, .less, .greater, .less_equal, .greater_equal:
-		return true
-	case:
-		return false
-	}
-}

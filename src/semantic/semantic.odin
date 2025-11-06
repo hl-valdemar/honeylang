@@ -12,10 +12,12 @@ Semantic :: struct {
 }
 
 init :: proc(program: ^parser.AstNode) -> Semantic {
-	return Semantic{program = program}
+	return Semantic{program = program, symtab = symtab_make()}
 }
 
-deinit :: proc(s: ^Semantic) {}
+deinit :: proc(s: ^Semantic) {
+	symtab_destroy(&s.symtab)
+}
 
 collect_symbols :: proc(s: ^Semantic) -> bool {
 	program := s.program.(parser.Program)
