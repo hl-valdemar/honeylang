@@ -2,9 +2,15 @@
 
 ## Comments
 
+Comments are strings of characters prefixed with the `#` token. These are, of course, not evaluated or compiled into the binary, but are simply ignored by the compiler.
+
 ```hon
 # Comments are prefixed with a pound, so this is a comment!
 ```
+
+## Logical operators and comparators
+
+Logical operators in the Honey language include `not`, `and`, and `or`, while `<`, `>`, `<=`, `>=`, `==`, and `!=` comprise the comparison operators. All pretty standard.
 
 ## Type Inference
 
