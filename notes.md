@@ -12,7 +12,9 @@ Source Code > Lexer: Token Stream ... > Parser: AST ........ > Semantic Analysis
                                                                └─ Comptime constant inlining
 ```
 
-## Roadmap (v0.1.0)
+## Roadmap (v0.0.1)
+
+Comprehensive implementation of basic compile-time functionality in the Honey language.
 
 - [x] Strong typing (proper type checking)
 - [ ] Proper diagnostics
@@ -26,17 +28,23 @@ Source Code > Lexer: Token Stream ... > Parser: AST ........ > Semantic Analysis
         - [ ] additive
     - [ ] boolean
 - [x] Comptime expression evaluation
+- [ ] Comptime constant inlining
+
+## Roadmap (v0.0.2)
+
+Comprehensive implementation of basic runtime dependent operations in the Honey language.
+
+- [ ] Function declarations
+    - [ ] stack frames
+    - [ ] proper prologue/epilogue setup (depending on function properties, e.g. leaf-node, parameter count, etc.)
 - [ ] Control flow operations
     - [ ] if statements
     - [ ] while loops
     - [ ] for loops
-- [ ] Proper register allocation in codegen
-
-## Roadmap (v0.2.0)
-
 - [ ] Datatypes
     - [ ] structs
     - [ ] arrays
+- [ ] Proper register allocation in codegen
 
 ## Todo
 
