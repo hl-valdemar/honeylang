@@ -1,5 +1,7 @@
 package parser
 
+import "../logger"
+
 import "core:fmt"
 
 print_indent :: proc(indent: int, is_last: []bool) {
@@ -23,7 +25,7 @@ ast_print :: proc(node: ^AstNode, indent := 0, is_last: []bool = {}) {
 	switch &n in node {
 	case Program:
 		print_indent(indent, is_last)
-		fmt.print("program:\n")
+		fmt.printf("%sprogram%s:\n", logger.color_codes[.cyan], logger.color_codes[.reset])
 		for &decl, i in n.declarations {
 			is_last_decl := (i == len(n.declarations) - 1)
 			new_is_last := make([dynamic]bool, len(is_last))
@@ -38,7 +40,7 @@ ast_print :: proc(node: ^AstNode, indent := 0, is_last: []bool = {}) {
 
 	case UnaryOp:
 		print_indent(indent, is_last)
-		fmt.printf("unary:\n")
+		fmt.printf("%sunary%s:\n", logger.color_codes[.cyan], logger.color_codes[.reset])
 
 		new_is_last := make([dynamic]bool, len(is_last))
 		defer delete(new_is_last)
@@ -53,7 +55,7 @@ ast_print :: proc(node: ^AstNode, indent := 0, is_last: []bool = {}) {
 
 	case BinaryOp:
 		print_indent(indent, is_last)
-		fmt.printf("binary:\n")
+		fmt.printf("%sbinary%s:\n", logger.color_codes[.cyan], logger.color_codes[.reset])
 
 		new_is_last := make([dynamic]bool, len(is_last))
 		defer delete(new_is_last)
@@ -74,13 +76,23 @@ ast_print :: proc(node: ^AstNode, indent := 0, is_last: []bool = {}) {
 
 	case Literal:
 		print_indent(indent, is_last)
-		fmt.printf("literal: %v\n", n.value)
+		fmt.printf(
+			"%sliteral%s: %v\n",
+			logger.color_codes[.blue],
+			logger.color_codes[.reset],
+			n.value,
+		)
 	}
 }
 
 print_decl :: proc(decl: ^Declaration, indent := 0, is_last: []bool = {}) {
 	print_indent(indent, is_last)
-	fmt.printf("declaration (%v):\n", decl.kind)
+	fmt.printf(
+		"%sdeclaration%s (%v):\n",
+		logger.color_codes[.yellow],
+		logger.color_codes[.reset],
+		decl.kind,
+	)
 
 	new_is_last := make([dynamic]bool, len(is_last))
 	defer delete(new_is_last)
@@ -92,7 +104,7 @@ print_decl :: proc(decl: ^Declaration, indent := 0, is_last: []bool = {}) {
 
 	print_type(decl.type, indent + 1, new_is_last[:])
 
-	new_is_last[len(new_is_last) - 1] = true // Value is last child
+	new_is_last[len(new_is_last) - 1] = true // value is last child
 	ast_print(decl.value, indent + 1, new_is_last[:])
 }
 
@@ -101,7 +113,7 @@ print_type :: proc(type_node: Maybe(^TypeNode), indent := 0, is_last: []bool = {
 
 	node, ok := type_node.?
 	if !ok {
-		fmt.printf("type: %v\n", node)
+		fmt.printf("type: %v\n", node) // prints <nil>
 		return
 	}
 
