@@ -129,7 +129,7 @@ apply_default_types :: proc(s: ^Semantic) -> bool {
 }
 
 // type annotate ast
-update_ast :: proc(s: ^Semantic) -> bool {
+update_ast_types :: proc(s: ^Semantic) -> bool {
 	program := s.program.(parser.Program)
 
 	for &decl in program.declarations {
@@ -197,6 +197,50 @@ update_ast :: proc(s: ^Semantic) -> bool {
 	return true
 }
 
+inline_constants :: proc(s: ^Semantic) -> bool {
+	program := s.program.(parser.Program)
+
+	for &decl in program.declarations {
+		// TODO: also inline constants in function bodies when the time comes
+		if decl.kind == .const {
+			// decl.value = inline_expr(s, decl.value) or_return
+
+			// look up in symbol table
+			symbol, ok := symtab_lookup(&s.symtab, decl.name).?
+			if !ok do continue // not in symtab, leave as-is
+
+			// only inline compile-time constants
+			if symbol.kind != .const do continue
+
+			// get the evaluated value
+			symbol_val, ok_val := symbol.value.?
+			if !ok_val {
+				logger.fatal(LOG_SCOPE, "constant has no value: %s", decl.name)
+				return false
+			}
+
+			comptime_val, ok_ct := symbol_val.(ComptimeValue)
+			if !ok_ct {
+				logger.fatal(LOG_SCOPE, "expected comptime value")
+				return false
+			}
+
+			// create a literal node with the constant's value
+			new_node := new(parser.AstNode)
+			new_node^ = parser.Literal {
+				value = comptime_to_literal(comptime_val),
+			}
+
+			// free the old identifier node
+			parser.ast_destroy(decl.value)
+
+			decl.value = new_node
+		}
+	}
+
+	return true
+}
+
 analyze :: proc(s: ^Semantic) -> bool {
 	// first pass: collect symbols
 	if !collect_symbols(s) do return false
@@ -208,7 +252,10 @@ analyze :: proc(s: ^Semantic) -> bool {
 	if !apply_default_types(s) do return false
 
 	// complete ast type annotation
-	if !update_ast(s) do return false
+	if !update_ast_types(s) do return false
+
+	// inline comptime constants
+	if !inline_constants(s) do return false
 
 	return true
 }

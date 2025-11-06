@@ -29,11 +29,13 @@ SourceSpan :: struct {
 }
 
 DeclKind :: enum {
-	func,
 	// compile-time constant
 	const,
+	func,
+
 	// runtime constant
 	immutable,
+
 	// runtime mutable
 	mutable,
 }

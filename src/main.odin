@@ -79,7 +79,7 @@ main :: proc() {
 	fmt.printf("Collected %d symbols:\n\n", len(s.symtab.symbols[:]))
 	semantic.print_symtab(&s.symtab)
 
-	fmt.printf("\nTyped AST:\n\n")
+	fmt.printf("\nResulting AST:\n\n")
 	parser.ast_print(s.program)
 
 	fmt.printf("\n::[[ CODE EMISSION ]]::\n")

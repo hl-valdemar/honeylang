@@ -52,21 +52,21 @@ evaluate_expr :: proc(
 		case u64:
 			// if context type is specified, convert to that type
 			if ctx_type, ok := context_type.?; ok {
-				return convert_uint_to_type(v, ctx_type)
+				return uint_to_type(v, ctx_type)
 			}
 			return v, true
 
 		case i64:
 			// if context type is specified, convert to that type
 			if ctx_type, ok := context_type.?; ok {
-				return convert_int_to_type(v, ctx_type)
+				return int_to_type(v, ctx_type)
 			}
 			return v, true
 
 		case f64:
 			// if context type is specified, convert to that type
 			if ctx_type, ok := context_type.?; ok {
-				return convert_float_to_type(v, ctx_type)
+				return float_to_type(v, ctx_type)
 			}
 			return v, true
 
@@ -91,7 +91,7 @@ evaluate_expr :: proc(
 			if symbol.eval_state == .evaluated {
 				if old_value, ok_val := symbol.value.?; ok_val {
 					if comptime_val, ok_ct := old_value.(ComptimeValue); ok_ct {
-						new_value, ok_conv := convert_comptime_value_to_type(
+						new_value, ok_conv := comptime_value_to_type(
 							comptime_val,
 							context_type.?,
 						)
@@ -136,7 +136,7 @@ evaluate_expr :: proc(
 
 			// only convert if types differ
 			if ctx_type != symbol_type {
-				return convert_comptime_value_to_type(comptime_val, ctx_type)
+				return comptime_value_to_type(comptime_val, ctx_type)
 			}
 		}
 

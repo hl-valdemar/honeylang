@@ -1,8 +1,9 @@
 package semantic
 
 import "../logger"
+import "../parser"
 
-convert_uint_to_type :: proc(v: u64, target_type: SymbolType) -> (SymbolValue, bool) {
+uint_to_type :: proc(v: u64, target_type: SymbolType) -> (SymbolValue, bool) {
 	#partial switch target_type {
 	case .u8:
 		return u8(v), true
@@ -33,7 +34,7 @@ convert_uint_to_type :: proc(v: u64, target_type: SymbolType) -> (SymbolValue, b
 	}
 }
 
-convert_int_to_type :: proc(v: i64, target_type: SymbolType) -> (SymbolValue, bool) {
+int_to_type :: proc(v: i64, target_type: SymbolType) -> (SymbolValue, bool) {
 	#partial switch target_type {
 	case .u8:
 		return u8(v), true
@@ -64,7 +65,7 @@ convert_int_to_type :: proc(v: i64, target_type: SymbolType) -> (SymbolValue, bo
 	}
 }
 
-convert_float_to_type :: proc(v: f64, target_type: SymbolType) -> (SymbolValue, bool) {
+float_to_type :: proc(v: f64, target_type: SymbolType) -> (SymbolValue, bool) {
 	#partial switch target_type {
 	case .f16:
 		return f16(v), true
@@ -79,7 +80,7 @@ convert_float_to_type :: proc(v: f64, target_type: SymbolType) -> (SymbolValue, 
 }
 
 // convert a ComptimeValue to a target type
-convert_comptime_value_to_type :: proc(
+comptime_value_to_type :: proc(
 	value: ComptimeValue,
 	target_type: SymbolType,
 ) -> (
@@ -88,29 +89,60 @@ convert_comptime_value_to_type :: proc(
 ) {
 	switch v in value {
 	case u8:
-		return convert_uint_to_type(u64(v), target_type)
+		return uint_to_type(u64(v), target_type)
 	case u16:
-		return convert_uint_to_type(u64(v), target_type)
+		return uint_to_type(u64(v), target_type)
 	case u32:
-		return convert_uint_to_type(u64(v), target_type)
+		return uint_to_type(u64(v), target_type)
 	case u64:
-		return convert_uint_to_type(v, target_type)
+		return uint_to_type(v, target_type)
 	case i8:
-		return convert_int_to_type(i64(v), target_type)
+		return int_to_type(i64(v), target_type)
 	case i16:
-		return convert_int_to_type(i64(v), target_type)
+		return int_to_type(i64(v), target_type)
 	case i32:
-		return convert_int_to_type(i64(v), target_type)
+		return int_to_type(i64(v), target_type)
 	case i64:
-		return convert_int_to_type(v, target_type)
+		return int_to_type(v, target_type)
 	case f16:
-		return convert_float_to_type(f64(v), target_type)
+		return float_to_type(f64(v), target_type)
 	case f32:
-		return convert_float_to_type(f64(v), target_type)
+		return float_to_type(f64(v), target_type)
 	case f64:
-		return convert_float_to_type(v, target_type)
+		return float_to_type(v, target_type)
 	case bool:
 		return v, true
 	}
 	return {}, false
+}
+
+// convert ComptimeValue to LiteralValue
+comptime_to_literal :: proc(val: ComptimeValue) -> parser.LiteralValue {
+	switch v in val {
+	case bool:
+		return v
+	case u8:
+		return v
+	case u16:
+		return v
+	case u32:
+		return v
+	case u64:
+		return v
+	case i8:
+		return v
+	case i16:
+		return v
+	case i32:
+		return v
+	case i64:
+		return v
+	case f16:
+		return v
+	case f32:
+		return v
+	case f64:
+		return v
+	}
+	return {} // unreachable
 }
