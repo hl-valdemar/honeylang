@@ -21,11 +21,11 @@ Comprehensive implementation of basic compile-time functionality in the Honey la
     - [x] lexer
     - [x] parser
     - [ ] semantic
-- [ ] Arithmetic and boolean operations (disregard modulo operation for now)
+- [x] Arithmetic and boolean operations (disregard modulo operation for now)
     - [x] arithmetic
         - [x] multiplicative
         - [x] additive
-    - [ ] boolean
+    - [x] boolean
 - [x] Comptime expression evaluation
 - [x] Comptime constant inlining
 
