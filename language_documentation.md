@@ -18,7 +18,8 @@ Types are inferred from the context in which they're first used.
 Once a type is determined for any given name, it will be locked in place and must be cast to the appropriate type explicitly if used in operations with different types.
 
 ```hon
-# type is inferred from the immediate value, when not used in any context (though this results in a warning from the compiler about unused declarations)
+# type is inferred from the immediate value, when not used in any context
+# (though this results in a warning from the compiler about unused declarations)
 DEBUG :: true
 BAD_INDEX :: -1
 
