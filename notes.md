@@ -24,7 +24,7 @@ Comprehensive implementation of basic compile-time functionality in the Honey la
 - [ ] Arithmetic and boolean operations (disregard modulo operation for now)
     - [ ] arithmetic
         - [x] multiplicative
-        - [ ] additive
+        - [x] additive
     - [ ] boolean
 - [x] Comptime expression evaluation
 - [x] Comptime constant inlining

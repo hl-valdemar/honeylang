@@ -100,30 +100,9 @@ parse_unary :: proc(p: ^Parser) -> (^AstNode, bool) {
 	return parse_primary(p)
 }
 
-resolve_unary_op_kind :: proc(p: ^Parser, tok_kind: TokenKind) -> Maybe(UnaryOpKind) {
-	#partial switch tok_kind {
-	case .minus:
-		return .negate
-	case .logical_not:
-		return .logical_not
-	case:
-		report_error(
-			p,
-			.parser_unexpected_token,
-			"unexpected token '%v' in unary expression",
-			tok_kind,
-		)
-		return nil
-	}
-	return nil
-}
-
 parse_multiplicative :: proc(p: ^Parser) -> (^AstNode, bool) {
 	left, ok := parse_unary(p)
-	if !ok {
-		report_error(p, .parser_expected_expression, "expected unary expression")
-		return nil, false
-	}
+	if !ok do return nil, false // error already reported in parse_unary
 
 	// expect multiplication or division
 	for check(p, .star) || check(p, .slash) {
@@ -136,7 +115,7 @@ parse_multiplicative :: proc(p: ^Parser) -> (^AstNode, bool) {
 		right: ^AstNode
 		right, ok = parse_unary(p)
 		if !ok {
-			report_error(p, .parser_unexpected_eof, "unexpected end of file in binary op")
+			// error already reported in parse_unary
 			ast_destroy(left)
 			return nil, false
 		}
@@ -147,48 +126,34 @@ parse_multiplicative :: proc(p: ^Parser) -> (^AstNode, bool) {
 	return left, true
 }
 
-resolve_binary_op_kind :: proc(p: ^Parser, tok_kind: TokenKind) -> Maybe(BinaryOpKind) {
-	#partial switch tok_kind {
-	// arithmetic
-	case .plus:
-		return .add
-	case .minus:
-		return .sub
-	case .star:
-		return .mul
-	case .slash:
-		return .div
+parse_additive :: proc(p: ^Parser) -> (^AstNode, bool) {
+	left, ok := parse_multiplicative(p)
+	if !ok do return nil, false // error already reported in parse_multiplicative
 
-	// logical
-	case .logical_and:
-		return .logical_and
-	case .logical_or:
-		return .logical_or
+	// expect addition or subtraction
+	for check(p, .plus) || check(p, .minus) {
+		tok, ok := peek(p).?
+		if !ok do break
 
-	// comparative
-	case .less:
-		return .less
-	case .greater:
-		return .greater
-	case .less_equal:
-		return .less_equal
-	case .greater_equal:
-		return .greater_equal
+		op := resolve_binary_op_kind(p, tok.kind).?
+		advance(p)
 
-	case:
-		report_error(
-			p,
-			.parser_unexpected_token,
-			"unexpected token '%v' in binary expression",
-			tok_kind,
-		)
-		return nil
+		right: ^AstNode
+		right, ok = parse_multiplicative(p)
+		if !ok {
+			// error already reported in parse_multiplicative
+			ast_destroy(left)
+			return nil, false
+		}
+
+		left = make_binary(left, right, op)
 	}
-	return nil
+
+	return left, true
 }
 
 parse_expr :: proc(p: ^Parser) -> (^AstNode, bool) {
-	return parse_multiplicative(p)
+	return parse_additive(p)
 }
 
 parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
@@ -287,6 +252,19 @@ parse_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 	if check(p, .identifier) && (check_offset(p, 1, .colon) || check_offset(p, 1, .double_colon)) {
 		return parse_comptime_decl(p)
 	}
+
+	// failed to parse declaration
+	tok, ok := peek(p).?
+	if ok {
+		report_error(p, .parser_unexpected_token, "expected declaration, found '%v'", tok.kind)
+	} else {
+		report_error(
+			p,
+			.parser_unexpected_eof,
+			"expected declaration, found unexpected end of file",
+		)
+	}
+
 	return nil, false
 }
 

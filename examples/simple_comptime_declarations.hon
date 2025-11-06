@@ -19,5 +19,5 @@ PI_CUBED :: PI * PI * PI  # same for PI_CUBED
 SOME_PI :: ANSWER * PI
 
 # some other operations
-Y :: X - 5
+Y :: X - 5 + 3
 Z :: Y / 2

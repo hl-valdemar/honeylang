@@ -72,3 +72,61 @@ synchronize :: proc(p: ^Parser) {
 		advance(p)
 	}
 }
+
+resolve_unary_op_kind :: proc(p: ^Parser, tok_kind: TokenKind) -> Maybe(UnaryOpKind) {
+	#partial switch tok_kind {
+	case .minus:
+		return .negate
+	case .logical_not:
+		return .logical_not
+	case:
+		report_error(
+			p,
+			.parser_unexpected_token,
+			"unexpected token '%v' in unary expression",
+			tok_kind,
+		)
+		return nil
+	}
+	return nil
+}
+
+resolve_binary_op_kind :: proc(p: ^Parser, tok_kind: TokenKind) -> Maybe(BinaryOpKind) {
+	#partial switch tok_kind {
+	// arithmetic
+	case .plus:
+		return .add
+	case .minus:
+		return .sub
+	case .star:
+		return .mul
+	case .slash:
+		return .div
+
+	// logical
+	case .logical_and:
+		return .logical_and
+	case .logical_or:
+		return .logical_or
+
+	// comparative
+	case .less:
+		return .less
+	case .greater:
+		return .greater
+	case .less_equal:
+		return .less_equal
+	case .greater_equal:
+		return .greater_equal
+
+	case:
+		report_error(
+			p,
+			.parser_unexpected_token,
+			"unexpected token '%v' in binary expression",
+			tok_kind,
+		)
+		return nil
+	}
+	return nil
+}

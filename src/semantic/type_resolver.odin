@@ -1,5 +1,6 @@
 package semantic
 
+import "../lexer"
 import "../logger"
 import "../parser"
 
@@ -177,3 +178,4 @@ resolve_type_name :: proc(name: string) -> Maybe(SymbolType) {
 		return nil
 	}
 }
+
