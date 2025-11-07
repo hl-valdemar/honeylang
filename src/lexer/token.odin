@@ -68,12 +68,12 @@ Token :: struct {
 token_to_string :: proc(tok: Token) -> string {
 	if val, ok := tok.value.?; ok {
 		return fmt.tprintf(
-			"%s%s:%s%s%v:%v%s %s%s%s = %s%s%s",
-      logger.color_codes[.red],
+			"%s:%s%v%s:%s%v%s %s%s%s = %s%s%s",
 			tok.loc.file,
-      logger.color_codes[.reset],
       logger.color_codes[.blue],
 			tok.loc.line,
+      logger.color_codes[.reset],
+      logger.color_codes[.blue],
 			tok.loc.column,
       logger.color_codes[.reset],
       logger.color_codes[.cyan],
@@ -85,12 +85,12 @@ token_to_string :: proc(tok: Token) -> string {
 		)
 	} else {
 		return fmt.tprintf(
-			"%s%s:%s%s%v:%v%s %s%s%s",
-      logger.color_codes[.red],
+			"%s:%s%v%s:%s%v%s %s%s%s",
 			tok.loc.file,
-      logger.color_codes[.reset],
       logger.color_codes[.blue],
 			tok.loc.line,
+      logger.color_codes[.reset],
+      logger.color_codes[.blue],
 			tok.loc.column,
       logger.color_codes[.reset],
       logger.color_codes[.cyan],

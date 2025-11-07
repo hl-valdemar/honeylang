@@ -108,7 +108,7 @@ symbol_kind_from_decl :: proc(kind: parser.DeclKind) -> Maybe(SymbolKind) {
 print_symtab :: proc(symtab: ^SymbolTable) {
 	for symbol in symtab.symbols {
 		fmt.printf(
-			"%s[%s]%s %s%s%s: %s%s%s = %s%v%s\n",
+			"[%s%s%s] %s%s%s: %s%s%s = %s%v%s\n",
 			logger.color_codes[.red],
 			symbol.kind,
 			logger.color_codes[.reset],
