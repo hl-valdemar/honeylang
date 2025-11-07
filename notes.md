@@ -55,6 +55,10 @@ Comprehensive implementation of basic runtime dependent operations in the Honey 
 Code emission.
 
 - [ ] Code emission diagnostics
+- [ ] Runtime with entry point
+    - [ ] setup proper runtime
+    - [ ] jump to user entry point
+    - [ ] link dynamically (or statically if possible) with emitted code when assembling
 
 ## Ideology
 
