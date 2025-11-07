@@ -39,14 +39,14 @@ main :: proc() {
 
 	fmt.printf("\nCompiling: %s\n", filepath)
 
-	fmt.printf("\n%s::[[ SOURCE ]]::%s\n", logger.color_codes[.yellow], logger.color_codes[.reset])
-	fmt.printf("%s%s%s", logger.color_codes[.cyan], source, logger.color_codes[.reset])
+	fmt.printf("\n%s::[[ SOURCE ]]::%s\n", logger.color_codes[.purple], logger.color_codes[.reset])
+	fmt.printf("%s", source)
 
 	// track errors
 	errors := error.init()
 	defer error.deinit(errors)
 
-	fmt.printf("\n%s::[[ LEXING ]]::%s\n", logger.color_codes[.yellow], logger.color_codes[.reset])
+	fmt.printf("\n%s::[[ LEXING ]]::%s\n", logger.color_codes[.purple], logger.color_codes[.reset])
 
 	l := lexer.init(filepath, source, &errors)
 	defer lexer.deinit(&l)
@@ -62,7 +62,7 @@ main :: proc() {
 
 	fmt.printf(
 		"\n%s::[[ PARSING ]]::%s\n",
-		logger.color_codes[.yellow],
+		logger.color_codes[.purple],
 		logger.color_codes[.reset],
 	)
 
@@ -80,7 +80,7 @@ main :: proc() {
 
 	fmt.printf(
 		"\n%s::[[ SEMANTIC ANALYSIS ]]::%s\n",
-		logger.color_codes[.yellow],
+		logger.color_codes[.purple],
 		logger.color_codes[.reset],
 	)
 
@@ -101,7 +101,7 @@ main :: proc() {
 
 	fmt.printf(
 		"\n%s::[[ CODE EMISSION ]]::%s\n",
-		logger.color_codes[.yellow],
+		logger.color_codes[.purple],
 		logger.color_codes[.reset],
 	)
 	fmt.printf("Nothing yet to see...\n\n")

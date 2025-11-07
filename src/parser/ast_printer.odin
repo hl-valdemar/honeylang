@@ -73,19 +73,19 @@ ast_print :: proc(node: ^AstNode, indent := 0, is_last: []bool = {}) {
 	case Identifier:
 		print_indent(indent, is_last)
 		fmt.printf(
-			"%sidentifier%s: %v\n",
-			logger.color_codes[.dark_white],
-			logger.color_codes[.reset],
+			"identifier: %s%v%s\n",
+			logger.color_codes[.yellow],
 			n.name,
+			logger.color_codes[.reset],
 		)
 
 	case Literal:
 		print_indent(indent, is_last)
 		fmt.printf(
-			"%sliteral%s: %v\n",
-			logger.color_codes[.blue],
-			logger.color_codes[.reset],
+			"literal: %s%v%s\n",
+			logger.color_codes[.cyan],
 			n.value,
+			logger.color_codes[.reset],
 		)
 	}
 }
@@ -93,10 +93,12 @@ ast_print :: proc(node: ^AstNode, indent := 0, is_last: []bool = {}) {
 print_decl :: proc(decl: ^Declaration, indent := 0, is_last: []bool = {}) {
 	print_indent(indent, is_last)
 	fmt.printf(
-		"%sdeclaration%s (%v):\n",
-		logger.color_codes[.yellow],
+		"%sdeclaration%s (%s%v%s):\n",
+		logger.color_codes[.purple],
 		logger.color_codes[.reset],
+		logger.color_codes[.green],
 		decl.kind,
+		logger.color_codes[.reset],
 	)
 
 	new_is_last := make([dynamic]bool, len(is_last))
@@ -118,16 +120,21 @@ print_type :: proc(type_node: Maybe(^TypeNode), indent := 0, is_last: []bool = {
 
 	node, ok := type_node.?
 	if !ok {
-		fmt.printf("type: %v\n", node) // prints <nil>
+		fmt.printf("type: %s%v%s\n", logger.color_codes[.blue], node, logger.color_codes[.reset]) // prints <nil>
 		return
 	}
 
 	switch n in node {
 	case LiteralType:
-		fmt.printf("type: %v\n", n)
+		fmt.printf("type: %s%v%s\n", logger.color_codes[.blue], n, logger.color_codes[.reset])
 	case NamedType:
-		fmt.printf("type: %v\n", n.name)
+		fmt.printf("type: %s%v%s\n", logger.color_codes[.blue], n.name, logger.color_codes[.reset])
 	case PointerType:
-		fmt.print("type: %v\n", n.pointee)
+		fmt.printf(
+			"type: %s%v%s\n",
+			logger.color_codes[.blue],
+			n.pointee,
+			logger.color_codes[.reset],
+		)
 	}
 }

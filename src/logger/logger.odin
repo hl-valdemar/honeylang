@@ -40,22 +40,36 @@ Color :: enum {
 	green,
 	yellow,
 	blue,
+	purple,
 	cyan,
-	gray,
+  white,
+	bright_black,
 	bright_red,
-	dark_white,
+	bright_green,
+	bright_yellow,
+	bright_blue,
+	bright_purple,
+	bright_cyan,
+	bright_white,
 }
 
 color_codes := [Color]string {
-	.reset      = "\x1b[0m",
-	.red        = "\x1b[31m",
-	.green      = "\x1b[32m",
-	.yellow     = "\x1b[33m",
-	.blue       = "\x1b[34m",
-	.cyan       = "\x1b[36m",
-	.dark_white = "\x1b[37m",
-	.gray       = "\x1b[90m",
-	.bright_red = "\x1b[91m",
+	.reset         = "\x1b[0m",
+	.red           = "\x1b[31m",
+	.green         = "\x1b[32m",
+	.yellow        = "\x1b[33m",
+	.blue          = "\x1b[34m",
+	.purple        = "\x1b[35m",
+	.cyan          = "\x1b[36m",
+	.white         = "\x1b[37m",
+	.bright_black  = "\x1b[90m",
+	.bright_red    = "\x1b[91m",
+	.bright_green  = "\x1b[0;92m",
+	.bright_yellow = "\x1b[0;93m",
+	.bright_blue   = "\x1b[0;94m",
+	.bright_purple = "\x1b[0;95m",
+	.bright_cyan   = "\x1b[0;96m",
+	.bright_white  = "\x1b[0;97m",
 }
 
 level_colors := [Level]Color {
@@ -174,7 +188,8 @@ log :: proc(scope: string, level: Level, fmt_str: string, args: ..any) {
 		print_field(level_field, level_col)
 		fmt.printf("%s", color_codes[.reset])
 
-		fmt.printf("%s", color_codes[.gray])
+		fmt.printf("%s", color_codes[.bright_black])
+
 		print_field(scope_field, scope_col)
 		fmt.printf("%s", color_codes[.reset])
 		fmt.printf("%s\n", msg)
