@@ -72,7 +72,12 @@ ast_print :: proc(node: ^AstNode, indent := 0, is_last: []bool = {}) {
 
 	case Identifier:
 		print_indent(indent, is_last)
-		fmt.printf("identifier: %v\n", n.name)
+		fmt.printf(
+			"%sidentifier%s: %v\n",
+			logger.color_codes[.dark_white],
+			logger.color_codes[.reset],
+			n.name,
+		)
 
 	case Literal:
 		print_indent(indent, is_last)

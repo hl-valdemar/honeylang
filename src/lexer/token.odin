@@ -1,6 +1,8 @@
 package lexer
 
 import "../error"
+import "../logger"
+
 import "core:fmt"
 
 TokenKind :: enum {
@@ -66,14 +68,34 @@ Token :: struct {
 token_to_string :: proc(tok: Token) -> string {
 	if val, ok := tok.value.?; ok {
 		return fmt.tprintf(
-			"%s:%v:%v %s = \"%s\"",
+			"%s%s:%s%s%v:%v%s %s%s%s = %s%s%s",
+      logger.color_codes[.red],
 			tok.loc.file,
+      logger.color_codes[.reset],
+      logger.color_codes[.blue],
 			tok.loc.line,
 			tok.loc.column,
+      logger.color_codes[.reset],
+      logger.color_codes[.cyan],
 			tok.kind,
+      logger.color_codes[.reset],
+      logger.color_codes[.yellow],
 			val,
+      logger.color_codes[.reset],
 		)
 	} else {
-		return fmt.tprintf("%s:%v:%v %s", tok.loc.file, tok.loc.line, tok.loc.column, tok.kind)
+		return fmt.tprintf(
+			"%s%s:%s%s%v:%v%s %s%s%s",
+      logger.color_codes[.red],
+			tok.loc.file,
+      logger.color_codes[.reset],
+      logger.color_codes[.blue],
+			tok.loc.line,
+			tok.loc.column,
+      logger.color_codes[.reset],
+      logger.color_codes[.cyan],
+			tok.kind,
+      logger.color_codes[.reset],
+		)
 	}
 }

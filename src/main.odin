@@ -39,14 +39,14 @@ main :: proc() {
 
 	fmt.printf("\nCompiling: %s\n", filepath)
 
-	fmt.printf("\n::[[ SOURCE ]]::\n")
-	fmt.print(source)
+	fmt.printf("\n%s::[[ SOURCE ]]::%s\n", logger.color_codes[.yellow], logger.color_codes[.reset])
+	fmt.printf("%s%s%s", logger.color_codes[.cyan], source, logger.color_codes[.reset])
 
 	// track errors
 	errors := error.init()
 	defer error.deinit(errors)
 
-	fmt.printf("\n::[[ LEXING ]]::\n")
+	fmt.printf("\n%s::[[ LEXING ]]::%s\n", logger.color_codes[.yellow], logger.color_codes[.reset])
 
 	l := lexer.init(filepath, source, &errors)
 	defer lexer.deinit(&l)
@@ -60,7 +60,11 @@ main :: proc() {
 	fmt.printf("Generated %d tokens:\n\n", len(l.tokens))
 	lexer.print_tokens(&l.tokens)
 
-	fmt.printf("\n::[[ PARSING ]]::\n")
+	fmt.printf(
+		"\n%s::[[ PARSING ]]::%s\n",
+		logger.color_codes[.yellow],
+		logger.color_codes[.reset],
+	)
 
 	p := parser.init(l.tokens[:], &errors)
 	defer parser.deinit(&p)
@@ -74,7 +78,11 @@ main :: proc() {
 	fmt.printf("Parsed %d declarations:\n\n", len(p.ast.(parser.Program).declarations))
 	parser.ast_print(p.ast)
 
-	fmt.printf("\n::[[ SEMANTIC ANALYSIS ]]::\n")
+	fmt.printf(
+		"\n%s::[[ SEMANTIC ANALYSIS ]]::%s\n",
+		logger.color_codes[.yellow],
+		logger.color_codes[.reset],
+	)
 
 	s := semantic.init(p.ast)
 	defer semantic.deinit(&s)
@@ -87,6 +95,10 @@ main :: proc() {
 	fmt.printf("\nResulting AST:\n\n")
 	parser.ast_print(s.program)
 
-	fmt.printf("\n::[[ CODE EMISSION ]]::\n")
+	fmt.printf(
+		"\n%s::[[ CODE EMISSION ]]::%s\n",
+		logger.color_codes[.yellow],
+		logger.color_codes[.reset],
+	)
 	fmt.printf("Nothing yet to see...\n\n")
 }
