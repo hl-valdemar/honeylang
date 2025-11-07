@@ -1,5 +1,6 @@
 package semantic
 
+import "../error"
 import "../logger"
 import "../parser"
 import "../scope"
@@ -9,10 +10,11 @@ LOG_SCOPE :: scope.Scope.semantic
 Semantic :: struct {
 	program: ^parser.AstNode,
 	symtab:  SymbolTable,
+	errors:  ^error.ErrorList,
 }
 
-init :: proc(program: ^parser.AstNode) -> Semantic {
-	return Semantic{program = program, symtab = symtab_make()}
+init :: proc(program: ^parser.AstNode, errors: ^error.ErrorList) -> Semantic {
+	return Semantic{program = program, symtab = symtab_make(), errors = errors}
 }
 
 deinit :: proc(s: ^Semantic) {
@@ -25,7 +27,13 @@ collect_symbols :: proc(s: ^Semantic) -> bool {
 	for &decl in program.declarations {
 		// check for duplicates
 		if symtab_lookup(&s.symtab, decl.name) != nil {
-			logger.error(LOG_SCOPE, "duplicate declaration: %s", decl.name)
+			report_error(
+				s,
+				decl.loc,
+				.semantic_duplicate_definition,
+				"duplicate definition '%s'",
+				decl.name,
+			)
 			return false
 		}
 
@@ -63,13 +71,13 @@ apply_default_types :: proc(s: ^Semantic) -> bool {
 
 		value, ok := symbol.value.?
 		if !ok {
-			logger.fatal(LOG_SCOPE, "symbol has no value: %s", symbol.name)
+			logger.debug(LOG_SCOPE, "symbol has no value: %s", symbol.name)
 			return false
 		}
 
 		comptime_val, ok_ct := value.(ComptimeValue)
 		if !ok_ct {
-			logger.fatal(LOG_SCOPE, "expected comptime value for symbol: %s", symbol.name)
+			logger.debug(LOG_SCOPE, "expected comptime value for symbol: %s", symbol.name)
 			return false
 		}
 
@@ -122,7 +130,7 @@ apply_default_types :: proc(s: ^Semantic) -> bool {
 			}
 
 		case:
-			logger.fatal(LOG_SCOPE, "unexpected data type from parser when applying default types")
+			logger.debug(LOG_SCOPE, "unexpected data type from parser when applying default types")
 			return false
 		}
 	}
@@ -141,14 +149,14 @@ update_ast_types :: proc(s: ^Semantic) -> bool {
 		// find the symbol
 		symbol, ok_lookup := symtab_lookup(&s.symtab, decl.name).?
 		if !ok_lookup {
-			logger.fatal(LOG_SCOPE, "found unregistered declaration in AST (update_ast)")
+			logger.debug(LOG_SCOPE, "found unregistered declaration in AST (update_ast)")
 			return false
 		}
 
 		// get the type
 		sym_type, ok_symtype := symbol.type.?
 		if !ok_symtype {
-			logger.fatal(LOG_SCOPE, "found symbol without type in (update_ast)")
+			logger.debug(LOG_SCOPE, "found symbol without type in (update_ast)")
 			return false
 		}
 
@@ -217,13 +225,13 @@ inline_constants :: proc(s: ^Semantic) -> bool {
 			// get the evaluated value
 			symbol_val, ok_val := symbol.value.?
 			if !ok_val {
-				logger.fatal(LOG_SCOPE, "constant has no value: %s", decl.name)
+				logger.debug(LOG_SCOPE, "constant has no value: %s", decl.name)
 				return false
 			}
 
 			comptime_val, ok_ct := symbol_val.(ComptimeValue)
 			if !ok_ct {
-				logger.fatal(LOG_SCOPE, "expected comptime value")
+				logger.debug(LOG_SCOPE, "expected comptime value")
 				return false
 			}
 
@@ -260,4 +268,14 @@ analyze :: proc(s: ^Semantic) -> bool {
 	if !inline_constants(s) do return false
 
 	return true
+}
+
+report_error :: proc(
+	s: ^Semantic,
+	loc: error.SourceLocation,
+	kind: error.ErrorKind,
+	fmt_str: string,
+	args: ..any,
+) {
+	error.add_error(s.errors, kind, loc, fmt_str, ..args)
 }

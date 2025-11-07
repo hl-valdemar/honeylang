@@ -20,7 +20,7 @@ Comprehensive implementation of basic compile-time functionality in the Honey la
 - [ ] Proper diagnostics
     - [x] lexer
     - [x] parser
-    - [ ] semantic
+    - [x] semantic
 - [x] Arithmetic and boolean operations (disregard modulo operation for now)
     - [x] arithmetic
         - [x] multiplicative
@@ -39,6 +39,8 @@ Comprehensive implementation of basic runtime dependent operations in the Honey 
     - [ ] proper stack alignment
     - [ ] proper calling conventions adherence
 - [ ] Function calls
+- [ ] Comptime constant inlining in function bodies
+- [ ] Arbitrary scope nesting (statically allocated memory dropped on scope exit)
 - [ ] Control flow operations
     - [ ] defer statements (run on scope exit)
     - [ ] if statements

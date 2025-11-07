@@ -18,14 +18,15 @@ ErrorKind :: enum {
 
 	// semantic errors
 	semantic_undefined_identifier,
+  semantic_duplicate_definition,
 	semantic_type_mismatch,
 	semantic_circular_dependency,
 }
 
 SourceLocation :: struct {
+	file:   string,
 	line:   int,
 	column: int,
-	file:   string,
 }
 
 CompilerError :: struct {

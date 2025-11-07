@@ -45,7 +45,7 @@ parse_primary :: proc(p: ^Parser) -> (^AstNode, bool) {
 		report_error(
 			p,
 			.parser_expected_primary_expr,
-			fmt.tprintf("expected expression, found unexpected end of file"),
+			"expected expression, found unexpected end of file",
 		)
 		return {}, false
 	}
@@ -82,7 +82,7 @@ parse_unary :: proc(p: ^Parser) -> (^AstNode, bool) {
 		report_error(
 			p,
 			.parser_expected_unary_expr,
-			fmt.tprintf("expected expression, found unexpected end of file"),
+			"expected expression, found unexpected end of file",
 		)
 		return {}, false
 	}
@@ -251,9 +251,16 @@ parse_expr :: proc(p: ^Parser) -> (^AstNode, bool) {
 }
 
 parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
+	tok_start, ok := peek(p).?
+	if !ok {
+		report_error(p, .parser_unexpected_eof, "unexpected end of file")
+		return nil, false
+	}
+	loc := tok_start.loc
+
 	// expect name
-	name, ok := parse_identifier(p, "expected identifier in comptime declaration")
-	if !ok do return nil, false // error reported by parse_identifier
+	name, ok_ident := parse_identifier(p, "expected identifier in comptime declaration")
+	if !ok_ident do return nil, false // error reported by parse_identifier
 
 	// parse optional type
 	type: ^TypeNode = nil
@@ -283,9 +290,8 @@ parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 	}
 
 	// parse value
-	value: ^AstNode
-	value, ok = parse_expr(p)
-	if !ok {
+	value, ok_val := parse_expr(p)
+	if !ok_val {
 		report_error(
 			p,
 			.parser_unexpected_token,
@@ -295,7 +301,7 @@ parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 	}
 
 	// create node with all fields at once
-	return make_declaration(name, type, value, .const), true
+	return make_declaration(name, type, value, .const, loc), true
 }
 
 // expect identifier and return its value
@@ -319,7 +325,13 @@ parse_identifier :: proc(p: ^Parser, err_msg: string) -> (string, bool) {
 		return {}, false
 	}
 
-	return tok.value.?, true
+	name, ok_name := tok.value.?
+	if !ok_name {
+		report_error(p, .parser_expected_identifier, "expected name in identifier, found nothing")
+		return {}, false
+	}
+
+	return name, true
 }
 
 // parse a type node

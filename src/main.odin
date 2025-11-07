@@ -84,10 +84,14 @@ main :: proc() {
 		logger.color_codes[.reset],
 	)
 
-	s := semantic.init(p.ast)
+	s := semantic.init(p.ast, &errors)
 	defer semantic.deinit(&s)
 
 	semantic.analyze(&s)
+	if error.has_errors(&errors) {
+		error.print_errors(&errors)
+		os.exit(1)
+	}
 
 	fmt.printf("Collected %d symbols:\n\n", len(s.symtab.symbols[:]))
 	semantic.print_symtab(&s.symtab)

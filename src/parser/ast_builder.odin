@@ -1,6 +1,8 @@
 package parser
 
+import "../error"
 import "../logger"
+
 import "core:strconv"
 import "core:strings"
 
@@ -18,6 +20,7 @@ make_declaration :: proc(
 	type: ^TypeNode,
 	value: ^AstNode,
 	kind: DeclKind,
+	loc: error.SourceLocation,
 ) -> ^AstNode {
 	node := new(AstNode)
 	node^ = Declaration {
@@ -25,6 +28,7 @@ make_declaration :: proc(
 		type  = type,
 		value = value,
 		kind  = kind,
+		loc   = loc,
 	}
 	return node
 }

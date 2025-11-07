@@ -1,5 +1,7 @@
 package parser
 
+import "../error"
+
 AstNode :: union {
 	Program,
 	Declaration,
@@ -18,6 +20,7 @@ Declaration :: struct {
 	name:  string,
 	type:  Maybe(^TypeNode),
 	value: ^AstNode,
+	loc:   error.SourceLocation,
 }
 
 DeclKind :: enum {
