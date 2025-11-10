@@ -1,6 +1,7 @@
 package parser
 
 import "../logger"
+import "core:unicode"
 
 import "core:fmt"
 
@@ -37,6 +38,28 @@ ast_print :: proc(node: ^AstNode, indent := 0, is_last: []bool = {}) {
 
 	case Declaration:
 		print_decl(&n, indent, is_last)
+
+	case Function:
+		print_indent(indent, is_last)
+
+		fmt.printf("func:\n")
+
+		print_indent(indent + 1, is_last)
+		fmt.printf("parameters:")
+
+		if len(n.parameters) > 0 {
+			fmt.println()
+
+			for param in n.parameters {
+				print_indent(indent + 2, is_last)
+				fmt.printf("name: %v\n", param.name)
+
+				print_indent(indent + 2, is_last)
+				print_type(param.type, indent + 2, is_last)
+			}
+		} else {
+			fmt.printf(" %svoid%s\n", logger.color_codes[.cyan], logger.color_codes[.reset])
+		}
 
 	case UnaryOp:
 		print_indent(indent, is_last)
@@ -87,6 +110,8 @@ ast_print :: proc(node: ^AstNode, indent := 0, is_last: []bool = {}) {
 			n.value,
 			logger.color_codes[.reset],
 		)
+
+	case ReturnStmt, DeferStmt: // do nothing
 	}
 }
 
@@ -113,6 +138,9 @@ print_decl :: proc(decl: ^Declaration, indent := 0, is_last: []bool = {}) {
 
 	new_is_last[len(new_is_last) - 1] = true // value is last child
 	ast_print(decl.value, indent + 1, new_is_last[:])
+}
+
+print_func :: proc(node: ^AstNode, indent := 0, is_last: []bool = {}) {
 }
 
 print_type :: proc(type_node: Maybe(^TypeNode), indent := 0, is_last: []bool = {}) {

@@ -15,7 +15,7 @@ make_program :: proc(declarations: [dynamic]Declaration) -> ^AstNode {
 }
 
 // create a complete declaration node
-make_declaration :: proc(
+make_decl :: proc(
 	name: string,
 	type: ^TypeNode,
 	value: ^AstNode,
@@ -29,6 +29,32 @@ make_declaration :: proc(
 		value = value,
 		kind  = kind,
 		loc   = loc,
+	}
+	return node
+}
+
+make_func :: proc(parameters: [dynamic]Parameter, body: ^Block) -> ^AstNode {
+	node := new(AstNode)
+	node^ = Function {
+		parameters = parameters,
+		body       = body,
+	}
+	return node
+}
+
+make_block :: proc(statements: [dynamic]^AstNode, deferred: [dynamic]^AstNode) -> ^Block {
+	node := new(Block)
+	node^ = Block {
+		statements = statements,
+		deferred   = deferred,
+	}
+	return node
+}
+
+make_return_stmt :: proc(expr: ^AstNode) -> ^AstNode {
+	node := new(AstNode)
+	node^ = ReturnStmt {
+		expression = expr,
 	}
 	return node
 }
@@ -154,6 +180,18 @@ ast_destroy :: proc(node: ^AstNode) {
 			type_destroy(type)
 		}
 
+	case Function:
+		for p in n.parameters {
+			type_destroy(p.type)
+		}
+		block_destroy(n.body)
+
+	case ReturnStmt:
+		ast_destroy(n.expression)
+
+	case DeferStmt:
+		ast_destroy(n.statement)
+
 	case UnaryOp:
 		ast_destroy(n.operand)
 
@@ -180,4 +218,18 @@ type_destroy :: proc(node: ^TypeNode) {
 	}
 
 	free(node)
+}
+
+block_destroy :: proc(block: ^Block) {
+	if block == nil do return
+
+	for stmt in block.statements {
+		ast_destroy(stmt)
+	}
+	for def in block.deferred {
+		ast_destroy(def)
+	}
+
+	delete(block.statements)
+	delete(block.deferred)
 }

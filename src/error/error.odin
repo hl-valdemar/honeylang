@@ -15,10 +15,11 @@ ErrorKind :: enum {
 	parser_expected_unary_expr,
 	parser_expected_multiplicative_expr,
 	parser_expected_additive_expr,
+	parser_expected_statement,
 
 	// semantic errors
 	semantic_undefined_identifier,
-  semantic_duplicate_definition,
+	semantic_duplicate_definition,
 	semantic_type_mismatch,
 	semantic_circular_dependency,
 }

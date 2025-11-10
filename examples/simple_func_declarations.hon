@@ -1,0 +1,5 @@
+X :: 42
+
+main :: func() i32 {
+  return X
+}

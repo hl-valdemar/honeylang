@@ -272,7 +272,7 @@ analyze :: proc(s: ^Semantic) -> bool {
 
 report_error :: proc(
 	s: ^Semantic,
-	loc: error.SourceLocation,
+	loc: Maybe(error.SourceLocation),
 	kind: error.ErrorKind,
 	fmt_str: string,
 	args: ..any,

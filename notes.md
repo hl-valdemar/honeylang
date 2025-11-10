@@ -12,22 +12,15 @@ Source Code > Lexer: Token Stream ... > Parser: AST ........ > Semantic Analysis
                                                                └─ Comptime constant inlining
 ```
 
-## Roadmap (v0.0.1)
+## Roadmap (v0.0.3)
 
-Comprehensive implementation of basic compile-time functionality in the Honey language.
+Code emission.
 
-- [x] Strong typing (proper type checking)
-- [ ] Proper diagnostics
-    - [x] lexer
-    - [x] parser
-    - [x] semantic
-- [x] Arithmetic and boolean operations (disregard modulo operation for now)
-    - [x] arithmetic
-        - [x] multiplicative
-        - [x] additive
-    - [x] boolean
-- [x] Comptime expression evaluation
-- [x] Comptime constant inlining
+- [ ] Code emission diagnostics
+- [ ] Runtime with entry point
+    - [ ] setup proper runtime
+    - [ ] jump to user entry point
+    - [ ] link dynamically (or statically if possible) with emitted code when assembling
 
 ## Roadmap (v0.0.2)
 
@@ -52,15 +45,22 @@ Comprehensive implementation of basic runtime dependent operations in the Honey 
 - [ ] Proper register allocation in codegen
 - [ ] Collect parser errors instead of failing immediately
 
-## Roadmap (v0.0.3)
+## Roadmap (v0.0.1)
 
-Code emission.
+Comprehensive implementation of basic compile-time functionality in the Honey language.
 
-- [ ] Code emission diagnostics
-- [ ] Runtime with entry point
-    - [ ] setup proper runtime
-    - [ ] jump to user entry point
-    - [ ] link dynamically (or statically if possible) with emitted code when assembling
+- [x] Strong typing (proper type checking)
+- [x] Proper diagnostics
+    - [x] lexer
+    - [x] parser
+    - [x] semantic
+- [x] Arithmetic and boolean operations (disregard modulo operation for now)
+    - [x] arithmetic
+        - [x] multiplicative
+        - [x] additive
+    - [x] boolean
+- [x] Comptime expression evaluation
+- [x] Comptime constant inlining
 
 ## Ideology
 

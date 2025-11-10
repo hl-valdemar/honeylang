@@ -44,18 +44,18 @@ TokenKind :: enum {
 
 	// keywords
 	func,
+  return_,
 	if_,
 	else_,
 
-	// enclosing operators
+	// other
 	left_paren,
 	right_paren,
-	left_curly_bracket,
-	right_curly_bracket,
+	left_curly,
+	right_curly,
 	left_square_bracket,
 	right_square_bracket,
-
-	// other
+  comma,
 	eof,
 }
 

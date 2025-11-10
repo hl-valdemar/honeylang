@@ -13,6 +13,7 @@ package parser
 
 import "../error"
 import "../lexer"
+import "../logger"
 import "../scope"
 
 import "core:fmt"
@@ -250,7 +251,7 @@ parse_expr :: proc(p: ^Parser) -> (^AstNode, bool) {
 	return parse_logical_or(p)
 }
 
-parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
+parse_const_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 	tok_start, ok := peek(p).?
 	if !ok {
 		report_error(p, .parser_unexpected_eof, "unexpected end of file")
@@ -259,33 +260,34 @@ parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 	loc := tok_start.loc
 
 	// expect name
-	name, ok_ident := parse_identifier(p, "expected identifier in comptime declaration")
+	name, ok_ident := parse_identifier(p, "expected identifier in comptime const declaration")
 	if !ok_ident do return nil, false // error reported by parse_identifier
 
 	// parse optional type
 	type: ^TypeNode = nil
 	if match(p, .colon) {
-		type, ok = parse_type(p, "expected type in comptime declaration")
+		type, ok = parse_type(p, "expected type in comptime const declaration")
 		if !ok do return nil, false // error reported by parse_type
 	}
 
-	// parse ::
+	// parse '::'
 	tok, ok_tok := peek(p).?
 	if !match(p, .double_colon) {
 		if ok_tok {
 			report_error(
 				p,
 				.parser_unexpected_token,
-				"expected '::' in comptime declaration, found '%v'",
+				"expected '::' in comptime const declaration, found '%v'",
 				tok.kind,
 			)
 		} else {
 			report_error(
 				p,
-				.parser_unexpected_token,
-				"expected '::' in comptime declaration, found unexpected end of file",
+				.parser_unexpected_eof,
+				"expected '::' in comptime const declaration, found unexpected end of file",
 			)
 		}
+		free(type)
 		return nil, false
 	}
 
@@ -295,13 +297,272 @@ parse_comptime_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 		report_error(
 			p,
 			.parser_unexpected_token,
-			"expected expression after '::' in comptime declaration",
+			"expected expression after '::' in comptime const declaration",
 		)
+		free(type)
 		return nil, false
 	}
 
 	// create node with all fields at once
-	return make_declaration(name, type, value, .const, loc), true
+	return make_decl(name, type, value, .const, loc), true
+}
+
+parse_func_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
+	tok_start, ok := peek(p).?
+	if !ok {
+		report_error(p, .parser_unexpected_eof, "unexpected end of file")
+		return nil, false
+	}
+	loc := tok_start.loc
+
+	// expect name
+	name, ok_ident := parse_identifier(p, "expected identifier in function declaration")
+	if !ok_ident do return nil, false // error reported by parse_identifier
+
+	// parse '::'
+	tok, ok_tok := peek(p).?
+	if !match(p, .double_colon) {
+		if ok_tok {
+			report_error(
+				p,
+				.parser_unexpected_token,
+				"expected '::' in function declaration, found '%v'",
+				tok.kind,
+			)
+		} else {
+			report_error(
+				p,
+				.parser_unexpected_eof,
+				"expected '::' in function declaration, found unexpected end of file",
+			)
+		}
+		return nil, false
+	}
+
+	// expect 'func' keyword
+	tok, ok_tok = peek(p).?
+	if !match(p, .func) {
+		if ok_tok {
+			report_error(
+				p,
+				.parser_unexpected_token,
+				"expected 'func' in function declaration, found '%v'",
+				tok.kind,
+			)
+		} else {
+			report_error(
+				p,
+				.parser_unexpected_eof,
+				"expected 'func' in function declaration, found unexpected end of file",
+			)
+		}
+		return nil, false
+	}
+
+	// expect '('
+	tok, ok_tok = peek(p).?
+	if !match(p, .left_paren) {
+		if ok_tok {
+			report_error(
+				p,
+				.parser_unexpected_token,
+				"expected '(' in function declaration, found '%v'",
+				tok.kind,
+			)
+		} else {
+			report_error(
+				p,
+				.parser_unexpected_eof,
+				"expected '(' in function declaration, found unexpected end of file",
+			)
+		}
+		return nil, false
+	}
+
+	// expect parameter list
+	has_more := true
+	parameters := make([dynamic]Parameter)
+	for has_more && check(p, .identifier) {
+		// expect parameter name
+		param_name, ok_pname := parse_identifier(p, "expected identifier in function parameters")
+		if !ok_pname {
+			delete(parameters)
+			for p in parameters do type_destroy(p.type)
+			return nil, false
+		}
+
+		// parse ':'
+		tok, ok_tok = peek(p).?
+		if !match(p, .double_colon) {
+			if ok_tok {
+				report_error(
+					p,
+					.parser_unexpected_token,
+					"expected ':' in function declaration, found '%v'",
+					tok.kind,
+				)
+			} else {
+				report_error(
+					p,
+					.parser_unexpected_eof,
+					"expected ':' in function declaration, found unexpected end of file",
+				)
+			}
+			return nil, false
+		}
+
+		// expect parameter type
+		param_type, ok_ptype := parse_type(p, "expected type in function parameters")
+		if !ok_ptype {
+			delete(parameters)
+			for p in parameters do type_destroy(p.type)
+			return nil, false
+		}
+
+		append(&parameters, Parameter{name = param_name, type = param_type})
+
+		has_more = check(p, .comma)
+		if has_more do advance(p)
+	}
+
+	// expect ')'
+	tok, ok_tok = peek(p).?
+	if !match(p, .right_paren) {
+		if ok_tok {
+			report_error(
+				p,
+				.parser_unexpected_token,
+				"expected ')' in function declaration, found '%v'",
+				tok.kind,
+			)
+		} else {
+			report_error(
+				p,
+				.parser_unexpected_eof,
+				"expected ')' in function declaration, found unexpected end of file",
+			)
+		}
+		delete(parameters)
+		for p in parameters do type_destroy(p.type)
+		return nil, false
+	}
+
+	// expect return type
+	return_type, ok_type := parse_type(p, "expected return type in function declaration")
+	if !ok_type {
+		// error already reported in parse_type
+		for p in parameters do type_destroy(p.type)
+		delete(parameters)
+		return nil, false
+	}
+
+
+	// parse function body
+	block, ok_block := parse_block(p, "expected function body")
+	if !ok_block {
+		// error already reported in parse_block
+		for p in parameters do type_destroy(p.type)
+		delete(parameters)
+		type_destroy(return_type)
+		return nil, false
+	}
+
+	return make_decl(name, return_type, make_func(parameters, block), .func, loc), true
+}
+
+parse_block :: proc(p: ^Parser, err_msg: string) -> (^Block, bool) {
+	// expect '{'
+	tok, ok_tok := peek(p).?
+	if !match(p, .left_curly) {
+		if ok_tok {
+			report_error(
+				p,
+				.parser_unexpected_token,
+				"expected '{' in block, found '%v'",
+				tok.kind,
+			)
+		} else {
+			report_error(
+				p,
+				.parser_unexpected_eof,
+				"expected '{' in block, found unexpected end of file",
+			)
+		}
+		return nil, false
+	}
+
+	// parse all statements
+	statements := make([dynamic]^AstNode)
+	deferred := make([dynamic]^AstNode)
+	for !check(p, .right_curly) && !check(p, .eof) {
+		stmt, ok_stmt := parse_statement(p)
+		if !ok_stmt {
+			delete(statements)
+			delete(deferred)
+			return nil, false
+		}
+
+		#partial switch s in stmt {
+		case DeferStmt:
+			append(&deferred, stmt)
+		case:
+			append(&statements, stmt)
+		}
+	}
+
+	// expect '}'
+	tok, ok_tok = peek(p).?
+	if !match(p, .right_curly) {
+		if ok_tok {
+			report_error(
+				p,
+				.parser_unexpected_token,
+				"expected '}' in block, found '%v'",
+				tok.kind,
+			)
+		} else {
+			report_error(
+				p,
+				.parser_unexpected_eof,
+				"expected '}' in block, found unexpected end of file",
+			)
+		}
+
+		delete(statements)
+		delete(deferred)
+		return nil, false
+	}
+
+	return make_block(statements, deferred), true
+}
+
+parse_statement :: proc(p: ^Parser) -> (^AstNode, bool) {
+	if check(p, .return_) do return parse_return_stmt(p)
+
+	report_error(p, .parser_expected_statement, "expected statement")
+	return nil, false
+}
+
+parse_return_stmt :: proc(p: ^Parser) -> (^AstNode, bool) {
+	tok, ok_tok := peek(p).?
+	if !match(p, .return_) {
+		if ok_tok {
+			logger.error(LOG_SCOPE, "expected 'return' in return statement, found '%v'", tok.kind)
+		} else {
+			logger.error(
+				LOG_SCOPE,
+				"expected 'return' in return statement, found unexpected end of file",
+			)
+		}
+	}
+
+	expr, ok_expr := parse_expr(p)
+	if !ok_expr {
+		report_error(p, .parser_expected_expression, "expected expression in statement")
+		return nil, false
+	}
+
+	return make_return_stmt(expr), true
 }
 
 // expect identifier and return its value
@@ -355,8 +616,11 @@ parse_type :: proc(p: ^Parser, err_msg: string) -> (^TypeNode, bool) {
 }
 
 parse_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
-	if check(p, .identifier) && (check_offset(p, 1, .colon) || check_offset(p, 1, .double_colon)) {
-		return parse_comptime_decl(p)
+	if check(p, .identifier) && check_offset(p, 1, .double_colon) && check_offset(p, 2, .func) {
+		return parse_func_decl(p)
+	} else if check(p, .identifier) &&
+	   (check_offset(p, 1, .colon) || check_offset(p, 1, .double_colon)) {
+		return parse_const_decl(p)
 	}
 
 	// failed to parse declaration

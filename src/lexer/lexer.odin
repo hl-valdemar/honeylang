@@ -47,6 +47,10 @@ check_keyword :: proc(ident_name: []rune) -> TokenKind {
 		return .logical_or
 	case "not":
 		return .logical_not
+	case "func":
+		return .func
+	case "return":
+		return .return_
 	}
 	return .identifier
 }
@@ -167,6 +171,12 @@ scan :: proc(lex: ^Lexer) {
 		} else if r == ')' {
 			advance(lex)
 			append(&lex.tokens, Token{kind = .right_paren, loc = loc})
+		} else if r == '{' {
+			advance(lex)
+			append(&lex.tokens, Token{kind = .left_curly, loc = loc})
+		} else if r == '}' {
+			advance(lex)
+			append(&lex.tokens, Token{kind = .right_curly, loc = loc})
 		} else if r == ':' {
 			// double colon
 			if next, ok := peek_offset(lex, 1).?; ok && next == ':' {

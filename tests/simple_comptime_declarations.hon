@@ -11,18 +11,34 @@ X: f32 :: 10
 # type is inferred from the context in which it's first used
 PI :: 3.14
 ANSWER :: 42  # type is pending
+PI_SQUARED :: PI * PI  # PI has type f32, so PI_SQUARED resolves to f32
 PI_CUBED :: PI * PI * PI  # same for PI_CUBED
 
 # ANSWER is finally used, so it's type can be resolved.
 # the type of the context is f32 due to PI_EXPLICIT, so ANSWER's type resolves to f32
 SOME_PI :: ANSWER * PI
 
+# some other operations
+Y :: X - 5 + 3
+Z :: Y / 2
+
 # comparisons
+IS_EQUAL :: ANSWER == ANSWER
 IS_DIFFERENT :: ANSWER != ANSWER
-IS_GREATER :: PI_CUBED > PI
+
+IS_LESS :: PI < PI_SQUARED
+IS_GREATER :: PI_CUBED > PI_SQUARED
+
+IS_GREATER_EQUAL :: Z <= PI
 IS_LESS_EQUAL :: X >= ANSWER
 
-# logical operations
-NOT_DEBUG :: not DEBUG
+TRUE_AND_TRUE :: true and true
+TRUE_AND_FALSE :: true and false
+TRUE_OR_TRUE :: true or true
+TRUE_OR_FALSE :: true or false
+
+NOT_TRUE :: not true
 NOT_NOT_TRUE :: not not true
+NOT_FALSE :: not false
 NOT_FALSE_OR_TRUE :: not (false or true)
+NOT_FALSE_AND_TRUE :: not (false and true)

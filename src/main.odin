@@ -13,7 +13,7 @@ import "core:os"
 LOG_SCOPE :: scope.Scope.pipeline
 
 main :: proc() {
-	logger.init({term_enabled = true})
+	logger.init({term_enabled = false})
 	defer logger.deinit()
 
 	when ODIN_DEBUG {

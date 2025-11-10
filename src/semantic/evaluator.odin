@@ -79,7 +79,13 @@ evaluate_expr :: proc(
 		// look up the identifier in the symtab
 		symbol, ok := symtab_lookup(&s.symtab, node.name).?
 		if !ok {
-			logger.fatal(LOG_SCOPE, "undefined identifier: %s", node.name)
+			report_error(
+				s,
+				nil,
+				.semantic_undefined_identifier,
+				"undefined identifier '%s'",
+				node.name,
+			)
 			return {}, false
 		}
 

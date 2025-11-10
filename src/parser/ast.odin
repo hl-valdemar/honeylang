@@ -6,9 +6,12 @@ AstNode :: union {
 	Program,
 	Declaration,
 	Identifier,
+	Function,
 	Literal,
 	UnaryOp,
 	BinaryOp,
+	ReturnStmt,
+	DeferStmt,
 }
 
 Program :: struct {
@@ -41,6 +44,29 @@ TypeNode :: union {
 	PointerType,
 	// ArrayType,
 	// etc...
+}
+
+Function :: struct {
+	parameters: [dynamic]Parameter,
+	body:       ^Block,
+}
+
+Parameter :: struct {
+	name: string,
+	type: ^TypeNode,
+}
+
+Block :: struct {
+	statements: [dynamic]^AstNode,
+	deferred:   [dynamic]^AstNode,
+}
+
+ReturnStmt :: struct {
+	expression: ^AstNode,
+}
+
+DeferStmt :: struct {
+	statement: ^AstNode,
 }
 
 LiteralType :: enum {
