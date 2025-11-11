@@ -177,6 +177,9 @@ scan :: proc(lex: ^Lexer) {
 		} else if r == '}' {
 			advance(lex)
 			append(&lex.tokens, Token{kind = .right_curly, loc = loc})
+		} else if r == ',' {
+			advance(lex)
+			append(&lex.tokens, Token{kind = .comma, loc = loc})
 		} else if r == ':' {
 			// double colon
 			if next, ok := peek_offset(lex, 1).?; ok && next == ':' {

@@ -1,6 +1,7 @@
 package parser
 
 import "../logger"
+import "core:path/slashpath"
 import "core:unicode"
 
 import "core:fmt"
@@ -60,6 +61,21 @@ ast_print :: proc(node: ^AstNode, indent := 0, is_last: []bool = {}) {
 		} else {
 			fmt.printf(" %svoid%s\n", logger.color_codes[.cyan], logger.color_codes[.reset])
 		}
+
+		print_indent(indent + 1, is_last)
+		fmt.printf("statements: %d\n", len(n.body.statements))
+		print_indent(indent + 1, is_last)
+		fmt.printf("deferred: %d\n", len(n.body.deferred))
+
+	case CallExpr:
+		print_indent(indent, is_last)
+		fmt.printf("call_expr:\n")
+
+		print_indent(indent + 1, is_last)
+		fmt.printf("func: %v\n", n.name)
+
+		print_indent(indent + 1, is_last)
+		fmt.printf("arguments: %d\n", len(n.arguments))
 
 	case UnaryOp:
 		print_indent(indent, is_last)

@@ -1,5 +1,9 @@
 X :: 42
 
+add :: func(a: i32, b: i32) i32 {
+  return a + b
+}
+
 main :: func() i32 {
-  return X
+  return add(X, 2)
 }

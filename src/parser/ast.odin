@@ -7,6 +7,7 @@ AstNode :: union {
 	Declaration,
 	Identifier,
 	Function,
+	CallExpr,
 	Literal,
 	UnaryOp,
 	BinaryOp,
@@ -49,6 +50,11 @@ TypeNode :: union {
 Function :: struct {
 	parameters: [dynamic]Parameter,
 	body:       ^Block,
+}
+
+CallExpr :: struct {
+	name:      string,
+	arguments: [dynamic]^AstNode,
 }
 
 Parameter :: struct {

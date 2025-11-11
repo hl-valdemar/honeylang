@@ -42,6 +42,15 @@ make_func :: proc(parameters: [dynamic]Parameter, body: ^Block) -> ^AstNode {
 	return node
 }
 
+make_call_expr :: proc(name: string, arguments: [dynamic]^AstNode) -> ^AstNode {
+	node := new(AstNode)
+	node^ = CallExpr {
+		name      = name,
+		arguments = arguments,
+	}
+	return node
+}
+
 make_block :: proc(statements: [dynamic]^AstNode, deferred: [dynamic]^AstNode) -> ^Block {
 	node := new(Block)
 	node^ = Block {
@@ -185,6 +194,11 @@ ast_destroy :: proc(node: ^AstNode) {
 			type_destroy(p.type)
 		}
 		block_destroy(n.body)
+
+  case CallExpr:
+    for a in n.arguments{
+      ast_destroy(a)
+    }
 
 	case ReturnStmt:
 		ast_destroy(n.expression)

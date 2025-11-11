@@ -55,7 +55,14 @@ parse_primary :: proc(p: ^Parser) -> (^AstNode, bool) {
 
 	#partial switch tok.kind {
 	case .identifier:
-		node, ok = make_identifier(tok)
+		// check if function call
+		if check(p, .left_paren) {
+			advance(p)
+			node, ok = parse_expr(p)
+		} else {
+			node, ok = make_identifier(tok)
+		}
+
 
 	case .boolean:
 		node, ok = make_boolean(tok)
@@ -393,7 +400,7 @@ parse_func_decl :: proc(p: ^Parser) -> (^AstNode, bool) {
 
 		// parse ':'
 		tok, ok_tok = peek(p).?
-		if !match(p, .double_colon) {
+		if !match(p, .colon) {
 			if ok_tok {
 				report_error(
 					p,
@@ -554,6 +561,7 @@ parse_return_stmt :: proc(p: ^Parser) -> (^AstNode, bool) {
 				"expected 'return' in return statement, found unexpected end of file",
 			)
 		}
+		return nil, false
 	}
 
 	expr, ok_expr := parse_expr(p)
@@ -563,6 +571,77 @@ parse_return_stmt :: proc(p: ^Parser) -> (^AstNode, bool) {
 	}
 
 	return make_return_stmt(expr), true
+}
+
+parse_call_expr :: proc(p: ^Parser) -> (^AstNode, bool) {
+	// parse function name
+	func_name, ok_name := parse_identifier(p, "expected identifier in call expression")
+	if !ok_name do return nil, false
+
+	// expect '('
+	tok, ok_tok := peek(p).?
+	if !match(p, .left_paren) {
+		if ok_tok {
+			report_error(
+				p,
+				.parser_unexpected_token,
+				"expected '(' in call expression, found '%v'",
+				tok.kind,
+			)
+		} else {
+			report_error(
+				p,
+				.parser_unexpected_eof,
+				"expected '(' in call expression, found unexpected end of file",
+			)
+		}
+		return nil, false
+	}
+
+	// parse argument list
+	arguments := make([dynamic]^AstNode)
+
+	// check if we have arguments
+	if !check(p, .right_paren) {
+		for {
+			arg, ok_arg := parse_expr(p)
+			if !ok_arg {
+				// error already reported by parse_expr
+				for a in arguments do ast_destroy(a)
+				delete(arguments)
+				return nil, false
+			}
+
+			append(&arguments, arg)
+
+			if !check(p, .comma) do break // no comma, done with arguments
+			advance(p)
+		}
+	}
+
+	// expect ')'
+	tok, ok_tok = peek(p).?
+	if !match(p, .right_paren) {
+		if ok_tok {
+			report_error(
+				p,
+				.parser_unexpected_token,
+				"expected ')' in call expression, found '%v'",
+				tok.kind,
+			)
+		} else {
+			report_error(
+				p,
+				.parser_unexpected_eof,
+				"expected ')' in call expression, found unexpected end of file",
+			)
+		}
+		for a in arguments do ast_destroy(a)
+		delete(arguments)
+		return nil, false
+	}
+
+	return make_call_expr(func_name, arguments), true
 }
 
 // expect identifier and return its value
