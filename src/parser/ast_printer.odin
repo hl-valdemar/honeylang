@@ -53,10 +53,12 @@ ast_print :: proc(node: ^AstNode, indent := 0, is_last: []bool = {}) {
 
 			for param in n.parameters {
 				print_indent(indent + 2, is_last)
+        fmt.printf("parameter:\n")
+
+				print_indent(indent + 3, is_last)
 				fmt.printf("name: %v\n", param.name)
 
-				print_indent(indent + 2, is_last)
-				print_type(param.type, indent + 2, is_last)
+				print_type(param.type, indent + 3, is_last)
 			}
 		} else {
 			fmt.printf(" %svoid%s\n", logger.color_codes[.cyan], logger.color_codes[.reset])

@@ -56,13 +56,11 @@ parse_primary :: proc(p: ^Parser) -> (^AstNode, bool) {
 	#partial switch tok.kind {
 	case .identifier:
 		// check if function call
-		if check(p, .left_paren) {
-			advance(p)
-			node, ok = parse_expr(p)
+		if check_offset(p, 1, .left_paren) {
+			return parse_call_expr(p)
 		} else {
 			node, ok = make_identifier(tok)
 		}
-
 
 	case .boolean:
 		node, ok = make_boolean(tok)
