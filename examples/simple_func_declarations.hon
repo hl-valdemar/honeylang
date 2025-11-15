@@ -1,0 +1,4 @@
+# func declaration
+main :: func() void {
+    return X
+}

@@ -1,0 +1,9 @@
+[package]
+name = "honeylang-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+owo-colors = "4.2.3"
+thiserror = "2.0.17"
