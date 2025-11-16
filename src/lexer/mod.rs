@@ -1,5 +1,3 @@
-use owo_colors::OwoColorize;
-
 use crate::lexer::error::{ErrorList, LexingError};
 use crate::lexer::token::{Token, TokenKind, TokenList};
 
@@ -179,6 +177,9 @@ impl Lexer {
                 }
             }
         }
+
+        // push EOF
+        tokens.push(Token::new(TokenKind::Eof, self.loc));
 
         (tokens, errors)
     }

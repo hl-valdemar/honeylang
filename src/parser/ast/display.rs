@@ -1,6 +1,6 @@
 use crate::parser::{
     AstNode,
-    ast::{ConstDeclKind, TreeDisplay, Type, UnaryOpKind},
+    ast::{BinaryOpKind, ConstDeclKind, TreeDisplay, Type, UnaryOpKind},
 };
 
 impl std::fmt::Display for AstNode {
@@ -14,6 +14,17 @@ impl std::fmt::Display for UnaryOpKind {
         match self {
             Self::LogicalNot => write!(f, "!"),
             Self::ArithmeticNeg => write!(f, "-"),
+        }
+    }
+}
+
+impl std::fmt::Display for BinaryOpKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Add => write!(f, "+"),
+            Self::Sub => write!(f, "-"),
+            Self::Mul => write!(f, "*"),
+            Self::Div => write!(f, "/"),
         }
     }
 }

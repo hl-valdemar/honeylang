@@ -1,4 +1,9 @@
 # func declaration
+add :: func(a: i32, b: i32) i32 {
+  return a + b
+}
+
+# entry point
 main :: func() void {
     return X
 }

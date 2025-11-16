@@ -1,5 +1,7 @@
 # comptime const declaration (type inferred)
-X :: 42
+X :: -42
 
 # comptime const declaration (type explicit)
 Y: f32 :: 0.4
+
+Z :: X * Y

@@ -58,10 +58,12 @@ impl std::fmt::Display for TokenKind {
             Self::GreaterEqual => write!(f, ">="),
 
             // other
+            Self::Comma => write!(f, ","),
             Self::LeftParen => write!(f, "("),
             Self::RightParen => write!(f, ")"),
             Self::LeftCurly => write!(f, "{{"),
             Self::RightCurly => write!(f, "}}"),
+            Self::Eof => write!(f, "EOF"),
 
             _ => todo!("finish token kind display implementation"),
         }

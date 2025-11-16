@@ -1,8 +1,6 @@
-use owo_colors::OwoColorize;
-
 use crate::lexer::token::{Token, TokenKind, TokenList};
 use crate::parser::ast::{
-    AstNode, ConstDeclKind, Parameter, Type, UnaryOpKind, make_const_decl, make_unary,
+    AstNode, BinaryOpKind, ConstDeclKind, Parameter, Type, UnaryOpKind, make_const_decl, make_unary,
 };
 use crate::parser::error::{ErrorList, NoValueKind, ParsingError};
 
@@ -57,18 +55,17 @@ impl Parser {
                 .peek_offset(2)
                 .is_some_and(|tok| tok.kind == TokenKind::Func)
         {
-            self.parse_func_decl()
+            return self.parse_func_decl();
         }
         // check for const decl pattern
         else if matches!(token.kind, TokenKind::Identifier(_))
             && matches!(next.kind, TokenKind::Colon | TokenKind::DoubleColon)
         {
-            self.parse_const_decl()
+            return self.parse_const_decl();
         }
-        // invalid!
-        else {
-            Err(ParsingError::ExpectedConstDeclaration { found: token })
-        }
+
+        // otherwise, invalid
+        Err(ParsingError::ExpectedConstDeclaration { found: token })
     }
 
     fn parse_func_decl(&mut self) -> Result<AstNode, ParsingError> {
@@ -113,7 +110,7 @@ impl Parser {
 
     fn parse_params(&mut self) -> Result<Vec<Parameter>, ParsingError> {
         let mut params = vec![];
-        while !self.check(TokenKind::RightParen) {
+        while !self.check(&TokenKind::RightParen) {
             // expect param name
             let param_name = self.expect_identifier()?;
 
@@ -125,7 +122,7 @@ impl Parser {
 
             // FIXME: this code is ugly
             let token = self.current()?;
-            let next = self.current()?;
+            let next = self.next()?;
             if matches!(token.kind, TokenKind::Comma)
                 && !matches!(next.kind, TokenKind::Identifier(_))
             {
@@ -154,7 +151,9 @@ impl Parser {
         // parse statements
         let mut statements = vec![];
         let mut deferred = vec![];
-        while let Ok(stmt) = self.parse_statement() {
+
+        while !self.check(&TokenKind::RightCurly) {
+            let stmt = self.parse_statement()?;
             match stmt {
                 AstNode::Defer { stmt: _ } => deferred.push(stmt),
                 _ => statements.push(stmt),
@@ -175,21 +174,22 @@ impl Parser {
 
         // check if return statement
         if matches!(token.kind, TokenKind::Return) {
-            self.parse_return_stmt()
+            return self.parse_return_stmt();
         }
-        // invalid!
-        else {
-            Err(ParsingError::UnexpectedToken {
-                found: token,
-                expected: vec![TokenKind::Return],
-            })
-        }
+
+        // otherwise, invalid
+        Err(ParsingError::UnexpectedToken {
+            found: token,
+            expected: vec![TokenKind::Return],
+        })
     }
 
     fn parse_return_stmt(&mut self) -> Result<AstNode, ParsingError> {
-        // expect 'return' followed by an expression
         self.expect(TokenKind::Return)?;
-        self.parse_expression()
+        let value = self.parse_expression()?;
+        Ok(AstNode::Return {
+            value: Box::new(value),
+        })
     }
 
     fn parse_const_decl(&mut self) -> Result<AstNode, ParsingError> {
@@ -228,7 +228,61 @@ impl Parser {
 
     // simply a wrapper around the most generic expression type
     fn parse_expression(&mut self) -> Result<AstNode, ParsingError> {
-        self.parse_unary()
+        self.parse_additive()
+    }
+
+    fn parse_additive(&mut self) -> Result<AstNode, ParsingError> {
+        // parse left-hand side
+        let mut left = self.parse_multiplicative()?;
+
+        // parse operations
+        let mut token = self.current()?;
+        while matches!(token.kind, TokenKind::Plus | TokenKind::Minus) {
+            self.advance();
+
+            // parse operation
+            let op = match token.kind {
+                TokenKind::Plus => BinaryOpKind::Add,
+                TokenKind::Minus => BinaryOpKind::Sub,
+                _ => unreachable!(),
+            };
+
+            // parse right-hand side
+            let right = self.parse_multiplicative()?;
+
+            // wrap it up nicely
+            left = ast::make_binary(op, left, right);
+            token = self.current()?;
+        }
+
+        Ok(left)
+    }
+
+    fn parse_multiplicative(&mut self) -> Result<AstNode, ParsingError> {
+        // parse left-hand side
+        let mut left = self.parse_unary()?;
+
+        // parse operations
+        let mut token = self.current()?;
+        while matches!(token.kind, TokenKind::Star | TokenKind::Slash) {
+            self.advance();
+
+            // parse operation
+            let op = match token.kind {
+                TokenKind::Star => BinaryOpKind::Mul,
+                TokenKind::Slash => BinaryOpKind::Div,
+                _ => unreachable!(),
+            };
+
+            // parse right-hand side
+            let right = self.parse_unary()?;
+
+            // wrap it up nicely
+            left = ast::make_binary(op, left, right);
+            token = self.current()?;
+        }
+
+        Ok(left)
     }
 
     fn parse_unary(&mut self) -> Result<AstNode, ParsingError> {
@@ -238,7 +292,7 @@ impl Parser {
         if matches!(token.kind, TokenKind::Minus | TokenKind::Not) {
             self.advance();
 
-            // parse the operation
+            // parse operation
             let op = match token.kind {
                 TokenKind::Minus => UnaryOpKind::ArithmeticNeg,
                 TokenKind::Not => UnaryOpKind::LogicalNot,
@@ -299,12 +353,12 @@ impl Parser {
         self.peek_offset(1).ok_or(ParsingError::UnexpectedEof)
     }
 
-    fn check(&self, token_kind: TokenKind) -> bool {
-        self.peek().is_some_and(|tok| tok.kind == token_kind)
+    fn check(&self, token_kind: &TokenKind) -> bool {
+        self.peek().is_some_and(|tok| tok.kind == *token_kind)
     }
 
     fn expect(&mut self, kind: TokenKind) -> Result<(), ParsingError> {
-        if self.check(kind.clone()) {
+        if self.check(&kind) {
             self.advance();
             Ok(())
         } else {
@@ -332,159 +386,3 @@ impl Parser {
         }
     }
 }
-
-//     fn parse_declaration(&mut self) -> Result<AstNode, ParsingError> {
-//         let Some(token) = self.peek() else {
-//             return Err(ParsingError::UnexpectedEof);
-//         };
-//
-//         if let TokenKind::Identifier(_) = token.kind {
-//             if self.peek_offset(1).is_some_and(|tok| {
-//                 tok.kind == TokenKind::Colon || tok.kind == TokenKind::DoubleColon
-//             }) {
-//                 return self.parse_const_decl();
-//             } else if self
-//                 .peek_offset(1)
-//                 .is_some_and(|tok| tok.kind == TokenKind::DoubleColon)
-//                 && self
-//                     .peek_offset(2)
-//                     .is_some_and(|tok| tok.kind == TokenKind::Func)
-//             {
-//                 // TODO: parse function declaration
-//                 unimplemented!();
-//             }
-//         }
-//
-//         Err(ParsingError::UnexpectedToken {
-//             found: token.kind,
-//             expected: TokenKind::DoubleEqual,
-//         })
-//     }
-//
-//     fn parse_func_decl(&mut self) -> Result<AstNode, ParsingError> {
-//         let Some(token) = self.peek() else {
-//             return Err(ParsingError::UnexpectedEof);
-//         };
-//
-//         // expect identifier
-//         let name = match token.kind {
-//             TokenKind::Identifier(name) => name,
-//             _ => {
-//                 return Err(ParsingError::UnexpectedToken {
-//                     found: token.kind,
-//                     expected: TokenKind::Identifier(String::from("ident")),
-//                 });
-//             }
-//         };
-//         self.advance();
-//
-//         let Some(token) = self.peek() else {
-//             return Err(ParsingError::UnexpectedEof);
-//         };
-//
-//         // expect assignment operator '::'
-//         if token.kind != TokenKind::DoubleColon {
-//             return Err(ParsingError::UnexpectedToken {
-//                 found: token.kind,
-//                 expected: TokenKind::DoubleColon,
-//             });
-//         }
-//         self.advance();
-//
-//         let Some(token) = self.peek() else {
-//             return Err(ParsingError::UnexpectedEof);
-//         };
-//
-//         // expect 'func' keyword
-//         if token.kind != TokenKind::Func {
-//             return Err(ParsingError::UnexpectedToken {
-//                 found: token.kind,
-//                 expected: TokenKind::Func,
-//             });
-//         }
-//         self.advance();
-//
-//         // TODO:
-//         // 1. parse parameters
-//         // 2. parse return type
-//         // 3. parse function body
-//
-//         // parse parameters
-//         {
-//             let Some(token) = self.peek() else {
-//                 return Err(ParsingError::UnexpectedEof);
-//             };
-//
-//             if token.kind != TokenKind::LeftParen {
-//                 return Err(ParsingError::UnexpectedToken {
-//                     found: token.kind,
-//                     expected: TokenKind::LeftParen,
-//                 });
-//             }
-//             self.advance();
-//
-//             // TODO: parse all parameters (name:type pairs, comma separated)
-//
-//             if token.kind != TokenKind::RightParen {
-//                 return Err(ParsingError::UnexpectedToken {
-//                     found: token.kind,
-//                     expected: TokenKind::RightParen,
-//                 });
-//             }
-//             self.advance();
-//         }
-//
-//         let Some(token) = self.peek() else {
-//             return Err(ParsingError::UnexpectedEof);
-//         };
-//
-//         // expect return type
-//         let return_type = match token.kind {
-//             TokenKind::Identifier(name) => name,
-//             _ => {
-//                 return Err(ParsingError::UnexpectedToken {
-//                     found: token.kind,
-//                     expected: TokenKind::Identifier(String::from("ident")),
-//                 });
-//             }
-//         };
-//         self.advance();
-//
-//         // expect function block
-//         let _ = self.parse_block();
-//
-//         // NOTE: FIGURE OUT HOW TO PROPERLY REPORT EXPECTED TOKENS WHEN MULTIPLE APPLY
-//
-//         unimplemented!();
-//     }
-//
-//     fn parse_block(&mut self) -> Result<AstNode, ParsingError> {
-//         self.expect(TokenKind::LeftCurly)?;
-//
-//         let mut statements = Vec::new();
-//
-//         while !self.check(TokenKind::RightCurly) && !self.check(TokenKind::Eof) {
-//             statements.push(self.parse_statement()?);
-//         }
-//
-//         if !self.expect(TokenKind::RightCurly) {
-//             return Err(ParsingError::UnexpectedToken {
-//                 found: self.peek().map(|t| t.kind).unwrap_or(TokenKind::Eof),
-//                 expected: TokenKind::RightCurly,
-//             });
-//         }
-//
-//         Ok(AstNode::Block { statements })
-//     }
-//
-//     fn parse_statement(&mut self) -> Result<AstNode, ParsingError> {
-//         if self.check(TokenKind::Defer) {
-//             // TODO: parse defer statement
-//             unimplemented!()
-//         } else if self.check(TokenKind::Return) {
-//             // TODO: parse return statement
-//             unimplemented!()
-//         }
-//
-//         unimplemented!()
-//     }
