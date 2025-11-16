@@ -5,10 +5,28 @@ use crate::parser::ast::AstNode;
 mod lexer;
 mod parser;
 
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(name = "honey")]
+#[command(about = "A programming language", long_about = None)]
+struct Cli {
+    /// Input file to process
+    #[arg(short, long)]
+    input: String,
+    // /// Output file
+    // #[arg(short, long)]
+    // output: String,
+}
+
+#[cfg(debug_assertions)]
 fn main() {
+    let cli = Cli::parse();
+    let filename: &'static str = Box::leak(cli.input.into_boxed_str());
+
     println!("\n::[[ Lexer ]]::\n");
 
-    let (tokens, errors) = lexer::scan("examples/simple_const_declarations.hon");
+    let (tokens, errors) = lexer::scan(filename);
 
     if errors.has_errors() {
         println!("{}", errors);
@@ -30,4 +48,23 @@ fn main() {
     };
 
     println!("Parsed {} declarations:\n\n{}", declarations.len(), ast);
+}
+
+#[cfg(not(debug_assertions))]
+fn main() {
+    let cli = Cli::parse();
+    let filename: &'static str = Box::leak(cli.input.into_boxed_str());
+
+    let (tokens, errors) = lexer::scan(filename);
+
+    if errors.has_errors() {
+        println!("{}", errors);
+        exit(1);
+    }
+
+    let (ast, errors) = parser::parse(&tokens);
+    if errors.has_errors() {
+        println!("{}", errors);
+        exit(1);
+    }
 }
