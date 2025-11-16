@@ -1,11 +1,6 @@
 use owo_colors::OwoColorize;
 
-use crate::lexer::Location;
-
-#[derive(Debug)]
-pub enum LexingError {
-    UnexpectedCharacter { name: String, loc: Location },
-}
+use crate::lexer::error::{ErrorList, LexingError};
 
 impl std::fmt::Display for LexingError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -13,14 +8,13 @@ impl std::fmt::Display for LexingError {
             Self::UnexpectedCharacter { name, loc } => write!(
                 f,
                 "unexpected character '{}' at {}:{}:{}",
-                name.red(), loc.filename, loc.line, loc.col
+                name.red(),
+                loc.filename,
+                loc.line,
+                loc.col
             ),
         }
     }
-}
-
-pub struct ErrorList {
-    errors: Vec<LexingError>,
 }
 
 impl std::fmt::Display for ErrorList {
@@ -29,19 +23,5 @@ impl std::fmt::Display for ErrorList {
             write!(f, "{}: {}\n", "error".red(), error)?;
         }
         Ok(())
-    }
-}
-
-impl ErrorList {
-    pub fn new() -> Self {
-        Self { errors: Vec::new() }
-    }
-
-    pub fn has_errors(&self) -> bool {
-        !self.errors.is_empty()
-    }
-
-    pub fn push(&mut self, error: LexingError) {
-        self.errors.push(error);
     }
 }

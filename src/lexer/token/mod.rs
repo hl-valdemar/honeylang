@@ -1,17 +1,11 @@
-use owo_colors::OwoColorize;
-
 use crate::lexer::Location;
+
+mod display;
 
 #[derive(Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
     pub loc: Location,
-}
-
-impl std::fmt::Display for Token {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}: {}", self.loc, self.kind)
-    }
 }
 
 impl Token {
@@ -63,32 +57,9 @@ pub enum TokenKind {
     Eof,
 }
 
-impl std::fmt::Display for TokenKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            TokenKind::Identifier(name) => {
-                write!(f, "{}({:?})", "Identifier".cyan(), name)
-            }
-            TokenKind::Number(value) => {
-                write!(f, "{}({:?})", "Number".cyan(), value)
-            }
-            _ => write!(f, "{:?}", self.cyan()),
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct TokenList {
     tokens: Vec<Token>,
-}
-
-impl std::fmt::Display for TokenList {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        for token in &self.tokens {
-            write!(f, "{}\n", token)?;
-        }
-        Ok(())
-    }
 }
 
 impl TokenList {
@@ -106,5 +77,9 @@ impl TokenList {
 
     pub fn to_vec(&self) -> Vec<Token> {
         self.tokens.clone()
+    }
+
+    pub fn as_slice(&self) -> &[Token] {
+        self.tokens.as_slice()
     }
 }
