@@ -58,12 +58,6 @@ pub enum AstNode {
         statements: Vec<AstNode>,
         deferred: Vec<AstNode>,
     },
-    Return {
-        value: Box<AstNode>,
-    },
-    Defer {
-        stmt: Box<AstNode>,
-    },
     VarDecl {
         name: String,
         type_: Option<Type>,
@@ -72,6 +66,12 @@ pub enum AstNode {
     },
     Assignment {
         target: Box<AstNode>,
+        value: Box<AstNode>,
+    },
+    Defer {
+        stmt: Box<AstNode>,
+    },
+    Return {
         value: Box<AstNode>,
     },
 }
@@ -133,9 +133,14 @@ impl TreeDisplay for AstNode {
             Self::Function { params, body } => {
                 writeln!(f, "{}└─ func:", prefix)?;
 
-                writeln!(f, "{}└─ params:", child_prefix)?;
-                for param in params {
-                    param.fmt_tree(f, &grand_child_prefix, false);
+                write!(f, "{}└─ params:", child_prefix)?;
+                if params.is_empty() {
+                    writeln!(f, " {}", "none".purple())?;
+                } else {
+                    writeln!(f)?; // newline
+                    for param in params {
+                        param.fmt_tree(f, &grand_child_prefix, false)?;
+                    }
                 }
 
                 body.fmt_tree(f, &child_prefix, true)?;
@@ -198,7 +203,7 @@ pub enum ConstDeclKind {
 
 #[derive(Clone)]
 pub enum Type {
-    NamedType(String),
+    Named(String),
 }
 
 #[derive(Clone)]

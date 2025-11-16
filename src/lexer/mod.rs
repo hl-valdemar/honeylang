@@ -1,3 +1,5 @@
+use owo_colors::OwoColorize;
+
 use crate::lexer::error::{ErrorList, LexingError};
 use crate::lexer::token::{Token, TokenKind, TokenList};
 
@@ -55,9 +57,6 @@ impl Lexer {
         let mut errors = ErrorList::new();
 
         while self.peek().is_some() {
-            self.skip_whitespace();
-            self.skip_comments();
-
             let Some(c) = self.peek_char() else {
                 tokens.push(Token::new(TokenKind::Eof, self.loc));
                 break;
@@ -152,6 +151,25 @@ impl Lexer {
                         tokens.push(Token::new(TokenKind::Greater, self.loc));
                     }
                 }
+                '#' => {
+                    // consume entire line
+                    while let Some(c) = self.peek_char() {
+                        self.advance();
+                        if c == '\n' {
+                            self.loc.line += 1;
+                            self.loc.col = 1;
+                            break;
+                        }
+                    }
+                }
+                '\n' => self.advance(), // reachable when scanning invalid syntax
+                c if c.is_whitespace() => {
+                    self.advance();
+                    if c == '\n' {
+                        self.loc.line += 1;
+                        self.loc.col = 1;
+                    }
+                }
                 _ => {
                     errors.push(LexingError::UnexpectedCharacter {
                         name: c.to_string(),
@@ -165,33 +183,6 @@ impl Lexer {
         (tokens, errors)
     }
 
-    fn skip_whitespace(&mut self) {
-        while let Some(c) = self.peek_char() {
-            if c.is_whitespace() {
-                self.advance();
-                if c == '\n' {
-                    self.loc.line += 1;
-                    self.loc.col = 1;
-                }
-            } else {
-                break;
-            }
-        }
-    }
-
-    fn skip_comments(&mut self) {
-        if self.peek_char() == Some('#') {
-            while let Some(c) = self.peek_char() {
-                self.advance();
-                if c == '\n' {
-                    self.loc.line += 1;
-                    self.loc.col = 1;
-                    break;
-                }
-            }
-        }
-    }
-
     fn check_keyword(&self, name: &str) -> Token {
         match name {
             "func" => Token::new(TokenKind::Func, self.loc),
@@ -200,7 +191,7 @@ impl Lexer {
             "not" => Token::new(TokenKind::Not, self.loc),
             "and" => Token::new(TokenKind::And, self.loc),
             "or" => Token::new(TokenKind::Or, self.loc),
-            _ => Token::new(TokenKind::Identifier(name.to_string()), self.loc),
+            _ => Token::new(TokenKind::Identifier(Some(name.to_string())), self.loc),
         }
     }
 
@@ -276,7 +267,7 @@ impl Lexer {
             .expect("Invalid UTF-8 source")
             .to_string();
 
-        let token = Token::new(TokenKind::Number(num), self.loc);
+        let token = Token::new(TokenKind::Number(Some(num)), self.loc);
 
         Ok(token)
     }

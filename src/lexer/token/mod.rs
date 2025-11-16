@@ -22,8 +22,8 @@ pub enum TokenKind {
     Return,
 
     // literals
-    Identifier(String),
-    Number(String),
+    Identifier(Option<String>),
+    Number(Option<String>),
 
     // arithmetic
     Plus,

@@ -1,4 +1,4 @@
-use crate::lexer::token::TokenKind;
+use crate::lexer::token::{Token, TokenKind};
 
 mod display;
 
@@ -7,22 +7,30 @@ pub enum ParsingError {
     UnexpectedEof,
 
     UnexpectedToken {
-        found: TokenKind,
+        found: Token,
         expected: Vec<TokenKind>,
     },
 
     ExpectedStatement {
-        found: TokenKind,
+        found: Token,
     },
-    ExpectedDeclaration {
-        found: TokenKind,
+    ExpectedConstDeclaration {
+        found: Token,
     },
     ExpectedExpression {
-        found: TokenKind,
+        found: Token,
     },
     ExpectedType {
-        found: TokenKind,
+        found: Token,
     },
+
+    NoValue(NoValueKind),
+}
+
+#[derive(Debug)]
+pub enum NoValueKind {
+    Identifier,
+    Number,
 }
 
 pub struct ErrorList {

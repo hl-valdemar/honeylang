@@ -1,0 +1,18 @@
+# invalid characters that should trigger errors
+VALUE @ 123              # '@' is invalid
+TEST $ 456               # '$' is invalid
+
+# multiple errors in one line
+BAD :: 10 % 20 & 30      # '%', '&' are invalid
+
+# valid syntax mixed with invalid
+PI :: 3.14
+BROKEN :: PI ^ 2         # '^' is invalid
+
+# more invalid operators
+Z :: [10]                # '[', ']' are invalid
+
+# invalid symbols
+WEIRD :: 100 ! 200       # '!' is invalid
+STRANGE :: 50 ~ 25       # '~' is invalid
+ODD :: 75 | 99           # '|' is invalid

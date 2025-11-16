@@ -30,7 +30,7 @@ impl std::fmt::Display for ConstDeclKind {
 impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::NamedType(type_) => write!(f, "{}", type_),
+            Self::Named(type_) => write!(f, "{}", type_),
         }
     }
 }

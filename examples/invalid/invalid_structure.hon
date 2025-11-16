@@ -1,0 +1,50 @@
+# missing :: after type annotation
+CONST1: i32 = 100
+
+# missing expression after ::
+CONST2 ::
+
+# just a random identifier by itself
+ORPHAN_IDENTIFIER
+
+# type annotation without anything after
+CONST3: f64
+
+# starting with :: (no identifier)
+:: 42
+
+# double type annotation
+CONST4: i32: f64 :: 100
+
+# missing value entirely
+CONST5 :
+
+# expression without declaration
+3.14 - 2.71
+
+# valid start but incomplete
+CONST6 :: 10 * 
+
+# identifier followed by wrong token
+RESULT identifier
+
+# number followed by type-like syntax (but not valid declaration)
+123: i32
+
+# multiple colons in weird places
+WEIRD::: 42
+
+# valid tokens but wrong order
+:: VALUE: i32 100
+
+# identifier with just colon, nothing else
+BROKEN:
+
+# type without identifier
+i32 :: 100
+
+# expression starting a line (not a declaration)
+10 - 20
+
+# chained identifiers (not valid in current grammar)
+CONST7 CONST8 :: 100

@@ -7,20 +7,63 @@ use crate::lexer::{
 
 impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}: {}", self.loc, self.kind)
+        write!(f, "{}", self.kind)
     }
 }
 
 impl std::fmt::Display for TokenKind {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            // literals
             TokenKind::Identifier(name) => {
-                write!(f, "{}({:?})", "Identifier".cyan(), name)
+                if let Some(s) = name {
+                    write!(f, "identifier({:?})", s)
+                } else {
+                    write!(f, "identifier")
+                }
             }
             TokenKind::Number(value) => {
-                write!(f, "{}({:?})", "Number".cyan(), value)
+                if let Some(s) = value {
+                    write!(f, "number({:?})", s)
+                } else {
+                    write!(f, "number")
+                }
             }
-            _ => write!(f, "{:?}", self.cyan()),
+
+            // keywords
+            Self::Func => write!(f, "func"),
+            Self::Return => write!(f, "return"),
+
+            // assignment
+            Self::Equal => write!(f, "="),
+            Self::Colon => write!(f, ":"),
+            Self::DoubleColon => write!(f, "::"),
+
+            // arithmetic
+            Self::Plus => write!(f, "+"),
+            Self::Minus => write!(f, "-"),
+            Self::Star => write!(f, "*"),
+            Self::Slash => write!(f, "/"),
+
+            // logical
+            Self::Not => write!(f, "not"),
+            Self::And => write!(f, "and"),
+            Self::Or => write!(f, "or"),
+
+            // comparative
+            Self::DoubleEqual => write!(f, "=="),
+            Self::Less => write!(f, "<"),
+            Self::LessEqual => write!(f, "<="),
+            Self::Greater => write!(f, ">"),
+            Self::GreaterEqual => write!(f, ">="),
+
+            // other
+            Self::LeftParen => write!(f, "("),
+            Self::RightParen => write!(f, ")"),
+            Self::LeftCurly => write!(f, "{{"),
+            Self::RightCurly => write!(f, "}}"),
+
+            _ => todo!("finish token kind display implementation"),
         }
     }
 }
@@ -28,7 +71,7 @@ impl std::fmt::Display for TokenKind {
 impl std::fmt::Display for TokenList {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         for token in &self.tokens {
-            write!(f, "{}\n", token)?;
+            write!(f, "{}: {}\n", token.loc, token.cyan())?;
         }
         Ok(())
     }
