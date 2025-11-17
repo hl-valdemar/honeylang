@@ -235,7 +235,51 @@ impl Parser {
 
     // simply a wrapper around the most generic expression type
     fn parse_expression(&mut self) -> Result<AstNode, ParsingError> {
-        self.parse_comparative()
+        self.parse_logical_or()
+    }
+
+    fn parse_logical_or(&mut self) -> Result<AstNode, ParsingError> {
+        // parse left-hand side
+        let mut left = self.parse_logical_and()?;
+
+        // parse operations
+        loop {
+            let Ok(token) = self.current() else { break };
+            if !matches!(token.kind, TokenKind::Or) {
+                break;
+            }
+            self.advance();
+
+            // parse right-hand side
+            let right = self.parse_logical_and()?;
+
+            // wrap it up nicely
+            left = ast::make_binary(BinaryOpKind::Or, left, right);
+        }
+
+        Ok(left)
+    }
+
+    fn parse_logical_and(&mut self) -> Result<AstNode, ParsingError> {
+        // parse left-hand side
+        let mut left = self.parse_comparative()?;
+
+        // parse operations
+        loop {
+            let Ok(token) = self.current() else { break };
+            if !matches!(token.kind, TokenKind::And) {
+                break;
+            }
+            self.advance();
+
+            // parse right-hand side
+            let right = self.parse_comparative()?;
+
+            // wrap it up nicely
+            left = ast::make_binary(BinaryOpKind::And, left, right);
+        }
+
+        Ok(left)
     }
 
     fn parse_comparative(&mut self) -> Result<AstNode, ParsingError> {

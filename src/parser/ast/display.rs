@@ -34,6 +34,10 @@ impl std::fmt::Display for BinaryOpKind {
             Self::GreaterEqual => write!(f, ">="),
             Self::Equal => write!(f, "=="),
             Self::Different => write!(f, "!="),
+
+            // logical
+            Self::And => write!(f, "and"),
+            Self::Or => write!(f, "or"),
         }
     }
 }

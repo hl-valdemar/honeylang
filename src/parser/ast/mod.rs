@@ -245,6 +245,10 @@ pub enum BinaryOpKind {
     GreaterEqual,
     Equal,
     Different,
+
+    // logical
+    And,
+    Or,
 }
 
 #[derive(Clone)]
