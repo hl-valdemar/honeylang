@@ -4,6 +4,7 @@ use crate::parser::ast::AstNode;
 
 mod lexer;
 mod parser;
+mod semantic;
 
 use clap::Parser;
 
