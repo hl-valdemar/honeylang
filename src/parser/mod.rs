@@ -46,6 +46,9 @@ impl Parser {
                 Err(error) => {
                     errors.push(error);
                     self.advance();
+
+                    // TODO: implement synchronization points (e.g., skipping to the next declaration boundary)
+                    // current: weak error recovery -> cascading errors
                 }
             };
         }
@@ -408,14 +411,23 @@ impl Parser {
 
         let node = match token.kind {
             TokenKind::Identifier(name) => {
+                self.advance();
                 let name = name.ok_or(ParsingError::NoValue(NoValueKind::Identifier))?;
                 ast::make_identifier(&name)
             }
             TokenKind::Number(value) => {
+                self.advance();
                 let value = value.ok_or(ParsingError::NoValue(NoValueKind::Number))?;
                 ast::make_number(&value)
             }
+            TokenKind::LeftParen => {
+                self.advance();
+                let expr = self.parse_expression()?;
+                self.expect(TokenKind::RightParen)?;
+                expr
+            }
             _ => {
+                self.advance();
                 return Err(ParsingError::UnexpectedToken {
                     found: token,
                     expected: vec![TokenKind::Identifier(None), TokenKind::Number(None)],
@@ -423,7 +435,6 @@ impl Parser {
             }
         };
 
-        self.advance();
         Ok(node)
     }
 
