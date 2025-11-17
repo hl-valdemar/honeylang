@@ -1,4 +1,7 @@
-use crate::lexer::token::{Token, TokenKind};
+use crate::lexer::{
+    Location,
+    token::{Token, TokenKind},
+};
 
 mod display;
 
@@ -22,6 +25,10 @@ pub enum ParsingError {
     },
     ExpectedType {
         found: Token,
+    },
+
+    TrailingComma {
+        loc: Location,
     },
 
     NoValue(NoValueKind),

@@ -149,6 +149,18 @@ impl Lexer {
                         tokens.push(Token::new(TokenKind::Greater, self.loc));
                     }
                 }
+                '!' => {
+                    if self.check_offset('=', 1) {
+                        self.advance_n(2);
+                        tokens.push(Token::new(TokenKind::NotEqual, self.loc));
+                    } else {
+                        errors.push(LexingError::UnexpectedCharacter {
+                            name: c.to_string(),
+                            loc: self.loc,
+                        });
+                        self.advance();
+                    }
+                }
                 '#' => {
                     // consume entire line
                     while let Some(c) = self.peek_char() {

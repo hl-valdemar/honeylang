@@ -95,7 +95,7 @@ impl TreeDisplay for AstNode {
         is_last: bool,
     ) -> std::fmt::Result {
         let connector = if is_last { "└─" } else { "├─" };
-        let child_prefix = format!("{}{}", prefix, if is_last { "   " } else { "│  " });
+        let child_prefix = format!("{}{}", prefix, if is_last { "   " } else { "││ " });
 
         match self {
             Self::Program { declarations } => {
@@ -120,23 +120,29 @@ impl TreeDisplay for AstNode {
                     "declaration".purple(),
                     kind.green()
                 )?;
-                
-                writeln!(f, "{}{} name: {}", child_prefix, "├─", name.purple())?;
-                
+
+                writeln!(f, "{}{} name: {}", child_prefix, "├─", name.blue())?;
+
                 if let Some(t) = type_ {
                     writeln!(f, "{}{} type: {}", child_prefix, "├─", t.cyan())?;
                 } else {
-                    writeln!(f, "{}{} type: {}", child_prefix, "├─", "<nil>".red())?;
+                    writeln!(
+                        f,
+                        "{}{} type: {}",
+                        child_prefix,
+                        "├─",
+                        "<nil>".bright_black()
+                    )?;
                 }
-                
+
                 value.fmt_tree(f, &child_prefix, true)?;
                 Ok(())
             }
             Self::Identifier(name) => {
-                writeln!(f, "{}{} identifier: {}", prefix, connector, name.purple())
+                writeln!(f, "{}{} identifier: {}", prefix, connector, name.blue())
             }
             Self::Number(value) => {
-                writeln!(f, "{}{} literal: {}", prefix, connector, value.blue())
+                writeln!(f, "{}{} literal: {}", prefix, connector, value.red())
             }
             Self::UnaryOp { op, operand } => {
                 writeln!(f, "{}{} unary op: {}", prefix, connector, op.cyan())?;
@@ -152,7 +158,7 @@ impl TreeDisplay for AstNode {
 
                 write!(f, "{}{} params:", child_prefix, "├─")?;
                 if params.is_empty() {
-                    writeln!(f, " {}", "none".purple())?;
+                    writeln!(f, " {}", "none".bright_black())?;
                 } else {
                     writeln!(f)?;
                     let param_prefix = format!("{}│  ", child_prefix);
@@ -170,7 +176,13 @@ impl TreeDisplay for AstNode {
                 deferred,
             } => {
                 writeln!(f, "{}{} block:", prefix, connector)?;
-                writeln!(f, "{}{} statements: {}", child_prefix, "├─", statements.len())?;
+                writeln!(
+                    f,
+                    "{}{} statements: {}",
+                    child_prefix,
+                    "├─",
+                    statements.len()
+                )?;
                 writeln!(f, "{}{} deferred: {}", child_prefix, "└─", deferred.len())?;
                 Ok(())
             }
@@ -187,7 +199,13 @@ impl TreeDisplay for AstNode {
                 if let Some(t) = type_ {
                     writeln!(f, "{}{} type: {}", child_prefix, "├─", t.cyan())?;
                 } else {
-                    writeln!(f, "{}{} type: {}", child_prefix, "├─", "<nil>".red())?;
+                    writeln!(
+                        f,
+                        "{}{} type: {}",
+                        child_prefix,
+                        "├─",
+                        "<nil>".bright_black()
+                    )?;
                 }
 
                 value.fmt_tree(f, &child_prefix, true)?;
@@ -219,6 +237,14 @@ pub enum BinaryOpKind {
     Sub,
     Mul,
     Div,
+
+    // comparative
+    Less,
+    Greater,
+    LessEqual,
+    GreaterEqual,
+    Equal,
+    Different,
 }
 
 #[derive(Clone)]
@@ -246,7 +272,14 @@ impl TreeDisplay for Parameter {
         is_last: bool,
     ) -> std::fmt::Result {
         let connector = if is_last { "└─" } else { "├─" };
-        writeln!(f, "{}{} {}: {}", prefix, connector, self.name, self.type_)
+        writeln!(
+            f,
+            "{}{} {}: {}",
+            prefix,
+            connector,
+            self.name.blue(),
+            self.type_.cyan()
+        )
     }
 }
 

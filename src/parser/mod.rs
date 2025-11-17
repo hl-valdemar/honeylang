@@ -1,3 +1,14 @@
+// PARSING ORDER (from tight coupling to loose):
+// 1. primary (literals, names, parens)
+// 2. unary (-, not)
+// 3. multiplicative (*, /)
+// 4. additive (+, -)
+// 5. comparison (<, >, <=, >=, ==, !=)
+// 6. logical and
+// 7. logical or
+// 8. expression (pretty much just wraps logical or)
+// 9. statement
+
 use crate::lexer::token::{Token, TokenKind, TokenList};
 use crate::parser::ast::{
     AstNode, BinaryOpKind, ConstDeclKind, Parameter, Type, UnaryOpKind, make_const_decl, make_unary,
@@ -120,25 +131,21 @@ impl Parser {
             // expect type name
             let type_name = self.expect_identifier()?;
 
-            // FIXME: this code is ugly
-            let token = self.current()?;
-            let next = self.next()?;
-            if matches!(token.kind, TokenKind::Comma)
-                && !matches!(next.kind, TokenKind::Identifier(_))
-            {
-                return Err(ParsingError::UnexpectedToken {
-                    found: next,
-                    expected: vec![TokenKind::Identifier(None)],
-                });
-            } else if matches!(token.kind, TokenKind::Comma) {
-                self.advance(); // consume ','
-            }
-
             // save param
             params.push(Parameter {
                 name: param_name,
                 type_: Type::Named(type_name),
             });
+
+            // handle possible comma
+            let token = self.current()?;
+            if matches!(token.kind, TokenKind::Comma) {
+                self.advance();
+                // if there's a comma, there must be another parameter
+                if self.check(&TokenKind::RightParen) {
+                    return Err(ParsingError::TrailingComma { loc: token.loc });
+                }
+            }
         }
 
         Ok(params)
@@ -228,7 +235,46 @@ impl Parser {
 
     // simply a wrapper around the most generic expression type
     fn parse_expression(&mut self) -> Result<AstNode, ParsingError> {
-        self.parse_additive()
+        self.parse_comparative()
+    }
+
+    fn parse_comparative(&mut self) -> Result<AstNode, ParsingError> {
+        // parse left-hand side
+        let mut left = self.parse_additive()?;
+
+        // parse operations
+        loop {
+            let Ok(token) = self.current() else { break };
+            if !matches!(
+                token.kind,
+                TokenKind::Less
+                    | TokenKind::Greater
+                    | TokenKind::LessEqual
+                    | TokenKind::GreaterEqual
+            ) {
+                break;
+            }
+            self.advance();
+
+            // parse operation
+            let op = match token.kind {
+                TokenKind::Less => BinaryOpKind::Less,
+                TokenKind::Greater => BinaryOpKind::Greater,
+                TokenKind::LessEqual => BinaryOpKind::LessEqual,
+                TokenKind::GreaterEqual => BinaryOpKind::GreaterEqual,
+                TokenKind::Equal => BinaryOpKind::Equal,
+                TokenKind::NotEqual => BinaryOpKind::Different,
+                _ => unreachable!(),
+            };
+
+            // parse right-hand side
+            let right = self.parse_additive()?;
+
+            // wrap it up nicely
+            left = ast::make_binary(op, left, right);
+        }
+
+        Ok(left)
     }
 
     fn parse_additive(&mut self) -> Result<AstNode, ParsingError> {
@@ -236,8 +282,11 @@ impl Parser {
         let mut left = self.parse_multiplicative()?;
 
         // parse operations
-        let mut token = self.current()?;
-        while matches!(token.kind, TokenKind::Plus | TokenKind::Minus) {
+        loop {
+            let Ok(token) = self.current() else { break };
+            if !matches!(token.kind, TokenKind::Plus | TokenKind::Minus) {
+                break;
+            }
             self.advance();
 
             // parse operation
@@ -252,7 +301,6 @@ impl Parser {
 
             // wrap it up nicely
             left = ast::make_binary(op, left, right);
-            token = self.current()?;
         }
 
         Ok(left)
@@ -263,8 +311,11 @@ impl Parser {
         let mut left = self.parse_unary()?;
 
         // parse operations
-        let mut token = self.current()?;
-        while matches!(token.kind, TokenKind::Star | TokenKind::Slash) {
+        loop {
+            let Ok(token) = self.current() else { break };
+            if !matches!(token.kind, TokenKind::Star | TokenKind::Slash) {
+                break;
+            }
             self.advance();
 
             // parse operation
@@ -279,7 +330,6 @@ impl Parser {
 
             // wrap it up nicely
             left = ast::make_binary(op, left, right);
-            token = self.current()?;
         }
 
         Ok(left)

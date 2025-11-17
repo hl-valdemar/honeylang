@@ -24,7 +24,7 @@ fn main() {
     let cli = Cli::parse();
     let filename: &'static str = Box::leak(cli.input.into_boxed_str());
 
-    println!("\n::[[ Lexer ]]::\n");
+    println!("\n::[[ Scanning ]]::\n");
 
     let (tokens, errors) = lexer::scan(filename);
 
@@ -35,7 +35,7 @@ fn main() {
 
     println!("Scanned {} tokens:\n\n{}", tokens.len(), tokens);
 
-    println!("\n::[[ Parser ]]::\n");
+    println!("\n::[[ Parsing ]]::\n");
 
     let (ast, errors) = parser::parse(&tokens);
     if errors.has_errors() {
@@ -48,6 +48,12 @@ fn main() {
     };
 
     println!("Parsed {} declarations:\n\n{}", declarations.len(), ast);
+
+    println!("\n::[[ Semantic ]]::");
+    println!("the void stares back");
+
+    println!("\n::[[ Codegen ]]::");
+    println!("the void stares back");
 }
 
 #[cfg(not(debug_assertions))]

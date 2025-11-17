@@ -42,6 +42,7 @@ pub enum TokenKind {
     Greater,
     GreaterEqual,
     DoubleEqual,
+    NotEqual,
 
     // assignment
     Colon,
@@ -73,10 +74,6 @@ impl TokenList {
 
     pub fn len(&self) -> usize {
         self.tokens.len()
-    }
-
-    pub fn to_vec(&self) -> Vec<Token> {
-        self.tokens.clone()
     }
 
     pub fn as_slice(&self) -> &[Token] {

@@ -9,6 +9,7 @@ impl std::fmt::Display for ParsingError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::UnexpectedEof => write!(f, "unexpected EOF"),
+            Self::TrailingComma { loc } => write!(f, "trailing comma at {}", loc),
             Self::UnexpectedToken { found, expected } => {
                 write!(
                     f,

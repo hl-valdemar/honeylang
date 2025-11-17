@@ -52,12 +52,12 @@ Comprehensive implementation of basic compile-time functionality in the Honey la
 - [ ] Strong typing (proper type checking)
 - [ ] Proper diagnostics
     - [x] lexer
-    - [ ] parser
+    - [x] parser
     - [ ] semantic
 - [ ] Arithmetic and boolean operations (disregard modulo operation for now)
-    - [ ] arithmetic
-        - [ ] multiplicative
-        - [ ] additive
+    - [x] arithmetic
+        - [x] multiplicative
+        - [x] additive
     - [ ] boolean
 - [ ] Comptime expression evaluation
 - [ ] Comptime constant inlining

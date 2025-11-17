@@ -48,3 +48,9 @@ i32 :: 100
 
 # chained identifiers (not valid in current grammar)
 CONST7 CONST8 :: 100
+
+main :: func(name: i32,) void {}
+main :: func(,name: i32) void {}
+main :: func(,) void {}
+main :: func(name: i32) {}
+main :: func() void
