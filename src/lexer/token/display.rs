@@ -15,24 +15,26 @@ impl std::fmt::Display for TokenKind {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             // literals
-            TokenKind::Identifier(name) => {
+            Self::Identifier(name) => {
                 if let Some(s) = name {
                     write!(f, "identifier({:?})", s)
                 } else {
                     write!(f, "identifier")
                 }
             }
-            TokenKind::Number(value) => {
+            Self::Number(value) => {
                 if let Some(s) = value {
                     write!(f, "number({:?})", s)
                 } else {
                     write!(f, "number")
                 }
             }
+            Self::Boolean(value) => write!(f, "{:?}", value),
 
             // keywords
             Self::Func => write!(f, "func"),
             Self::Return => write!(f, "return"),
+            Self::Defer => write!(f, "defer"),
 
             // assignment
             Self::Equal => write!(f, "="),
@@ -51,11 +53,12 @@ impl std::fmt::Display for TokenKind {
             Self::Or => write!(f, "or"),
 
             // comparative
-            Self::DoubleEqual => write!(f, "=="),
             Self::Less => write!(f, "<"),
             Self::LessEqual => write!(f, "<="),
             Self::Greater => write!(f, ">"),
             Self::GreaterEqual => write!(f, ">="),
+            Self::DoubleEqual => write!(f, "=="),
+            Self::NotEqual => write!(f, "!="),
 
             // other
             Self::Comma => write!(f, ","),
@@ -64,8 +67,6 @@ impl std::fmt::Display for TokenKind {
             Self::LeftCurly => write!(f, "{{"),
             Self::RightCurly => write!(f, "}}"),
             Self::Eof => write!(f, "EOF"),
-
-            _ => todo!("finish token kind display implementation"),
         }
     }
 }

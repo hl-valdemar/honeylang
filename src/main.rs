@@ -50,10 +50,17 @@ fn main() {
 
     println!("Parsed {} declarations:\n\n{}", declarations.len(), ast);
 
-    println!("\n::[[ Semantic ]]::");
-    println!("the void stares back");
+    println!("\n::[[ Semantic ]]::\n");
 
-    println!("\n::[[ Codegen ]]::");
+    let (ast, symtab, errors) = semantic::analyze(&ast);
+    if errors.has_errors() {
+        println!("{}", errors);
+        exit(1);
+    }
+
+    println!("Collected {} symbols:\n\n{}", symtab.len(), symtab);
+
+    println!("\n::[[ Codegen ]]::\n");
     println!("the void stares back");
 }
 

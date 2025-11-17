@@ -24,6 +24,7 @@ pub enum TokenKind {
     // literals
     Identifier(Option<String>),
     Number(Option<String>),
+    Boolean(bool),
 
     // arithmetic
     Plus,

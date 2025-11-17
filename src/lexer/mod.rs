@@ -204,6 +204,8 @@ impl Lexer {
             "not" => Token::new(TokenKind::Not, self.loc),
             "and" => Token::new(TokenKind::And, self.loc),
             "or" => Token::new(TokenKind::Or, self.loc),
+            "true" => Token::new(TokenKind::Boolean(true), self.loc),
+            "false" => Token::new(TokenKind::Boolean(false), self.loc),
             _ => Token::new(TokenKind::Identifier(Some(name.to_string())), self.loc),
         }
     }

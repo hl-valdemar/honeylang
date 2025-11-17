@@ -103,7 +103,7 @@ impl Parser {
 
         // expect return type
         let return_type = self.expect_identifier()?;
-        let return_type = Some(Type::Named(return_type));
+        let return_type = Some(Type::Unresolved(return_type));
 
         // parse function body
         let body = self.parse_block()?;
@@ -137,7 +137,7 @@ impl Parser {
             // save param
             params.push(Parameter {
                 name: param_name,
-                type_: Type::Named(type_name),
+                type_: Type::Unresolved(type_name),
             });
 
             // handle possible comma
@@ -216,7 +216,7 @@ impl Parser {
                 // expect type name
                 let type_name = self.expect_identifier()?;
 
-                Some(Type::Named(type_name))
+                Some(Type::Unresolved(type_name))
             }
             TokenKind::DoubleColon => None,
             _ => {
@@ -419,6 +419,10 @@ impl Parser {
                 self.advance();
                 let value = value.ok_or(ParsingError::NoValue(NoValueKind::Number))?;
                 ast::make_number(&value)
+            }
+            TokenKind::Boolean(value) => {
+                self.advance();
+                ast::make_boolean(value)
             }
             TokenKind::LeftParen => {
                 self.advance();

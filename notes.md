@@ -12,6 +12,10 @@ Source Code > Lexer: Token Stream ... > Parser: AST ........ > Semantic Analysis
                                                                └─ Comptime constant inlining
 ```
 
+## Todo
+
+- [ ] Too much cloning in the parser (use slices instead?)
+
 ## Roadmap (v0.0.3)
 
 Code emission.
@@ -50,15 +54,15 @@ Comprehensive implementation of basic runtime dependent operations in the Honey 
 Comprehensive implementation of basic compile-time functionality in the Honey language.
 
 - [ ] Strong typing (proper type checking)
-- [ ] Proper diagnostics
+- [x] Proper diagnostics
     - [x] lexer
     - [x] parser
-    - [ ] semantic
-- [ ] Arithmetic and boolean operations (disregard modulo operation for now)
+    - [x] semantic
+- [x] Arithmetic and boolean operations (disregard modulo operation for now)
     - [x] arithmetic
         - [x] multiplicative
         - [x] additive
-    - [ ] boolean
+    - [x] boolean
 - [ ] Comptime expression evaluation
 - [ ] Comptime constant inlining
 
@@ -83,6 +87,7 @@ Comprehensive implementation of basic compile-time functionality in the Honey la
 
 - functions as first-class citizens
 - defer statements
+- package management system that simply pulls the lib into a "vendor" folder coexisting with the project files instead of the invisible cache approach
 
 ## Stack frames
 

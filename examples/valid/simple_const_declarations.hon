@@ -1,7 +1,14 @@
 # comptime const declaration (type inferred)
+DEBUG :: true
+
 X :: -42
 
 # comptime const declaration (type explicit)
 Y: f32 :: 0.4
 
 Z :: X * (Y + 2)
+
+NOT_TRUE :: not true
+TRUE_AND_FALSE :: true and false
+TRUE_OR_FALSE :: true or false
+NOT_TRUE_AND_FALSE :: not (true and false)

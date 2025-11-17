@@ -3,11 +3,15 @@ use owo_colors::OwoColorize;
 mod display;
 
 pub fn make_identifier(name: &str) -> AstNode {
-    AstNode::Identifier(name.to_string())
+    AstNode::Ident(name.to_string())
 }
 
 pub fn make_number(value: &str) -> AstNode {
-    AstNode::Number(value.to_string())
+    AstNode::Num(Number::Unresolved(value.to_string()))
+}
+
+pub fn make_boolean(value: bool) -> AstNode {
+    AstNode::Bool(value)
 }
 
 pub fn make_unary(op: UnaryOpKind, operand: AstNode) -> AstNode {
@@ -39,19 +43,20 @@ pub fn make_const_decl(
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum AstNode {
     Program {
         declarations: Vec<AstNode>,
     },
     ConstDecl {
-        kind: ConstDeclKind,
         name: String,
+        kind: ConstDeclKind,
         type_: Option<Type>,
         value: Box<AstNode>,
     },
-    Identifier(String),
-    Number(String),
+    Ident(String),
+    Num(Number),
+    Bool(bool),
     UnaryOp {
         op: UnaryOpKind,
         operand: Box<AstNode>,
@@ -138,12 +143,18 @@ impl TreeDisplay for AstNode {
                 value.fmt_tree(f, &child_prefix, true)?;
                 Ok(())
             }
-            Self::Identifier(name) => {
+            Self::Ident(name) => {
                 writeln!(f, "{}{} identifier: {}", prefix, connector, name.blue())
             }
-            Self::Number(value) => {
-                writeln!(f, "{}{} literal: {}", prefix, connector, value.red())
-            }
+            Self::Num(number) => match number {
+                Number::Resolved(resolved) => {
+                    write!(f, "{}{} literal: {}", prefix, connector, resolved.red())
+                }
+                Number::Unresolved(unresolved) => {
+                    writeln!(f, "{}{} literal: {}", prefix, connector, unresolved.red())
+                }
+            },
+            Self::Bool(value) => writeln!(f, "{}{} literal: {}", prefix, connector, value.red()),
             Self::UnaryOp { op, operand } => {
                 writeln!(f, "{}{} unary op: {}", prefix, connector, op.cyan())?;
                 operand.fmt_tree(f, &child_prefix, true)
@@ -224,13 +235,33 @@ impl TreeDisplay for AstNode {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
+pub enum Number {
+    Unresolved(String),
+    Resolved(ResolvedNumber),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ResolvedNumber {
+    Bool(bool),
+    U8(u8),
+    U16(u16),
+    U32(u32),
+    U64(u64),
+    I8(i8),
+    I16(i16),
+    I32(i32),
+    I64(i64),
+    F32(f32),
+    F64(f64),
+}
+#[derive(Debug, Clone, Copy)]
 pub enum UnaryOpKind {
     LogicalNot,
     ArithmeticNeg,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinaryOpKind {
     // arithmetic
     Add,
@@ -251,18 +282,58 @@ pub enum BinaryOpKind {
     Or,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ConstDeclKind {
     Const,
     Func,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Type {
-    Named(String),
+    Resolved(ResolvedType),
+    Unresolved(String),
 }
 
-#[derive(Clone)]
+impl Type {
+    pub fn resolve(&self) -> ResolvedType {
+        match self {
+            Type::Unresolved(name) => match name.as_str() {
+                "bool" => ResolvedType::Bool,
+                "u8" => ResolvedType::U8,
+                "u16" => ResolvedType::U16,
+                "u32" => ResolvedType::U32,
+                "u64" => ResolvedType::U64,
+                "i8" => ResolvedType::I8,
+                "i16" => ResolvedType::I16,
+                "i32" => ResolvedType::U32,
+                "i64" => ResolvedType::I64,
+                "f16" => ResolvedType::F16,
+                "f32" => ResolvedType::F32,
+                "f64" => ResolvedType::F64,
+                _ => unreachable!(),
+            },
+            Type::Resolved(resolved) => *resolved,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ResolvedType {
+    Bool,
+    U8,
+    U16,
+    U32,
+    U64,
+    I8,
+    I16,
+    I32,
+    I64,
+    F16,
+    F32,
+    F64,
+}
+
+#[derive(Debug, Clone)]
 pub struct Parameter {
     pub name: String,
     pub type_: Type,
