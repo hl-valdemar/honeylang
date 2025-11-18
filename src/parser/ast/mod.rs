@@ -153,6 +153,7 @@ impl Type {
     pub fn resolve(&self) -> ResolvedType {
         match self {
             Type::Unresolved(name) => match name.as_str() {
+                "void" => ResolvedType::Void,
                 "bool" => ResolvedType::Bool,
                 "u8" => ResolvedType::U8,
                 "u16" => ResolvedType::U16,
@@ -165,7 +166,7 @@ impl Type {
                 "f16" => ResolvedType::F16,
                 "f32" => ResolvedType::F32,
                 "f64" => ResolvedType::F64,
-                _ => unreachable!(),
+                _ => panic!("unknown type '{}'", name),
             },
             Type::Resolved(resolved) => *resolved,
         }
@@ -174,6 +175,7 @@ impl Type {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ResolvedType {
+    Void,
     Bool,
     U8,
     U16,

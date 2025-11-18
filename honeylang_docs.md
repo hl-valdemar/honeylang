@@ -4,7 +4,7 @@
 
 Comments are strings of characters prefixed with the `#` token. These are, of course, not evaluated or compiled into the binary, but are simply ignored by the compiler.
 
-```hon
+```honey
 # Comments are prefixed with a pound, so this is a comment!
 ```
 
@@ -17,7 +17,7 @@ Logical operators in the Honey language include `not`, `and`, and `or`, while `<
 Types are inferred from the context in which they're first used.
 Once a type is determined for any given name, it will be locked in place and must be cast to the appropriate type explicitly if used in operations with different types.
 
-```hon
+```honey
 # type is inferred from the immediate value, when not used in any context
 # (though this results in a warning from the compiler about unused declarations)
 DEBUG :: true

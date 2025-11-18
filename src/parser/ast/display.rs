@@ -1,9 +1,11 @@
 use owo_colors::OwoColorize;
 
 use crate::parser::{
+    AstNode,
     ast::{
-        BinaryOpKind, ConstDeclKind, Number, Parameter, ResolvedNumber, ResolvedType, Type, UnaryOpKind
-    }, AstNode
+        BinaryOpKind, ConstDeclKind, Number, Parameter, ResolvedNumber, ResolvedType, Type,
+        UnaryOpKind,
+    },
 };
 
 pub trait TreeDisplay {
@@ -75,6 +77,7 @@ impl std::fmt::Display for Type {
 impl std::fmt::Display for ResolvedType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Void => write!(f, "void"),
             Self::Bool => write!(f, "bool"),
             Self::U8 => write!(f, "u8"),
             Self::U16 => write!(f, "u16"),
@@ -116,8 +119,12 @@ impl TreeDisplay for AstNode {
         prefix: &str,
         is_last: bool,
     ) -> std::fmt::Result {
-        let connector = if is_last { "└─" } else { "├─" };
-        let child_prefix = format!("{}{}", prefix, if is_last { "   " } else { "││ " });
+        let connector = if is_last { " └─" } else { " ├─" };
+        let child_prefix = format!(
+            "{}{}",
+            prefix,
+            if is_last { &" ".repeat(4) } else { " ││ " }
+        );
 
         match self {
             Self::Program { declarations } => {
@@ -143,16 +150,16 @@ impl TreeDisplay for AstNode {
                     kind.green()
                 )?;
 
-                writeln!(f, "{}{} name: {}", child_prefix, "├─", name.blue())?;
+                writeln!(f, "{}{} name: {}", child_prefix, " ├─", name.blue())?;
 
                 if let Some(t) = type_ {
-                    writeln!(f, "{}{} type: {}", child_prefix, "├─", t.cyan())?;
+                    writeln!(f, "{}{} type: {}", child_prefix, " ├─", t.cyan())?;
                 } else {
                     writeln!(
                         f,
                         "{}{} type: {}",
                         child_prefix,
-                        "├─",
+                        " ├─",
                         "<nil>".bright_black()
                     )?;
                 }
@@ -184,12 +191,12 @@ impl TreeDisplay for AstNode {
             Self::Function { params, body } => {
                 writeln!(f, "{}{} func:", prefix, connector)?;
 
-                write!(f, "{}{} params:", child_prefix, "├─")?;
+                write!(f, "{}{} params:", child_prefix, " ├─")?;
                 if params.is_empty() {
                     writeln!(f, " {}", "none".bright_black())?;
                 } else {
                     writeln!(f)?;
-                    let param_prefix = format!("{}│  ", child_prefix);
+                    let param_prefix = format!("{} ││ ", child_prefix);
                     for (i, param) in params.iter().enumerate() {
                         let is_last_param = i == params.len() - 1;
                         param.fmt_tree(f, &param_prefix, is_last_param)?;
@@ -208,10 +215,10 @@ impl TreeDisplay for AstNode {
                     f,
                     "{}{} statements: {}",
                     child_prefix,
-                    "├─",
+                    " ├─",
                     statements.len()
                 )?;
-                writeln!(f, "{}{} deferred: {}", child_prefix, "└─", deferred.len())?;
+                writeln!(f, "{}{} deferred: {}", child_prefix, " └─", deferred.len())?;
                 Ok(())
             }
             Self::VarDecl {
@@ -221,17 +228,17 @@ impl TreeDisplay for AstNode {
                 is_mutable,
             } => {
                 writeln!(f, "{}{} var decl:", prefix, connector)?;
-                writeln!(f, "{}{} mutable: {}", child_prefix, "├─", is_mutable)?;
-                writeln!(f, "{}{} name: {}", child_prefix, "├─", name)?;
+                writeln!(f, "{}{} mutable: {}", child_prefix, " ├─", is_mutable)?;
+                writeln!(f, "{}{} name: {}", child_prefix, " ├─", name)?;
 
                 if let Some(t) = type_ {
-                    writeln!(f, "{}{} type: {}", child_prefix, "├─", t.cyan())?;
+                    writeln!(f, "{}{} type: {}", child_prefix, " ├─", t.cyan())?;
                 } else {
                     writeln!(
                         f,
                         "{}{} type: {}",
                         child_prefix,
-                        "├─",
+                        " ├─",
                         "<nil>".bright_black()
                     )?;
                 }
@@ -241,9 +248,9 @@ impl TreeDisplay for AstNode {
             }
             Self::Assignment { target, value } => {
                 writeln!(f, "{}{} assignment:", prefix, connector)?;
-                writeln!(f, "{}{} target:", child_prefix, "├─")?;
-                target.fmt_tree(f, &format!("{}│  ", child_prefix), true)?;
-                writeln!(f, "{}{} value:", child_prefix, "└─")?;
+                writeln!(f, "{}{} target:", child_prefix, " ├─")?;
+                target.fmt_tree(f, &format!("{} ││ ", child_prefix), true)?;
+                writeln!(f, "{}{} value:", child_prefix, " └─")?;
                 value.fmt_tree(f, &format!("{}   ", child_prefix), true)?;
                 Ok(())
             }
@@ -259,7 +266,7 @@ impl TreeDisplay for Parameter {
         prefix: &str,
         is_last: bool,
     ) -> std::fmt::Result {
-        let connector = if is_last { "└─" } else { "├─" };
+        let connector = if is_last { " └─" } else { " ├─" };
         writeln!(
             f,
             "{}{} {}: {}",
