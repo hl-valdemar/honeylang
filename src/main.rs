@@ -12,12 +12,9 @@ use clap::Parser;
 #[command(name = "honey")]
 #[command(about = "A programming language", long_about = None)]
 struct Cli {
-    /// Input file to process
+    /// File to compile
     #[arg(short, long)]
     input: String,
-    // /// Output file
-    // #[arg(short, long)]
-    // output: String,
 }
 
 #[cfg(debug_assertions)]

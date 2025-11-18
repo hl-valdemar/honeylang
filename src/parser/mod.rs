@@ -181,17 +181,22 @@ impl Parser {
 
     fn parse_statement(&mut self) -> Result<AstNode, ParsingError> {
         let token = self.current()?;
+        let next = self.next()?;
 
-        // check if return statement
-        if matches!(token.kind, TokenKind::Return) {
-            return self.parse_return_stmt();
+        match token.kind {
+            TokenKind::Identifier(_) if matches!(next.kind, TokenKind::Colon) => {
+                todo!("parse variable declaration")
+            }
+            TokenKind::Identifier(_) if matches!(next.kind, TokenKind::Equal) => {
+                todo!("parse variable assignment")
+            }
+            TokenKind::Defer => todo!("parse defer statement"),
+            TokenKind::Return => self.parse_return_stmt(),
+            _ => Err(ParsingError::UnexpectedToken {
+                found: token,
+                expected: vec![TokenKind::Return],
+            }),
         }
-
-        // otherwise, invalid
-        Err(ParsingError::UnexpectedToken {
-            found: token,
-            expected: vec![TokenKind::Return],
-        })
     }
 
     fn parse_return_stmt(&mut self) -> Result<AstNode, ParsingError> {

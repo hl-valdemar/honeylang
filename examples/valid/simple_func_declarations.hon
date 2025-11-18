@@ -2,6 +2,7 @@ X :: 42
 
 # func declaration
 add :: func(a: i32, b: i32) i32 {
+  defer a + b
   return a + b
 }
 

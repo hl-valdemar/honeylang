@@ -125,6 +125,7 @@ impl TreeDisplay for AstNode {
             prefix,
             if is_last { &" ".repeat(4) } else { " ││ " }
         );
+        let grand_child_prefix = format!("{}{}", prefix, "     ││ ");
 
         match self {
             Self::Program { declarations } => {
@@ -164,8 +165,7 @@ impl TreeDisplay for AstNode {
                     )?;
                 }
 
-                value.fmt_tree(f, &child_prefix, true)?;
-                Ok(())
+                value.fmt_tree(f, &child_prefix, true)
             }
             Self::Ident(name) => {
                 writeln!(f, "{}{} identifier: {}", prefix, connector, name.blue())
@@ -203,22 +203,34 @@ impl TreeDisplay for AstNode {
                     }
                 }
 
-                body.fmt_tree(f, &child_prefix, true)?;
-                Ok(())
+                body.fmt_tree(f, &child_prefix, true)
             }
             Self::Block {
                 statements,
                 deferred,
             } => {
                 writeln!(f, "{}{} block:", prefix, connector)?;
-                writeln!(
-                    f,
-                    "{}{} statements: {}",
-                    child_prefix,
-                    " ├─",
-                    statements.len()
-                )?;
-                writeln!(f, "{}{} deferred: {}", child_prefix, " └─", deferred.len())?;
+                // writeln!(
+                //     f,
+                //     "{}{} statements: {}",
+                //     child_prefix,
+                //     " ├─",
+                //     statements.len()
+                // )?;
+                write!(f, "{}{} statements:\n", child_prefix, " ├─")?;
+                for (i, stmt) in statements.iter().enumerate() {
+                    let is_last_decl = i == statements.len() - 1;
+                    stmt.fmt_tree(f, &grand_child_prefix, is_last_decl)?;
+                }
+
+                write!(f, "{}{} deferred:\n", child_prefix, " └─")?;
+                for (i, stmt) in deferred.iter().enumerate() {
+                    let is_last_decl = i == statements.len() - 1;
+                    stmt.fmt_tree(f, prefix, is_last_decl)?;
+                }
+
+                // writeln!(f, "{}{} deferred: {}", child_prefix, " └─", deferred.len())?;
+
                 Ok(())
             }
             Self::VarDecl {
@@ -243,18 +255,20 @@ impl TreeDisplay for AstNode {
                     )?;
                 }
 
-                value.fmt_tree(f, &child_prefix, true)?;
-                Ok(())
+                value.fmt_tree(f, &child_prefix, true)
             }
             Self::Assignment { target, value } => {
                 writeln!(f, "{}{} assignment:", prefix, connector)?;
                 writeln!(f, "{}{} target:", child_prefix, " ├─")?;
                 target.fmt_tree(f, &format!("{} ││ ", child_prefix), true)?;
                 writeln!(f, "{}{} value:", child_prefix, " └─")?;
-                value.fmt_tree(f, &format!("{}   ", child_prefix), true)?;
-                Ok(())
+                value.fmt_tree(f, &format!("{}   ", child_prefix), true)
             }
-            Self::Return { .. } | Self::Defer { .. } => Ok(()),
+            Self::Return { value } => {
+                writeln!(f, "{}{} return:", prefix, connector)?;
+                value.fmt_tree(f, &child_prefix, true)
+            }
+            Self::Defer { .. } => Ok(()),
         }
     }
 }
