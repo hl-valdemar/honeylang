@@ -1,3 +1,5 @@
+use owo_colors::OwoColorize;
+
 use crate::lexer::error::{ErrorList, LexingError};
 use crate::lexer::token::{Token, TokenKind, TokenList};
 
@@ -21,7 +23,13 @@ pub struct Location {
 
 impl std::fmt::Display for Location {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}:{}:{}", self.filename, self.line, self.col)
+        write!(
+            f,
+            "{}:{}:{}",
+            self.filename,
+            self.line.blue(),
+            self.col.blue()
+        )
     }
 }
 

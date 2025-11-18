@@ -15,6 +15,7 @@ Source Code > Lexer: Token Stream ... > Parser: AST ........ > Semantic Analysis
 ## Todo
 
 - [ ] Too much cloning in the parser (use slices instead?)
+    - also, reference counted string slices (`Rc<str>`) may be preferable in cases with many-to-one relationsips (maybe a solution to the related problem?)
 
 ## Roadmap (v0.0.3)
 
