@@ -16,6 +16,7 @@ Source Code > Lexer: Token Stream ... > Parser: AST ........ > Semantic Analysis
 
 - [ ] Too much cloning in the parser (use slices instead?)
     - also, reference counted string slices (`Rc<str>`) may be preferable in cases with many-to-one relationsips (maybe a solution to the related problem?)
+- [ ] Warn about unused values (e.g., value of expression is not assigned to a variable or used as function argument)
 
 ## Roadmap (v0.0.3)
 

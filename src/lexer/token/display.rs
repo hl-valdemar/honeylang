@@ -35,6 +35,7 @@ impl std::fmt::Display for TokenKind {
             Self::Func => write!(f, "{}", "func".purple()),
             Self::Return => write!(f, "{}", "return".purple()),
             Self::Defer => write!(f, "{}", "defer".purple()),
+            Self::Mut=>write!(f, "{}", "mut".purple()),
 
             // assignment
             Self::Equal => write!(f, "{}", "=".purple()),
@@ -64,8 +65,8 @@ impl std::fmt::Display for TokenKind {
             Self::Comma => write!(f, "{}", ",".purple()),
             Self::LeftParen => write!(f, "{}", "(".purple()),
             Self::RightParen => write!(f, "{}", ")".purple()),
-            Self::LeftCurly => write!(f, "{}", "{{".purple()),
-            Self::RightCurly => write!(f, "{}", "}}".purple()),
+            Self::LeftCurly => write!(f, "{}", "{".purple()),
+            Self::RightCurly => write!(f, "{}", "}".purple()),
             Self::Eof => write!(f, "{}", "EOF".purple()),
         }
     }

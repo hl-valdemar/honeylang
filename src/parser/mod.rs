@@ -10,13 +10,11 @@
 // 9. statement
 
 use crate::lexer::token::{Token, TokenKind, TokenList};
-use crate::parser::ast::{
-    AstNode, BinaryOpKind, ConstDeclKind, Parameter, Type, UnaryOpKind, make_const_decl, make_unary,
-};
-use crate::parser::error::{ErrorList, NoValueKind, ParsingError};
+use crate::parser::ast::{AstNode, BinaryOpKind, ConstDeclKind, Parameter, Type, UnaryOpKind};
+use crate::parser::error::{ErrorList, ExpectedTokenKind, NoValueKind, ParsingError};
 
 pub mod ast;
-mod error;
+pub mod error;
 
 pub fn parse(tokens: &TokenList) -> (AstNode, ErrorList) {
     let mut parser = Parser::new(tokens.as_slice());
@@ -41,7 +39,7 @@ impl Parser {
         let mut errors = ErrorList::new();
 
         while self.peek().is_some_and(|tok| tok.kind != TokenKind::Eof) {
-            match self.parse_declaration() {
+            match self.parse_comptime_declaration() {
                 Ok(decl) => declarations.push(decl),
                 Err(error) => {
                     errors.push(error);
@@ -58,7 +56,7 @@ impl Parser {
         (program, errors)
     }
 
-    fn parse_declaration(&mut self) -> Result<AstNode, ParsingError> {
+    fn parse_comptime_declaration(&mut self) -> Result<AstNode, ParsingError> {
         let token = self.current()?;
         let next = self.next()?;
 
@@ -184,38 +182,100 @@ impl Parser {
         let next = self.next()?;
 
         match token.kind {
-            TokenKind::Identifier(_) if matches!(next.kind, TokenKind::Colon) => {
-                todo!("parse variable declaration")
+            TokenKind::Mut => self.parse_var_decl(),
+            TokenKind::Identifier(_) => {
+                // parse either var decl or assignment
+                if matches!(next.kind, TokenKind::Colon) {
+                    self.parse_var_decl()
+                } else if matches!(next.kind, TokenKind::Equal) {
+                    self.parse_assignment()
+                } else {
+                    Err(ParsingError::UnexpectedToken {
+                        found: next,
+                        expected: vec![ExpectedTokenKind::Colon, ExpectedTokenKind::Equal],
+                    })
+                }
             }
-            TokenKind::Identifier(_) if matches!(next.kind, TokenKind::Equal) => {
-                todo!("parse variable assignment")
+            TokenKind::Defer => {
+                self.advance(); // consume defer
+                let stmt = self.parse_statement()?;
+                Ok(AstNode::Defer {
+                    stmt: Box::new(stmt),
+                })
             }
-            TokenKind::Defer => todo!("parse defer statement"),
-            TokenKind::Return => self.parse_return_stmt(),
-            _ => Err(ParsingError::UnexpectedToken {
-                found: token,
-                expected: vec![TokenKind::Return],
-            }),
+            TokenKind::Return => {
+                self.advance(); // consume return
+                let expr = self.parse_expression()?;
+                Ok(AstNode::Return {
+                    expr: Box::new(expr),
+                })
+            }
+            _ => self.parse_expression(), // otherwise, try to parse an expression
         }
     }
 
-    fn parse_return_stmt(&mut self) -> Result<AstNode, ParsingError> {
-        self.expect(TokenKind::Return)?;
+    fn parse_var_decl(&mut self) -> Result<AstNode, ParsingError> {
+        // parse optional `mut` keyword
+        let is_mutable = if self.check(&TokenKind::Mut) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        // expect identifier
+        let name = self.expect_identifier()?;
+
+        // expect `:`
+        self.expect(TokenKind::Colon)?;
+
+        // check for optional type
+        let token = self.current()?;
+        let type_ = match token.kind {
+            TokenKind::Identifier(_) => {
+                let type_name = self.expect_identifier()?;
+                Some(Type::Unresolved(type_name))
+            }
+            TokenKind::Equal => None,
+            _ => {
+                return Err(ParsingError::UnexpectedToken {
+                    found: token,
+                    expected: vec![ExpectedTokenKind::Identifier, ExpectedTokenKind::Equal],
+                });
+            }
+        };
+
+        // expect variable assignment operator `=`
+        self.expect(TokenKind::Equal)?;
+
+        // expect expression
         let value = self.parse_expression()?;
-        Ok(AstNode::Return {
-            value: Box::new(value),
-        })
+
+        Ok(ast::make_var_decl(&name, type_, value, is_mutable))
+    }
+
+    fn parse_assignment(&mut self) -> Result<AstNode, ParsingError> {
+        // expect identifier
+        let name = self.expect_identifier()?;
+
+        // expect variable assignment operator `=`
+        self.expect(TokenKind::Equal)?;
+
+        // expect expression
+        let value = self.parse_expression()?;
+
+        Ok(ast::make_assignment(&name, value))
     }
 
     fn parse_const_decl(&mut self) -> Result<AstNode, ParsingError> {
         // expect identifier
         let name = self.expect_identifier()?;
 
-        // check for optional type annotation
+        // check for optional type
         let token = self.current()?;
         let type_ = match token.kind {
             TokenKind::Colon => {
-                // consume ':'
+                // consume `:`
                 self.advance();
 
                 // expect type name
@@ -227,18 +287,26 @@ impl Parser {
             _ => {
                 return Err(ParsingError::UnexpectedToken {
                     found: token,
-                    expected: vec![TokenKind::DoubleColon],
+                    expected: vec![
+                        ExpectedTokenKind::Identifier,
+                        ExpectedTokenKind::DoubleColon,
+                    ],
                 });
             }
         };
 
-        // expect assignment operator '::'
+        // expect const assignment operator `::`
         self.expect(TokenKind::DoubleColon)?;
 
         // expect expression
         let value = self.parse_expression()?;
 
-        Ok(make_const_decl(ConstDeclKind::Const, &name, type_, value))
+        Ok(ast::make_const_decl(
+            ConstDeclKind::Const,
+            &name,
+            type_,
+            value,
+        ))
     }
 
     // simply a wrapper around the most generic expression type
@@ -404,7 +472,7 @@ impl Parser {
             // parse the operand (can be another unary)
             let operand = self.parse_unary()?;
 
-            return Ok(make_unary(op, operand));
+            return Ok(ast::make_unary(op, operand));
         }
 
         // otherwise, we're dealing with a primary
@@ -439,7 +507,7 @@ impl Parser {
                 self.advance();
                 return Err(ParsingError::UnexpectedToken {
                     found: token,
-                    expected: vec![TokenKind::Identifier(None), TokenKind::Number(None)],
+                    expected: vec![ExpectedTokenKind::Identifier, ExpectedTokenKind::Number],
                 });
             }
         };
@@ -478,7 +546,7 @@ impl Parser {
         } else {
             Err(ParsingError::UnexpectedToken {
                 found: self.peek().ok_or(ParsingError::UnexpectedEof)?,
-                expected: vec![kind.clone()],
+                expected: vec![kind.to_expected()],
             })
         }
     }
@@ -494,7 +562,7 @@ impl Parser {
             }
             Some(token) => Err(ParsingError::UnexpectedToken {
                 found: token,
-                expected: vec![TokenKind::Identifier(None)],
+                expected: vec![ExpectedTokenKind::Identifier],
             }),
             None => Err(ParsingError::UnexpectedEof),
         }

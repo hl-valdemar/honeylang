@@ -57,6 +57,8 @@ fn main() {
 
     println!("Collected {} symbols:\n\n{}", symtab.len(), symtab);
 
+    println!("Resulting AST:\n\n{}", ast);
+
     println!("\n::[[ Codegen ]]::\n");
     println!("the void stares back");
 }

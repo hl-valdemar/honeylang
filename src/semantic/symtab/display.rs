@@ -8,14 +8,14 @@ impl std::fmt::Display for SymbolTable {
             let type_fmt = if let Some(t) = symbol.type_ {
                 &format!("{}", t)
             } else {
-                "unresolved"
+                "<unresolved>"
             };
 
             let value_fmt = match &symbol.value {
                 AstNode::Ident(name) => &format!("{}", name),
                 AstNode::Num(number) => &format!("{}", number),
                 AstNode::Bool(val) => &format!("{}", val),
-                _ => "unresolved",
+                _ => "<not evaluated>",
             };
 
             writeln!(

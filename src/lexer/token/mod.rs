@@ -1,4 +1,5 @@
 use crate::lexer::Location;
+use crate::parser::error::ExpectedTokenKind;
 
 mod display;
 
@@ -20,6 +21,7 @@ pub enum TokenKind {
     Func,
     Defer,
     Return,
+    Mut,
 
     // literals
     Identifier(Option<String>),
@@ -57,6 +59,18 @@ pub enum TokenKind {
     LeftCurly,
     RightCurly,
     Eof,
+}
+
+impl TokenKind {
+    pub fn to_expected(&self) -> ExpectedTokenKind {
+        match self {
+            Self::Identifier(_) => ExpectedTokenKind::Identifier,
+            TokenKind::Equal => ExpectedTokenKind::Equal,
+            TokenKind::Colon => ExpectedTokenKind::Colon,
+            TokenKind::DoubleColon => ExpectedTokenKind::DoubleColon,
+            _ => todo!(),
+        }
+    }
 }
 
 #[derive(Clone)]

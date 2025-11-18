@@ -1,9 +1,6 @@
 use owo_colors::OwoColorize;
 
-use crate::{
-    lexer::token::TokenKind,
-    parser::error::{ErrorList, NoValueKind, ParsingError},
-};
+use crate::parser::error::{ErrorList, ExpectedTokenKind, NoValueKind, ParsingError};
 
 impl std::fmt::Display for ParsingError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -18,7 +15,10 @@ impl std::fmt::Display for ParsingError {
                     found.loc
                 )?;
                 for (i, kind) in expected.iter().enumerate() {
-                    let kind = if matches!(kind, TokenKind::Identifier(_) | TokenKind::Number(_)) {
+                    let kind = if matches!(
+                        kind,
+                        ExpectedTokenKind::Identifier | ExpectedTokenKind::Number
+                    ) {
                         format!("{}", kind.cyan())
                     } else {
                         format!("'{}'", kind.cyan())
@@ -36,16 +36,53 @@ impl std::fmt::Display for ParsingError {
                 Ok(())
             }
             Self::ExpectedStatement { found } => {
-                write!(f, "expected statement, found '{}'", found.kind)
+                write!(
+                    f,
+                    "unexpected token '{}' at {}, expected {}",
+                    found.kind.red(),
+                    found.loc,
+                    "declaration".purple(),
+                )
             }
             Self::ExpectedConstDeclaration { found } => {
-                write!(f, "expected declaration, found '{}'", found.kind)
+                write!(
+                    f,
+                    "unexpected token '{}' at {}, expected {}",
+                    found.kind.red(),
+                    found.loc,
+                    "const declaration".purple(),
+                )
             }
             Self::ExpectedExpression { found } => {
-                write!(f, "expected expression, found '{}'", found.kind)
+                write!(
+                    f,
+                    "unexpected token '{}' at {}, expected {}",
+                    found.kind.red(),
+                    found.loc,
+                    "expression".purple(),
+                )
             }
-            Self::ExpectedType { found } => write!(f, "expected type, found '{}'", found.kind),
+            Self::ExpectedType { found } => write!(
+                f,
+                "unexpected token '{}' at {}, expected {}",
+                found.kind.red(),
+                found.loc,
+                "type".purple(),
+            ),
             Self::NoValue(kind) => write!(f, "expected value for {}", kind),
+        }
+    }
+}
+
+impl std::fmt::Display for ExpectedTokenKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Identifier => write!(f, "{}", "identifier".purple()),
+            Self::Number => write!(f, "{}", "number".purple()),
+            Self::Type => write!(f, "{}", "type".purple()),
+            Self::Colon => write!(f, "{}", ":".purple()),
+            Self::DoubleColon => write!(f, "{}", "::".purple()),
+            Self::Equal => write!(f, "{}", "=".purple()),
         }
     }
 }

@@ -41,6 +41,22 @@ pub fn make_const_decl(
     }
 }
 
+pub fn make_var_decl(name: &str, type_: Option<Type>, value: AstNode, is_mutable: bool) -> AstNode {
+    AstNode::VarDecl {
+        name: name.to_string(),
+        type_,
+        value: Box::new(value),
+        is_mutable,
+    }
+}
+
+pub fn make_assignment(name: &str, value: AstNode) -> AstNode {
+    AstNode::Assignment {
+        target: name.to_string(),
+        value: Box::new(value),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum AstNode {
     Program {
@@ -79,14 +95,14 @@ pub enum AstNode {
         is_mutable: bool,
     },
     Assignment {
-        target: Box<AstNode>,
+        target: String,
         value: Box<AstNode>,
     },
     Defer {
         stmt: Box<AstNode>,
     },
     Return {
-        value: Box<AstNode>,
+        expr: Box<AstNode>,
     },
 }
 

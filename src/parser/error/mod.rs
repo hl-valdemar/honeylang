@@ -1,7 +1,4 @@
-use crate::lexer::{
-    Location,
-    token::{Token, TokenKind},
-};
+use crate::lexer::{Location, token::Token};
 
 mod display;
 
@@ -11,7 +8,7 @@ pub enum ParsingError {
 
     UnexpectedToken {
         found: Token,
-        expected: Vec<TokenKind>,
+        expected: Vec<ExpectedTokenKind>,
     },
 
     ExpectedStatement {
@@ -32,6 +29,16 @@ pub enum ParsingError {
     },
 
     NoValue(NoValueKind),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ExpectedTokenKind {
+    Identifier,
+    Number,
+    Type,
+    Colon,
+    DoubleColon,
+    Equal,
 }
 
 #[derive(Debug)]

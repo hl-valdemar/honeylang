@@ -8,6 +8,33 @@ use crate::parser::{
     },
 };
 
+struct TreeFormatter {
+    prefix: String,
+}
+
+impl TreeFormatter {
+    fn new(prefix: &str) -> Self {
+        Self {
+            prefix: prefix.to_string(),
+        }
+    }
+
+    fn connector(&self, is_last: bool) -> &'static str {
+        if is_last { " └─" } else { " ├─" }
+    }
+
+    fn child(&self, is_last: bool) -> Self {
+        let extension = if is_last { "    " } else { " │  " };
+        Self {
+            prefix: format!("{}{}", self.prefix, extension),
+        }
+    }
+
+    fn prefix(&self) -> &str {
+        &self.prefix
+    }
+}
+
 pub trait TreeDisplay {
     fn fmt_tree(
         &self,
@@ -68,8 +95,8 @@ impl std::fmt::Display for ConstDeclKind {
 impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Unresolved(name) => write!(f, "{}", name),
             Self::Resolved(resolved) => write!(f, "{}", resolved),
+            Self::Unresolved(name) => write!(f, "{}", name),
         }
     }
 }
@@ -119,13 +146,7 @@ impl TreeDisplay for AstNode {
         prefix: &str,
         is_last: bool,
     ) -> std::fmt::Result {
-        let connector = if is_last { " └─" } else { " ├─" };
-        let child_prefix = format!(
-            "{}{}",
-            prefix,
-            if is_last { &" ".repeat(4) } else { " ││ " }
-        );
-        let grand_child_prefix = format!("{}{}", prefix, "     ││ ");
+        let tree = TreeFormatter::new(prefix);
 
         match self {
             Self::Program { declarations } => {
@@ -145,91 +166,149 @@ impl TreeDisplay for AstNode {
                 writeln!(
                     f,
                     "{}{} {} ({}):",
-                    prefix,
-                    connector,
+                    tree.prefix(),
+                    tree.connector(is_last),
                     "declaration".purple(),
                     kind.green()
                 )?;
 
-                writeln!(f, "{}{} name: {}", child_prefix, " ├─", name.blue())?;
+                let child = tree.child(is_last);
+                writeln!(
+                    f,
+                    "{}{} name: {}",
+                    child.prefix(),
+                    child.connector(false),
+                    name.blue()
+                )?;
 
                 if let Some(t) = type_ {
-                    writeln!(f, "{}{} type: {}", child_prefix, " ├─", t.cyan())?;
+                    writeln!(
+                        f,
+                        "{}{} type: {}",
+                        child.prefix(),
+                        child.connector(false),
+                        t.cyan()
+                    )?;
                 } else {
                     writeln!(
                         f,
                         "{}{} type: {}",
-                        child_prefix,
-                        " ├─",
-                        "<nil>".bright_black()
+                        child.prefix(),
+                        child.connector(false),
+                        "<unresolved>".cyan(),
                     )?;
                 }
 
-                value.fmt_tree(f, &child_prefix, true)
+                value.fmt_tree(f, child.prefix(), true)
             }
             Self::Ident(name) => {
-                writeln!(f, "{}{} identifier: {}", prefix, connector, name.blue())
+                writeln!(
+                    f,
+                    "{}{} identifier: {}",
+                    tree.prefix(),
+                    tree.connector(is_last),
+                    name.blue()
+                )
             }
             Self::Num(number) => match number {
-                Number::Resolved(resolved) => {
-                    write!(f, "{}{} literal: {}", prefix, connector, resolved.red())
-                }
-                Number::Unresolved(unresolved) => {
-                    writeln!(f, "{}{} literal: {}", prefix, connector, unresolved.red())
-                }
+                Number::Resolved(resolved) => writeln!(
+                    f,
+                    "{}{} literal: {}",
+                    tree.prefix(),
+                    tree.connector(is_last),
+                    resolved.red()
+                ),
+                Number::Unresolved(unresolved) => writeln!(
+                    f,
+                    "{}{} literal: {}",
+                    tree.prefix(),
+                    tree.connector(is_last),
+                    unresolved.red()
+                ),
             },
-            Self::Bool(value) => writeln!(f, "{}{} literal: {}", prefix, connector, value.red()),
+            Self::Bool(value) => writeln!(
+                f,
+                "{}{} literal: {}",
+                tree.prefix(),
+                tree.connector(is_last),
+                value.red()
+            ),
             Self::UnaryOp { op, operand } => {
-                writeln!(f, "{}{} unary op: {}", prefix, connector, op.cyan())?;
-                operand.fmt_tree(f, &child_prefix, true)
+                writeln!(
+                    f,
+                    "{}{} unary op: {}",
+                    tree.prefix(),
+                    tree.connector(is_last),
+                    op.cyan()
+                )?;
+                let child = tree.child(is_last);
+                operand.fmt_tree(f, child.prefix(), true)
             }
             Self::BinaryOp { op, left, right } => {
-                writeln!(f, "{}{} binary op: {}", prefix, connector, op.cyan())?;
-                left.fmt_tree(f, &child_prefix, false)?;
-                right.fmt_tree(f, &child_prefix, true)
+                writeln!(
+                    f,
+                    "{}{} binary op: {}",
+                    tree.prefix(),
+                    tree.connector(is_last),
+                    op.cyan()
+                )?;
+                let child = tree.child(is_last);
+                left.fmt_tree(f, child.prefix(), false)?;
+                right.fmt_tree(f, child.prefix(), true)
             }
             Self::Function { params, body } => {
-                writeln!(f, "{}{} func:", prefix, connector)?;
+                writeln!(f, "{}{} func:", tree.prefix(), tree.connector(is_last))?;
 
-                write!(f, "{}{} params:", child_prefix, " ├─")?;
-                if params.is_empty() {
-                    writeln!(f, " {}", "none".bright_black())?;
-                } else {
-                    writeln!(f)?;
-                    let param_prefix = format!("{} ││ ", child_prefix);
-                    for (i, param) in params.iter().enumerate() {
-                        let is_last_param = i == params.len() - 1;
-                        param.fmt_tree(f, &param_prefix, is_last_param)?;
-                    }
+                let child = tree.child(is_last);
+                write!(
+                    f,
+                    "{}{} params: {}\n",
+                    child.prefix(),
+                    child.connector(false),
+                    params.len().purple()
+                )?;
+                let param_child = child.child(false);
+                for (i, param) in params.iter().enumerate() {
+                    let is_last_param = i == params.len() - 1;
+                    param.fmt_tree(f, param_child.prefix(), is_last_param)?;
                 }
 
-                body.fmt_tree(f, &child_prefix, true)
+                body.fmt_tree(f, child.prefix(), true)
             }
             Self::Block {
                 statements,
                 deferred,
             } => {
-                writeln!(f, "{}{} block:", prefix, connector)?;
-                // writeln!(
-                //     f,
-                //     "{}{} statements: {}",
-                //     child_prefix,
-                //     " ├─",
-                //     statements.len()
-                // )?;
-                write!(f, "{}{} statements:\n", child_prefix, " ├─")?;
+                writeln!(f, "{}{} block:", tree.prefix(), tree.connector(is_last))?;
+
+                let child = tree.child(is_last);
+                writeln!(
+                    f,
+                    "{}{} statements: {}",
+                    child.prefix(),
+                    child.connector(false),
+                    statements.len().purple(),
+                )?;
+
+                let stmt_child = child.child(false);
                 for (i, stmt) in statements.iter().enumerate() {
-                    let is_last_decl = i == statements.len() - 1;
-                    stmt.fmt_tree(f, &grand_child_prefix, is_last_decl)?;
+                    let is_last_stmt = i == statements.len() - 1;
+                    stmt.fmt_tree(f, stmt_child.prefix(), is_last_stmt)?;
                 }
 
-                write!(f, "{}{} deferred:\n", child_prefix, " └─")?;
+                writeln!(
+                    f,
+                    "{}{} deferred: {}",
+                    child.prefix(),
+                    child.connector(true),
+                    deferred.len().purple(),
+                )?;
+
+                let def_child = child.child(true);
                 for (i, stmt) in deferred.iter().enumerate() {
-                    let is_last_decl = i == statements.len() - 1;
-                    stmt.fmt_tree(f, prefix, is_last_decl)?;
+                    let is_last_def = i == deferred.len() - 1;
+                    stmt.fmt_tree(f, def_child.prefix(), is_last_def)?;
                 }
-
-                // writeln!(f, "{}{} deferred: {}", child_prefix, " └─", deferred.len())?;
 
                 Ok(())
             }
@@ -239,36 +318,71 @@ impl TreeDisplay for AstNode {
                 value,
                 is_mutable,
             } => {
-                writeln!(f, "{}{} var decl:", prefix, connector)?;
-                writeln!(f, "{}{} mutable: {}", child_prefix, " ├─", is_mutable)?;
-                writeln!(f, "{}{} name: {}", child_prefix, " ├─", name)?;
+                writeln!(f, "{}{} var decl:", tree.prefix(), tree.connector(is_last))?;
+
+                let child = tree.child(is_last);
+                writeln!(
+                    f,
+                    "{}{} name: {}",
+                    child.prefix(),
+                    child.connector(false),
+                    name.blue(),
+                )?;
 
                 if let Some(t) = type_ {
-                    writeln!(f, "{}{} type: {}", child_prefix, " ├─", t.cyan())?;
+                    writeln!(
+                        f,
+                        "{}{} type: {}",
+                        child.prefix(),
+                        child.connector(false),
+                        t.cyan()
+                    )?;
                 } else {
                     writeln!(
                         f,
                         "{}{} type: {}",
-                        child_prefix,
-                        " ├─",
-                        "<nil>".bright_black()
+                        child.prefix(),
+                        child.connector(false),
+                        "<unresolved>".cyan()
                     )?;
                 }
 
-                value.fmt_tree(f, &child_prefix, true)
+                writeln!(
+                    f,
+                    "{}{} mutable: {}",
+                    child.prefix(),
+                    child.connector(false),
+                    is_mutable
+                )?;
+
+                writeln!(f, "{}{} value:", child.prefix, child.connector(true))?;
+                let grand_child = child.child(true);
+                value.fmt_tree(f, grand_child.prefix(), true)
             }
             Self::Assignment { target, value } => {
-                writeln!(f, "{}{} assignment:", prefix, connector)?;
-                writeln!(f, "{}{} target:", child_prefix, " ├─")?;
-                target.fmt_tree(f, &format!("{} ││ ", child_prefix), true)?;
-                writeln!(f, "{}{} value:", child_prefix, " └─")?;
-                value.fmt_tree(f, &format!("{}   ", child_prefix), true)
+                writeln!(
+                    f,
+                    "{}{} assignment:",
+                    tree.prefix(),
+                    tree.connector(is_last)
+                )?;
+
+                let child = tree.child(is_last);
+                writeln!(
+                    f,
+                    "{}{} target: {}",
+                    child.prefix(),
+                    child.connector(false),
+                    target.blue(),
+                )?;
+                value.fmt_tree(f, child.prefix(), true)
             }
-            Self::Return { value } => {
-                writeln!(f, "{}{} return:", prefix, connector)?;
-                value.fmt_tree(f, &child_prefix, true)
+            Self::Return { expr } => {
+                writeln!(f, "{}{} return:", tree.prefix(), tree.connector(is_last))?;
+                let child = tree.child(is_last);
+                expr.fmt_tree(f, child.prefix(), true)
             }
-            Self::Defer { .. } => Ok(()),
+            Self::Defer { stmt } => stmt.fmt_tree(f, prefix, true),
         }
     }
 }
@@ -280,12 +394,12 @@ impl TreeDisplay for Parameter {
         prefix: &str,
         is_last: bool,
     ) -> std::fmt::Result {
-        let connector = if is_last { " └─" } else { " ├─" };
+        let tree = TreeFormatter::new(prefix);
         writeln!(
             f,
             "{}{} {}: {}",
-            prefix,
-            connector,
+            tree.prefix(),
+            tree.connector(is_last),
             self.name.blue(),
             self.type_.cyan()
         )

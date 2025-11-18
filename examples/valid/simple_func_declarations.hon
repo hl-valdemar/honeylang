@@ -1,8 +1,22 @@
 X :: 42
 
+# function displaying some valid statements
+valid :: func(a: u8, b: i32, c: f16) void {
+  1 + 2  # unused value (should generate warning)
+
+  # defer with var decl
+  defer x := 4 * 3
+
+  # mutable var decl
+  mut y := 2 + 4 / 3
+  y = 0  # reassignment
+
+  # return should run after all defers have executed
+  return x
+}
+
 # func declaration
 add :: func(a: i32, b: i32) i32 {
-  defer a + b
   return a + b
 }
 

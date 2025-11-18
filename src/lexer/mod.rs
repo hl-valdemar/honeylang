@@ -54,7 +54,7 @@ impl Lexer {
         Self {
             src: src.as_bytes().to_vec(),
             pos: 0,
-            loc: Location::new(filename, 1, 1),
+            loc: Location::new(filename, 1, 0),
         }
     }
 
@@ -123,8 +123,9 @@ impl Lexer {
                 }
                 ':' => {
                     if self.check_offset(':', 1) {
-                        self.advance_n(2);
+                        self.advance();
                         tokens.push(Token::new(TokenKind::DoubleColon, self.loc));
+                        self.advance();
                     } else {
                         self.advance();
                         tokens.push(Token::new(TokenKind::Colon, self.loc));
@@ -132,8 +133,9 @@ impl Lexer {
                 }
                 '=' => {
                     if self.check_offset('=', 1) {
-                        self.advance_n(2);
+                        self.advance();
                         tokens.push(Token::new(TokenKind::DoubleEqual, self.loc));
+                        self.advance();
                     } else {
                         self.advance();
                         tokens.push(Token::new(TokenKind::Equal, self.loc));
@@ -141,8 +143,9 @@ impl Lexer {
                 }
                 '<' => {
                     if self.check_offset('=', 1) {
-                        self.advance_n(2);
+                        self.advance();
                         tokens.push(Token::new(TokenKind::LessEqual, self.loc));
+                        self.advance();
                     } else {
                         self.advance();
                         tokens.push(Token::new(TokenKind::Less, self.loc));
@@ -150,8 +153,9 @@ impl Lexer {
                 }
                 '>' => {
                     if self.check_offset('=', 1) {
-                        self.advance_n(2);
+                        self.advance();
                         tokens.push(Token::new(TokenKind::GreaterEqual, self.loc));
+                        self.advance();
                     } else {
                         self.advance();
                         tokens.push(Token::new(TokenKind::Greater, self.loc));
@@ -159,41 +163,43 @@ impl Lexer {
                 }
                 '!' => {
                     if self.check_offset('=', 1) {
-                        self.advance_n(2);
+                        self.advance();
                         tokens.push(Token::new(TokenKind::NotEqual, self.loc));
+                        self.advance();
                     } else {
+                        self.advance();
                         errors.push(LexingError::UnexpectedCharacter {
                             name: c.to_string(),
                             loc: self.loc,
                         });
-                        self.advance();
                     }
                 }
+                // ignore comments
                 '#' => {
-                    // consume entire line
                     while let Some(c) = self.peek_char() {
                         self.advance();
                         if c == '\n' {
                             self.loc.line += 1;
-                            self.loc.col = 1;
+                            self.loc.col = 0;
                             break;
                         }
                     }
                 }
-                '\n' => self.advance(), // reachable when scanning invalid syntax
+                // skip whitespace
                 c if c.is_whitespace() => {
                     self.advance();
                     if c == '\n' {
                         self.loc.line += 1;
-                        self.loc.col = 1;
+                        self.loc.col = 0;
                     }
                 }
+                // otherwise, report weird character
                 _ => {
+                    self.advance();
                     errors.push(LexingError::UnexpectedCharacter {
                         name: c.to_string(),
                         loc: self.loc,
                     });
-                    self.advance();
                 }
             }
         }
@@ -209,6 +215,7 @@ impl Lexer {
             "func" => Token::new(TokenKind::Func, self.loc),
             "defer" => Token::new(TokenKind::Defer, self.loc),
             "return" => Token::new(TokenKind::Return, self.loc),
+            "mut" => Token::new(TokenKind::Mut, self.loc),
             "not" => Token::new(TokenKind::Not, self.loc),
             "and" => Token::new(TokenKind::And, self.loc),
             "or" => Token::new(TokenKind::Or, self.loc),
@@ -272,6 +279,7 @@ impl Lexer {
                 has_decimal = true;
                 self.advance();
             } else if c == '.' && has_decimal {
+                self.advance();
                 return Err(LexingError::UnexpectedCharacter {
                     name: c.to_string(),
                     loc: self.loc,
@@ -321,10 +329,5 @@ impl Lexer {
     fn advance(&mut self) {
         self.pos += 1;
         self.loc.col += 1;
-    }
-
-    fn advance_n(&mut self, n: usize) {
-        self.pos += n;
-        self.loc.col += n;
     }
 }
