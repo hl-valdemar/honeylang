@@ -2,185 +2,179 @@ const std = @import("std");
 const mem = @import("std").mem;
 const ascii = @import("std").ascii;
 
-const source = @import("../source/source.zig");
+const SourceIndex = @import("../source/source.zig").Index;
+const SourceCode = @import("../source/source.zig").SourceCode;
 
-var pos: source.Idx = 0;
+const Token = @import("token.zig").Token;
+const TokenKind = @import("token.zig").Kind;
+const TokenList = @import("token.zig").TokenList;
 
-pub fn scan(allocator: mem.Allocator, src: *const source.SourceCode) !Tokens {
-    var lexer: Lexer = .{ .src = src, .pos = 0 };
+pub fn scan(allocator: mem.Allocator, src: *const SourceCode) !TokenList {
+    var lexer = Lexer.init(src);
     return lexer.scan(allocator);
 }
 
 const Lexer = struct {
-    src: *const source.SourceCode,
-    pos: source.Idx,
+    src: *const SourceCode,
+    pos: SourceIndex,
 
-    fn scan(self: *Lexer, allocator: mem.Allocator) !Tokens {
-        var tokens = try Tokens.init(allocator);
+    fn init(src: *const SourceCode) Lexer {
+        return .{ .src = src, .pos = 0 };
+    }
 
-        while (true) {
-            const current = self.peek() orelse return tokens;
+    fn scan(self: *Lexer, allocator: mem.Allocator) !TokenList {
+        var tokens = try TokenList.initCapacity(allocator, 10);
 
-            if (ascii.isAlphabetic(current)) {
-                const ident = self.scan_ident();
-                try tokens.append(allocator, ident);
-            } else if (ascii.isDigit(current)) {
-                const num = self.scan_number();
-                try tokens.append(allocator, num);
+        while (self.peek()) |current| {
+            // skip whitespace
+            if (ascii.isWhitespace(current)) {
+                self.advance();
+                continue;
             }
 
-            switch (current) {
-                ':' => {
-                    const start = self.pos;
-
+            // skip comments
+            if (current == '#') {
+                while (self.peek()) |c| {
                     self.advance();
-                    const next = self.peek();
+                    if (c == '\n') break;
+                }
+                continue;
+            }
 
-                    if (next != null and next.? == ':') {
+            const start = self.pos;
+
+            if (ascii.isAlphabetic(current) or current == '_') {
+                try tokens.append(allocator, self.scanIdent());
+            } else if (ascii.isDigit(current)) {
+                try tokens.append(allocator, self.scanNumber());
+            } else switch (current) {
+                ',' => {
+                    self.advance();
+                    try tokens.append(allocator, self.makeToken(.comma, start, self.pos));
+                },
+                '(' => {
+                    self.advance();
+                    try tokens.append(allocator, self.makeToken(.left_paren, start, self.pos));
+                },
+                ')' => {
+                    self.advance();
+                    try tokens.append(allocator, self.makeToken(.right_paren, start, self.pos));
+                },
+                '{' => {
+                    self.advance();
+                    try tokens.append(allocator, self.makeToken(.left_curly, start, self.pos));
+                },
+                '}' => {
+                    self.advance();
+                    try tokens.append(allocator, self.makeToken(.right_curly, start, self.pos));
+                },
+                ':' => {
+                    self.advance();
+                    if (self.peek() == ':') {
                         self.advance();
-                        const end = self.pos;
-
-                        try tokens.append(allocator, .{
-                            .kind = .double_colon,
-                            .src_range = .{
-                                .start = start,
-                                .end = end,
-                            },
-                        });
+                        try tokens.append(allocator, self.makeToken(.double_colon, start, self.pos));
                     } else {
-                        const end = self.pos;
-
-                        try tokens.append(allocator, .{
-                            .kind = .colon,
-                            .src_range = .{
-                                .start = start,
-                                .end = end,
-                            },
-                        });
+                        try tokens.append(allocator, self.makeToken(.colon, start, self.pos));
                     }
                 },
-                else => self.advance(),
+                '+' => {
+                    self.advance();
+                    if (self.peek() == '=') {
+                        self.advance();
+                        try tokens.append(allocator, self.makeToken(.plus_equal, start, self.pos));
+                    } else {
+                        try tokens.append(allocator, self.makeToken(.plus, start, self.pos));
+                    }
+                },
+                '=' => {
+                    self.advance();
+                    if (self.peek() == '=') {
+                        self.advance();
+                        try tokens.append(allocator, self.makeToken(.double_equal, start, self.pos));
+                    } else {
+                        try tokens.append(allocator, self.makeToken(.equal, start, self.pos));
+                    }
+                },
+                else => return error.UnexpectedCharacter,
             }
         }
 
+        try tokens.append(allocator, self.makeToken(.eof, self.pos, self.pos));
         return tokens;
     }
 
-    fn scan_ident(self: *Lexer) Token {
+    fn scanIdent(self: *Lexer) Token {
         const start = self.pos;
 
-        while (self.peek() != null) {
-            const next = self.peek() orelse unreachable;
-            if (!ascii.isAlphanumeric(next) and next != '_') break;
-
-            // otherwise, consume
+        while (self.peek()) |c| {
+            if (!ascii.isAlphanumeric(c) and c != '_') break;
             self.advance();
         }
-        const end = self.pos;
 
-        // return token information
-        return .{
-            .kind = .identifier,
-            .src_range = source.Range.from(start, end),
-        };
+        const token = self.makeToken(.identifier, start, self.pos);
+        return self.checkKeyword(token);
     }
 
-    fn scan_number(self: *Lexer) Token {
+    fn scanNumber(self: *Lexer) Token {
+        const start = self.pos;
         var has_decimal = false;
 
-        const start = self.pos;
-        while (self.peek() != null) {
-            const next = self.peek() orelse unreachable;
-            if (!ascii.isDigit(next) and next != '.') break;
-
-            if (next == '.') {
-                if (has_decimal) {
-                    // number can't have multiple decimal points
-                    break;
-                } else {
-                    has_decimal = true;
-                }
+        while (self.peek()) |c| {
+            if (ascii.isDigit(c)) {
+                self.advance();
+            } else if (c == '.' and !has_decimal) {
+                has_decimal = true;
+                self.advance();
+            } else {
+                break;
             }
-
-            // otherwise, consume
-            self.advance();
         }
-        const end = self.pos;
 
-        return .{
-            .kind = .number,
-            .src_range = source.Range.from(start, end),
-        };
+        return self.makeToken(.number, start, self.pos);
+    }
+
+    fn checkKeyword(self: *const Lexer, token: Token) Token {
+        const val = self.src.getSlice(token.start, token.start + token.len);
+
+        if (mem.eql(u8, val, "not")) {
+            return self.makeToken(.not, token.start, self.pos);
+        } else if (mem.eql(u8, val, "func")) {
+            return self.makeToken(.func, token.start, self.pos);
+        } else if (mem.eql(u8, val, "return")) {
+            return self.makeToken(.return_, token.start, self.pos);
+        } else if (mem.eql(u8, val, "defer")) {
+            return self.makeToken(.defer_, token.start, self.pos);
+        } else if (mem.eql(u8, val, "mut")) {
+            return self.makeToken(.mut, token.start, self.pos);
+        }
+
+        return token;
     }
 
     fn peek(self: *const Lexer) ?u8 {
         return self.src.get(self.pos);
     }
 
-    fn peek_offset(self: *const Lexer, offset: source.Idx) ?u8 {
-        return self.src.get(self.pos + offset);
+    fn check(self: *const Lexer, c: u8) bool {
+        const current = self.src.get(self.pos) orelse return false;
+        return current == c;
     }
 
     fn advance(self: *Lexer) void {
         self.pos += 1;
     }
-};
 
-const Token = struct {
-    kind: TokenKind,
-    src_range: source.Range,
-};
-
-pub const Tokens = struct {
-    kinds: std.ArrayList(TokenKind),
-    src_ranges: std.ArrayList(source.Range),
-    len: usize,
-
-    pub fn init(allocator: mem.Allocator) !Tokens {
+    fn makeToken(
+        self: *const Lexer,
+        kind: TokenKind,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) Token {
         return .{
-            .kinds = try std.ArrayList(TokenKind).initCapacity(allocator, 10),
-            .src_ranges = try std.ArrayList(source.Range).initCapacity(allocator, 10),
-            .len = 0,
+            .kind = kind,
+            .src_id = self.src.id,
+            .start = start,
+            .len = @intCast(end - start),
         };
     }
-
-    pub fn deinit(self: *Tokens, allocator: mem.Allocator) void {
-        self.kinds.deinit(allocator);
-        self.src_ranges.deinit(allocator);
-    }
-
-    pub fn append(self: *Tokens, allocator: mem.Allocator, token: Token) !void {
-        std.debug.assert(self.kinds.items.len == self.src_ranges.items.len);
-        try self.kinds.append(allocator, token.kind);
-        try self.src_ranges.append(allocator, token.src_range);
-        self.len += 1;
-    }
-
-    pub fn get(self: *const Tokens, idx: source.Idx) ?Token {
-        std.debug.assert(self.kinds.items.len == self.src_ranges.items.len);
-        if (idx < self.kinds.items.len) {
-            const kind = self.kinds.items[idx];
-            const range = self.src_ranges.items[idx];
-
-            return .{
-                .kind = kind,
-                .src_range = range,
-            };
-        }
-        return null;
-    }
 };
-
-pub const TokenKind = enum {
-    // literal
-    identifier,
-    number,
-
-    // assignment
-    colon,
-    double_colon,
-
-    // other
-    comma,
-};
-

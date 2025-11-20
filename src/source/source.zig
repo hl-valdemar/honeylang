@@ -1,11 +1,12 @@
+const std = @import("std");
 const fs = @import("std").fs;
 const mem = @import("std").mem;
 
-pub fn fromStr(src: []const u8) SourceCode {
-    return .{ .buffer = src };
+pub fn fromStr(src: []const u8, id: Id) SourceCode {
+    return .{ .buffer = src, .id = id };
 }
 
-pub fn fromFile(allocator: mem.Allocator, file_path: []const u8) !SourceCode {
+pub fn fromFile(allocator: mem.Allocator, file_path: []const u8, id: Id) !SourceCode {
     // open file as read only
     const file = try fs.cwd().openFile(file_path, .{ .mode = .read_only });
     defer file.close();
@@ -17,32 +18,35 @@ pub fn fromFile(allocator: mem.Allocator, file_path: []const u8) !SourceCode {
     // read file into buffer
     _ = try file.readAll(buffer);
 
-    return .{ .buffer = buffer };
+    return .{ .file_path = file_path, .buffer = buffer, .id = id };
 }
 
-pub const Idx = usize;
+pub const Id = u16; // allows for more than 65k files
+pub const Index = u32; // allows for more than 4m tokens
 
 pub const Range = struct {
-    start: Idx,
-    end: Idx,
+    start: Index,
+    end: Index,
 
-    pub fn from(start: Idx, end: Idx) Range {
+    pub fn from(start: Index, end: Index) Range {
         return .{ .start = start, .end = end };
     }
 };
 
 pub const SourceCode = struct {
+    file_path: ?[]const u8 = null,
     buffer: []u8,
+    id: Id,
 
     pub fn deinit(self: *const SourceCode, allocator: mem.Allocator) void {
         allocator.free(self.buffer);
     }
 
-    pub fn get(self: *const SourceCode, idx: Idx) ?u8 {
+    pub fn get(self: *const SourceCode, idx: Index) ?u8 {
         if (idx < self.buffer.len) return self.buffer[idx] else return null;
     }
 
-    pub fn getSlice(self: *const SourceCode, start: Idx, end: Idx) []u8 {
+    pub fn getSlice(self: *const SourceCode, start: Index, end: Index) []u8 {
         return self.buffer[start..end];
     }
 
