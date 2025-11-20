@@ -15,7 +15,7 @@ impl std::fmt::Display for SymbolTable {
                 AstNode::Ident(name) => &format!("{}", name),
                 AstNode::Num(number) => &format!("{}", number),
                 AstNode::Bool(val) => &format!("{}", val),
-                AstNode::Function { .. } => "{ ... }",
+                AstNode::Function { .. } => "(*){ ... }",
                 _ => "<not evaluated>",
             };
 

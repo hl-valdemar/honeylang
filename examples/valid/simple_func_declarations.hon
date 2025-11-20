@@ -21,6 +21,6 @@ add :: func(a: i32, b: i32) i32 {
 }
 
 # entry point
-main :: func() void {
+main :: func() u32 {
     return X
 }
