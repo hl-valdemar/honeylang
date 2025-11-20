@@ -9,6 +9,24 @@ const Token = @import("token.zig").Token;
 const TokenKind = @import("token.zig").Kind;
 const TokenList = @import("token.zig").TokenList;
 
+const keywords = std.StaticStringMap(TokenKind).initComptime(.{
+    // declaration-related
+    .{ "func", .func },
+
+    // statement-related
+    .{ "mut", .mut },
+    .{ "defer", .defer_ },
+    .{ "return", .return_ },
+
+    // logic-related
+    .{ "not", .not },
+    .{ "and", .and_ },
+    .{ "or", .or_ },
+    .{ "xor", .xor },
+    .{ "true", .boolean },
+    .{ "false", .boolean },
+});
+
 pub fn scan(allocator: mem.Allocator, src: *const SourceCode) !TokenList {
     var lexer = Lexer.init(src);
     return lexer.scan(allocator);
@@ -111,8 +129,13 @@ const Lexer = struct {
             self.advance();
         }
 
-        const token = self.makeToken(.identifier, start, self.pos);
-        return self.checkKeyword(token);
+        // handle potential keyword
+        const val = self.src.getSlice(start, self.pos);
+        if (keywords.get(val)) |kind| {
+            return self.makeToken(kind, start, self.pos);
+        }
+
+        return self.makeToken(.identifier, start, self.pos);
     }
 
     fn scanNumber(self: *Lexer) Token {
@@ -131,24 +154,6 @@ const Lexer = struct {
         }
 
         return self.makeToken(.number, start, self.pos);
-    }
-
-    fn checkKeyword(self: *const Lexer, token: Token) Token {
-        const val = self.src.getSlice(token.start, token.start + token.len);
-
-        if (mem.eql(u8, val, "not")) {
-            return self.makeToken(.not, token.start, self.pos);
-        } else if (mem.eql(u8, val, "func")) {
-            return self.makeToken(.func, token.start, self.pos);
-        } else if (mem.eql(u8, val, "return")) {
-            return self.makeToken(.return_, token.start, self.pos);
-        } else if (mem.eql(u8, val, "defer")) {
-            return self.makeToken(.defer_, token.start, self.pos);
-        } else if (mem.eql(u8, val, "mut")) {
-            return self.makeToken(.mut, token.start, self.pos);
-        }
-
-        return token;
     }
 
     fn peek(self: *const Lexer) ?u8 {

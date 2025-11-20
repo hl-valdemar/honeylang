@@ -38,10 +38,6 @@ pub const SourceCode = struct {
     buffer: []u8,
     id: Id,
 
-    pub fn deinit(self: *const SourceCode, allocator: mem.Allocator) void {
-        allocator.free(self.buffer);
-    }
-
     pub fn get(self: *const SourceCode, idx: Index) ?u8 {
         if (idx < self.buffer.len) return self.buffer[idx] else return null;
     }
