@@ -31,6 +31,10 @@ impl SymbolTable {
             .collect()
     }
 
+    pub fn names(&self) -> Vec<String> {
+        self.symbols.keys().cloned().collect()
+    }
+
     pub fn get(&self, name: &str) -> Option<&Symbol> {
         self.symbols.get(name)
     }

@@ -3,13 +3,14 @@
 // 2. constant evaluation
 // 3. default type resolution
 // 4. type inference (update AST)
-// 5. constant inlining
+// 5. constant folding
 
 use crate::{
     parser::ast::{
         AstNode, BinaryOpKind, ConstDeclKind, Number, ResolvedNumber, ResolvedType, UnaryOpKind,
     },
     semantic::{
+        self,
         error::{ErrorList, FatalError, RecoverableError, SemanticError},
         symtab::{EvalState, Symbol, SymbolTable},
     },
@@ -56,10 +57,29 @@ impl SemanticContext {
             }
         }
 
-        // TODO:
         // 3. default type resolution
+        if let Err(error) = self.apply_default_types() {
+            match error {
+                SemanticError::Recoverable(recoverable) => errors.push(recoverable),
+                SemanticError::Fatal(fatal) => panic!("{}", fatal),
+            }
+        }
+
         // 4. type inference (update AST)
-        // 5. constant inlining
+        if let Err(error) = self.update_ast_types() {
+            match error {
+                SemanticError::Recoverable(recoverable) => errors.push(recoverable),
+                SemanticError::Fatal(fatal) => panic!("{}", fatal),
+            }
+        }
+
+        // 5. constant folding
+        if let Err(error) = self.fold_consts() {
+            match error {
+                SemanticError::Recoverable(recoverable) => errors.push(recoverable),
+                SemanticError::Fatal(fatal) => panic!("{}", fatal),
+            }
+        }
 
         (self.program.clone(), errors)
     }
@@ -100,6 +120,117 @@ impl SemanticContext {
             return Err(SemanticError::Fatal(FatalError::ExpectedProgram {
                 found: self.program.clone(),
             }));
+        }
+
+        Ok(())
+    }
+
+    fn apply_default_types(&mut self) -> Result<(), SemanticError> {
+        let symbol_names: Vec<String> = self.symtab.names();
+
+        for name in symbol_names {
+            let (needs_type, value) = {
+                let symbol = self.symtab.get(&name).unwrap();
+                (symbol.type_.is_none(), symbol.value.clone())
+            };
+
+            if needs_type {
+                // infer type from evaluated value
+                let inferred_type = match value {
+                    AstNode::Bool(_) => ResolvedType::Bool,
+                    AstNode::Num(Number::Resolved(num)) => self.infer_default_type_from_number(num),
+                    _ => continue, // skip non-literals
+                };
+
+                // update symbol type
+                if let Some(symbol) = self.symtab.get_mut(&name) {
+                    symbol.type_ = Some(inferred_type);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn infer_default_type_from_number(&self, num: ResolvedNumber) -> ResolvedType {
+        use ResolvedNumber::*;
+        use ResolvedType as RT;
+
+        // apply default type policy: use smallest type that fits
+        match num {
+            // for integers, prefer i32 if it fits, otherwise i64
+            I64(v) => {
+                if v >= i32::MIN as i64 && v <= i32::MAX as i64 {
+                    RT::I32
+                } else {
+                    RT::I64
+                }
+            }
+            U64(v) => {
+                if v <= u32::MAX as u64 {
+                    RT::U32
+                } else {
+                    RT::U64
+                }
+            }
+            // for floats, always default to f32
+            F64(_) => RT::F32,
+
+            // already specific types
+            I8(_) => RT::I8,
+            I16(_) => RT::I16,
+            I32(_) => RT::I32,
+            U8(_) => RT::U8,
+            U16(_) => RT::U16,
+            U32(_) => RT::U32,
+            F32(_) => RT::F32,
+        }
+    }
+
+    fn update_ast_types(&mut self) -> Result<(), SemanticError> {
+        let AstNode::Program { declarations } = &mut self.program else {
+            return Err(SemanticError::Fatal(FatalError::ExpectedProgram {
+                found: self.program.clone(),
+            }));
+        };
+
+        for decl in declarations {
+            let AstNode::ConstDecl { name, type_, .. } = decl else {
+                continue;
+            };
+
+            // skip if has explicit type
+            if type_.is_some() {
+                continue;
+            }
+
+            // get type from symbol table
+            if let Some(symbol) = self.symtab.get(name) {
+                if let Some(resolved_type) = symbol.type_ {
+                    *type_ = Some(crate::parser::ast::Type::Resolved(resolved_type));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn fold_consts(&mut self) -> Result<(), SemanticError> {
+        let AstNode::Program { declarations } = &mut self.program else {
+            return Err(SemanticError::Fatal(FatalError::ExpectedProgram {
+                found: self.program.clone(),
+            }));
+        };
+
+        for decl in declarations {
+            let AstNode::ConstDecl { name, value, .. } = decl else {
+                continue;
+            };
+
+            // replace expressions with evaluated results
+            if let Some(symbol) = self.symtab.get(name) {
+                *value = Box::new(symbol.value.clone());
+            }
         }
 
         Ok(())
