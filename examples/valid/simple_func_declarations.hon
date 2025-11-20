@@ -5,7 +5,7 @@ valid :: func(a: u8, b: i32, c: f16) void {
   1 + 2  # unused value (should generate warning)
 
   # defer with var decl
-  defer x := 4 * 3
+  defer x := -(4 * 3)
 
   # mutable var decl
   mut y := 2 + 4 / 3

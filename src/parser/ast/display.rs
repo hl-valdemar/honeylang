@@ -133,8 +133,16 @@ impl std::fmt::Display for Number {
 impl std::fmt::Display for ResolvedNumber {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Bool(val) => write!(f, "{}", val),
-            _ => todo!(),
+            Self::U8(v) => write!(f, "{}", v),
+            Self::U16(v) => write!(f, "{}", v),
+            Self::U32(v) => write!(f, "{}", v),
+            Self::U64(v) => write!(f, "{}", v),
+            Self::I8(v) => write!(f, "{}", v),
+            Self::I16(v) => write!(f, "{}", v),
+            Self::I32(v) => write!(f, "{}", v),
+            Self::I64(v) => write!(f, "{}", v),
+            Self::F32(v) => write!(f, "{}", v),
+            Self::F64(v) => write!(f, "{}", v),
         }
     }
 }
@@ -216,14 +224,14 @@ impl TreeDisplay for AstNode {
                     "{}{} literal: {}",
                     tree.prefix(),
                     tree.connector(is_last),
-                    resolved.red()
+                    resolved.purple()
                 ),
                 Number::Unresolved(unresolved) => writeln!(
                     f,
                     "{}{} literal: {}",
                     tree.prefix(),
                     tree.connector(is_last),
-                    unresolved.red()
+                    unresolved.purple()
                 ),
             },
             Self::Bool(value) => writeln!(
@@ -231,7 +239,7 @@ impl TreeDisplay for AstNode {
                 "{}{} literal: {}",
                 tree.prefix(),
                 tree.connector(is_last),
-                value.red()
+                value.purple()
             ),
             Self::UnaryOp { op, operand } => {
                 writeln!(

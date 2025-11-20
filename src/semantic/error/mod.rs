@@ -1,4 +1,4 @@
-use crate::parser::ast::AstNode;
+use crate::parser::ast::{AstNode, ConstDeclKind};
 
 mod display;
 
@@ -10,17 +10,32 @@ pub enum SemanticError {
 
 #[derive(Clone)]
 pub enum RecoverableError {
-    DuplicateName(String),
+    DuplicateSymbol(String),
+    UndefinedSymbol(String),
     ExpectedConstDecl { found: AstNode },
+    InvalidOperandType { expected: String, found: String },
+    CannotNegateUnsignedType,
+    CannotNegateBool,
+    InvalidNumberLiteral,
+    TypeMismatch { left: String, right: String },
+    InvalidTypeConversion { from: String, to: String },
 }
 
 #[derive(Clone)]
 pub enum FatalError {
-    ExpectedProgram { found: AstNode },
+    ExpectedProgram {
+        found: AstNode,
+    },
+    CircularComptimeDependency {
+        sym_name: String,
+        sym_kind: ConstDeclKind,
+    },
+    DivisionByZero,
+    CannotInferType,
 }
 
 pub struct ErrorList {
-    errors: Vec<SemanticError>,
+    errors: Vec<RecoverableError>,
 }
 
 impl ErrorList {
@@ -28,7 +43,7 @@ impl ErrorList {
         Self { errors: Vec::new() }
     }
 
-    pub fn push(&mut self, error: SemanticError) {
+    pub fn push(&mut self, error: RecoverableError) {
         self.errors.push(error);
     }
 

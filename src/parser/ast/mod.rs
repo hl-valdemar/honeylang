@@ -114,7 +114,6 @@ pub enum Number {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ResolvedNumber {
-    Bool(bool),
     U8(u8),
     U16(u16),
     U32(u32),
@@ -153,7 +152,7 @@ pub enum BinaryOpKind {
     Or,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ConstDeclKind {
     Const,
     Func,
@@ -189,7 +188,7 @@ impl Type {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResolvedType {
     Void,
     Bool,

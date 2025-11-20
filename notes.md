@@ -32,7 +32,7 @@ Code emission.
 
 Comprehensive implementation of basic runtime dependent operations in the Honey language.
 
-- [ ] Function declarations
+- [ ] Functions (codegen)
     - [ ] stack frames
     - [ ] proper prologue/epilogue setup (depending on function properties, e.g. leaf-node, parameter count, etc.)
     - [ ] proper stack alignment
@@ -55,18 +55,19 @@ Comprehensive implementation of basic runtime dependent operations in the Honey 
 
 Comprehensive implementation of basic compile-time functionality in the Honey language.
 
-- [ ] Strong typing (proper type checking)
 - [x] Proper diagnostics
     - [x] lexer
     - [x] parser
     - [x] semantic
-- [x] Arithmetic and boolean operations (disregard modulo operation for now)
+- [x] Parse basic operations (disregard modulo operation for now)
     - [x] arithmetic
         - [x] multiplicative
         - [x] additive
     - [x] boolean
+- [x] Parse function declarations
 - [ ] Comptime expression evaluation
 - [ ] Comptime constant inlining
+- [ ] Proper type checking
 
 ## Ideology
 

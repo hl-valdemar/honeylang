@@ -15,7 +15,7 @@ impl SymbolTable {
         }
     }
 
-    pub fn has_symbol(&self, name: &str) -> bool {
+    pub fn contains(&self, name: &str) -> bool {
         self.symbols.contains_key(name)
     }
 
@@ -23,17 +23,34 @@ impl SymbolTable {
         self.symbols.insert(name.to_string(), symbol)
     }
 
+    pub fn symbols(&self, kind: ConstDeclKind) -> Vec<String> {
+        self.symbols
+            .values()
+            .filter(|sym| sym.kind == kind)
+            .map(|sym| sym.name.clone())
+            .collect()
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Symbol> {
+        self.symbols.get(name)
+    }
+
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut Symbol> {
+        self.symbols.get_mut(name)
+    }
+
     pub fn len(&self) -> usize {
         self.symbols.len()
     }
 }
 
+#[derive(Clone)]
 pub struct Symbol {
-    name: String,
-    kind: ConstDeclKind,
-    type_: Option<ResolvedType>,
-    value: AstNode,
-    eval_state: EvalState,
+    pub name: String,
+    pub kind: ConstDeclKind,
+    pub type_: Option<ResolvedType>,
+    pub value: AstNode,
+    pub eval_state: EvalState,
 }
 
 impl Symbol {
@@ -53,6 +70,7 @@ impl Symbol {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
 pub enum EvalState {
     Unevaluated,
     Evaluating,

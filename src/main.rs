@@ -22,6 +22,12 @@ fn main() {
     let cli = Cli::parse();
     let filename: &'static str = Box::leak(cli.input.into_boxed_str());
 
+    println!("\n::[[ Source Code ]]::\n");
+
+    let src =
+        std::fs::read_to_string(filename).expect(&format!("Failed to read file: {}", filename));
+    println!("{}", src);
+
     println!("\n::[[ Scanning ]]::\n");
 
     let (tokens, errors) = lexer::scan(filename);
