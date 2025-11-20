@@ -65,8 +65,8 @@ Comprehensive implementation of basic compile-time functionality in the Honey la
         - [x] additive
     - [x] boolean
 - [x] Parse function declarations
-- [ ] Comptime expression evaluation
-- [ ] Comptime constant inlining
+- [x] Comptime expression evaluation
+- [x] Comptime constant folding
 - [ ] Proper type checking
 
 ## Ideology
