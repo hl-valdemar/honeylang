@@ -1,0 +1,626 @@
+const std = @import("std");
+const mem = std.mem;
+
+pub const SourceIndex = @import("../source/source.zig").Index;
+
+pub const NodeIndex = u32;
+
+pub const NodeKind = enum {
+    // top-level
+    program,
+
+    // declarations
+    const_decl,
+    func_decl,
+    var_decl,
+
+    // expressions
+    binary_op,
+    unary_op,
+    call_expr,
+    identifier,
+    literal,
+
+    // statements
+    block,
+    return_stmt,
+    defer_stmt,
+    assignment,
+};
+
+pub const Range = struct {
+    start: u32,
+    len: u32,
+
+    pub fn empty() Range {
+        return .{ .start = 0, .len = 0 };
+    }
+};
+
+pub const Location = struct {
+    start: SourceIndex,
+    end: SourceIndex,
+};
+
+pub const Program = struct {
+    declarations: Range, // into extra_data
+};
+
+pub const ConstDecl = struct {
+    name: NodeIndex,
+    type_node: ?NodeIndex,
+    value: NodeIndex,
+};
+
+pub const FuncDecl = struct {
+    name: NodeIndex,
+    params: Range,
+    return_type: ?NodeIndex,
+    body: NodeIndex,
+};
+
+pub const VarDecl = struct {
+    name: NodeIndex,
+    type_node: ?NodeIndex,
+    value: NodeIndex,
+    is_mutable: bool,
+};
+
+pub const BinaryOp = struct {
+    op: Op,
+    left: NodeIndex,
+    right: NodeIndex,
+
+    pub const Op = enum {
+        // arithmetic
+        add,
+        sub,
+        mul,
+        div,
+
+        // comparison
+        equal,
+        not_equal,
+        less,
+        greater,
+        less_equal,
+        greater_equal,
+
+        // logical
+        and_,
+        or_,
+    };
+};
+
+pub const UnaryOp = struct {
+    op: Op,
+    operand: NodeIndex,
+
+    pub const Op = enum {
+        negate,
+        not,
+    };
+};
+
+pub const CallExpr = struct {
+    func: NodeIndex,
+    args: Range,
+};
+
+pub const Identifier = struct {
+    token_idx: u32,
+};
+
+pub const Literal = struct {
+    token_idx: u32,
+};
+
+pub const Block = struct {
+    statements: Range,
+    deferred: Range,
+};
+
+pub const Return = struct {
+    expr: NodeIndex,
+};
+
+pub const Defer = struct {
+    stmt: NodeIndex,
+};
+
+pub const Assignment = struct {
+    target: NodeIndex,
+    value: NodeIndex,
+};
+
+pub const Ast = struct {
+    allocator: mem.Allocator,
+
+    // parallel arrays, all same length (total number of nodes)
+    kinds: std.ArrayList(NodeKind),
+    starts: std.ArrayList(SourceIndex),
+    ends: std.ArrayList(SourceIndex),
+    data_indices: std.ArrayList(u32),
+
+    // counters for efficient addition
+    program_count: u32 = 0,
+    const_decl_count: u32 = 0,
+    func_decl_count: u32 = 0,
+    var_decl_count: u32 = 0,
+    binary_op_count: u32 = 0,
+    unary_op_count: u32 = 0,
+    call_expr_count: u32 = 0,
+    identifier_count: u32 = 0,
+    literal_count: u32 = 0,
+    block_count: u32 = 0,
+    return_count: u32 = 0,
+    defer_count: u32 = 0,
+    assignment_count: u32 = 0,
+
+    // node-specific data arrays
+    programs: std.ArrayList(Program),
+    const_decls: std.ArrayList(ConstDecl),
+    func_decls: std.ArrayList(FuncDecl),
+    var_decls: std.ArrayList(VarDecl),
+    binary_ops: std.ArrayList(BinaryOp),
+    unary_ops: std.ArrayList(UnaryOp),
+    call_exprs: std.ArrayList(CallExpr),
+    identifiers: std.ArrayList(Identifier),
+    literals: std.ArrayList(Literal),
+    blocks: std.ArrayList(Block),
+    returns: std.ArrayList(Return),
+    defers: std.ArrayList(Defer),
+    assignments: std.ArrayList(Assignment),
+
+    // auxiliary storage for variable-length children
+    extra_data: std.ArrayList(NodeIndex),
+
+    root: NodeIndex = 0,
+
+    pub fn init(allocator: mem.Allocator) !Ast {
+        const capacity = 10;
+        return .{
+            .allocator = allocator,
+
+            .kinds = try std.ArrayList(NodeKind).initCapacity(allocator, capacity),
+            .starts = try std.ArrayList(SourceIndex).initCapacity(allocator, capacity),
+            .ends = try std.ArrayList(SourceIndex).initCapacity(allocator, capacity),
+            .data_indices = try std.ArrayList(u32).initCapacity(allocator, capacity),
+
+            .programs = try std.ArrayList(Program).initCapacity(allocator, capacity),
+            .const_decls = try std.ArrayList(ConstDecl).initCapacity(allocator, capacity),
+            .func_decls = try std.ArrayList(FuncDecl).initCapacity(allocator, capacity),
+            .var_decls = try std.ArrayList(VarDecl).initCapacity(allocator, capacity),
+            .binary_ops = try std.ArrayList(BinaryOp).initCapacity(allocator, capacity),
+            .unary_ops = try std.ArrayList(UnaryOp).initCapacity(allocator, capacity),
+            .call_exprs = try std.ArrayList(CallExpr).initCapacity(allocator, capacity),
+            .identifiers = try std.ArrayList(Identifier).initCapacity(allocator, capacity),
+            .literals = try std.ArrayList(Literal).initCapacity(allocator, capacity),
+            .blocks = try std.ArrayList(Block).initCapacity(allocator, capacity),
+            .returns = try std.ArrayList(Return).initCapacity(allocator, capacity),
+            .defers = try std.ArrayList(Defer).initCapacity(allocator, capacity),
+            .assignments = try std.ArrayList(Assignment).initCapacity(allocator, capacity),
+
+            .extra_data = try std.ArrayList(NodeIndex).initCapacity(allocator, capacity),
+        };
+    }
+
+    pub fn deinit(self: *Ast) void {
+        self.kinds.deinit(self.allocator);
+        self.starts.deinit(self.allocator);
+        self.ends.deinit(self.allocator);
+        self.data_indices.deinit(self.allocator);
+
+        self.programs.deinit(self.allocator);
+        self.const_decls.deinit(self.allocator);
+        self.func_decls.deinit(self.allocator);
+        self.var_decls.deinit(self.allocator);
+        self.binary_ops.deinit(self.allocator);
+        self.unary_ops.deinit(self.allocator);
+        self.call_exprs.deinit(self.allocator);
+        self.identifiers.deinit(self.allocator);
+        self.literals.deinit(self.allocator);
+        self.blocks.deinit(self.allocator);
+        self.returns.deinit(self.allocator);
+        self.defers.deinit(self.allocator);
+        self.assignments.deinit(self.allocator);
+
+        self.extra_data.deinit(self.allocator);
+    }
+
+    pub fn addProgram(
+        self: *Ast,
+        declarations: Range,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx = self.program_count;
+
+        try self.kinds.append(self.allocator, .program);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.programs.append(self.allocator, .{ .declarations = declarations });
+
+        self.program_count += 1;
+        return node_idx;
+    }
+
+    pub fn addConstDecl(
+        self: *Ast,
+        name: NodeIndex,
+        type_node: ?NodeIndex,
+        value: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx = self.const_decl_count;
+
+        try self.kinds.append(self.allocator, .const_decl);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.const_decls.append(self.allocator, .{
+            .name = name,
+            .type_node = type_node,
+            .value = value,
+        });
+
+        self.const_decl_count += 1;
+        return node_idx;
+    }
+
+    pub fn addFuncDecl(
+        self: *Ast,
+        name: NodeIndex,
+        params: Range,
+        return_type: ?NodeIndex,
+        body: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx = self.func_decl_count;
+
+        try self.kinds.append(self.allocator, .func_decl);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.func_decls.append(self.allocator, .{
+            .name = name,
+            .params = params,
+            .return_type = return_type,
+            .body = body,
+        });
+
+        self.func_decl_count += 1;
+        return node_idx;
+    }
+
+    pub fn addVarDecl(
+        self: *Ast,
+        name: NodeIndex,
+        type_node: ?NodeIndex,
+        value: NodeIndex,
+        is_mutable: bool,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx = self.var_decl_count;
+
+        try self.kinds.append(self.allocator, .var_decl);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.var_decls.append(self.allocator, .{
+            .name = name,
+            .type_node = type_node,
+            .value = value,
+            .is_mutable = is_mutable,
+        });
+
+        self.var_decl_count += 1;
+        return node_idx;
+    }
+
+    pub fn addBinaryOp(
+        self: *Ast,
+        op: BinaryOp.Op,
+        left: NodeIndex,
+        right: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx = self.binary_op_count;
+
+        try self.kinds.append(self.allocator, .binary_op);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.binary_ops.append(self.allocator, .{
+            .op = op,
+            .left = left,
+            .right = right,
+        });
+
+        self.binary_op_count += 1;
+        return node_idx;
+    }
+
+    pub fn addUnaryOp(
+        self: *Ast,
+        op: UnaryOp.Op,
+        operand: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx = self.unary_op_count;
+
+        try self.kinds.append(self.allocator, .unary_op);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.unary_ops.append(self.allocator, .{
+            .op = op,
+            .operand = operand,
+        });
+
+        self.unary_op_count += 1;
+        return node_idx;
+    }
+
+    pub fn addCallExpr(
+        self: *Ast,
+        func: NodeIndex,
+        args: Range,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx = self.call_expr_count;
+
+        try self.kinds.append(self.allocator, .call_expr);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.call_exprs.append(self.allocator, .{
+            .func = func,
+            .args = args,
+        });
+
+        self.call_expr_count += 1;
+        return node_idx;
+    }
+
+    pub fn addIdentifier(
+        self: *Ast,
+        token_idx: u32,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx = self.identifier_count;
+
+        try self.kinds.append(self.allocator, .identifier);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.identifiers.append(self.allocator, .{ .token_idx = token_idx });
+
+        self.identifier_count += 1;
+        return node_idx;
+    }
+
+    pub fn addLiteral(
+        self: *Ast,
+        token_idx: u32,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx = self.literal_count;
+
+        try self.kinds.append(self.allocator, .literal);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.literals.append(self.allocator, .{ .token_idx = token_idx });
+
+        self.literal_count += 1;
+        return node_idx;
+    }
+
+    pub fn addBlock(
+        self: *Ast,
+        statements: Range,
+        deferred: Range,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx = self.block_count;
+
+        try self.kinds.append(self.allocator, .block);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.blocks.append(self.allocator, .{
+            .statements = statements,
+            .deferred = deferred,
+        });
+
+        self.block_count += 1;
+        return node_idx;
+    }
+
+    pub fn addReturn(
+        self: *Ast,
+        expr: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx = self.return_count;
+
+        try self.kinds.append(self.allocator, .return_stmt);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.returns.append(self.allocator, .{ .expr = expr });
+
+        self.return_count += 1;
+        return node_idx;
+    }
+
+    pub fn addDefer(
+        self: *Ast,
+        stmt: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx = self.defer_count;
+
+        try self.kinds.append(self.allocator, .defer_stmt);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.defers.append(self.allocator, .{ .stmt = stmt });
+
+        self.defer_count += 1;
+        return node_idx;
+    }
+
+    pub fn addAssignment(
+        self: *Ast,
+        target: NodeIndex,
+        value: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx = self.assignment_count;
+
+        try self.kinds.append(self.allocator, .assignment);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.assignments.append(self.allocator, .{
+            .target = target,
+            .value = value,
+        });
+
+        self.assignment_count += 1;
+        return node_idx;
+    }
+
+    pub fn getKind(self: *const Ast, idx: NodeIndex) NodeKind {
+        return self.kinds.items[idx];
+    }
+
+    pub fn getLocation(self: *const Ast, idx: NodeIndex) Location {
+        return .{
+            .start = self.starts.items[idx],
+            .end = self.ends.items[idx],
+        };
+    }
+
+    pub fn getProgram(self: *const Ast, idx: NodeIndex) Program {
+        std.debug.assert(self.kinds.items[idx] == .program);
+        const data_idx = self.data_indices.items[idx];
+        return self.programs.items[data_idx];
+    }
+
+    pub fn getConstDecl(self: *const Ast, idx: NodeIndex) ConstDecl {
+        std.debug.assert(self.kinds.items[idx] == .const_decl);
+        const data_idx = self.data_indices.items[idx];
+        return self.const_decls.items[data_idx];
+    }
+
+    pub fn getFuncDecl(self: *const Ast, idx: NodeIndex) FuncDecl {
+        std.debug.assert(self.kinds.items[idx] == .func_decl);
+        const data_idx = self.data_indices.items[idx];
+        return self.func_decls.items[data_idx];
+    }
+
+    pub fn getVarDecl(self: *const Ast, idx: NodeIndex) VarDecl {
+        std.debug.assert(self.kinds.items[idx] == .var_decl);
+        const data_idx = self.data_indices.items[idx];
+        return self.var_decls.items[data_idx];
+    }
+
+    pub fn getBinaryOp(self: *const Ast, idx: NodeIndex) BinaryOp {
+        std.debug.assert(self.kinds.items[idx] == .binary_op);
+        const data_idx = self.data_indices.items[idx];
+        return self.binary_ops.items[data_idx];
+    }
+
+    pub fn getUnaryOp(self: *const Ast, idx: NodeIndex) UnaryOp {
+        std.debug.assert(self.kinds.items[idx] == .unary_op);
+        const data_idx = self.data_indices.items[idx];
+        return self.unary_ops.items[data_idx];
+    }
+
+    pub fn getCallExpr(self: *const Ast, idx: NodeIndex) CallExpr {
+        std.debug.assert(self.kinds.items[idx] == .call_expr);
+        const data_idx = self.data_indices.items[idx];
+        return self.call_exprs.items[data_idx];
+    }
+
+    pub fn getIdentifier(self: *const Ast, idx: NodeIndex) Identifier {
+        std.debug.assert(self.kinds.items[idx] == .identifier);
+        const data_idx = self.data_indices.items[idx];
+        return self.identifiers.items[data_idx];
+    }
+
+    pub fn getLiteral(self: *const Ast, idx: NodeIndex) Literal {
+        std.debug.assert(self.kinds.items[idx] == .literal);
+        const data_idx = self.data_indices.items[idx];
+        return self.literals.items[data_idx];
+    }
+
+    pub fn getBlock(self: *const Ast, idx: NodeIndex) Block {
+        std.debug.assert(self.kinds.items[idx] == .block);
+        const data_idx = self.data_indices.items[idx];
+        return self.blocks.items[data_idx];
+    }
+
+    pub fn getReturn(self: *const Ast, idx: NodeIndex) Return {
+        std.debug.assert(self.kinds.items[idx] == .return_stmt);
+        const data_idx = self.data_indices.items[idx];
+        return self.returns.items[data_idx];
+    }
+
+    pub fn getDefer(self: *const Ast, idx: NodeIndex) Defer {
+        std.debug.assert(self.kinds.items[idx] == .defer_stmt);
+        const data_idx = self.data_indices.items[idx];
+        return self.defers.items[data_idx];
+    }
+
+    pub fn getAssignment(self: *const Ast, idx: NodeIndex) Assignment {
+        std.debug.assert(self.kinds.items[idx] == .assignment);
+        const data_idx = self.data_indices.items[idx];
+        return self.assignments.items[data_idx];
+    }
+
+    pub fn addExtra(self: *Ast, data: []const NodeIndex) !Range {
+        const start: u32 = @intCast(self.extra_data.items.len);
+        try self.extra_data.appendSlice(self.allocator, data);
+        return .{ .start = start, .len = @intCast(data.len) };
+    }
+
+    pub fn getExtra(self: *const Ast, range: Range) []const NodeIndex {
+        const start = range.start;
+        const end = start + range.len;
+        return self.extra_data.items[start..end];
+    }
+
+    pub fn nodeCount(self: *const Ast) usize {
+        return self.kinds.items.len;
+    }
+};

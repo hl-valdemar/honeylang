@@ -44,11 +44,15 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
         }
     }
 
-    // TODO: parse tokens
-    // var ast_arena = std.heap.ArenaAllocator.init(gpa);
-    // defer ast_arena.deinit();
-    //
-    // const ast = try honey.parser.parse(ast_arena.allocator(), tokens);
+    // 3. parse tokens
+    var ast_arena = std.heap.ArenaAllocator.init(gpa);
+    defer ast_arena.deinit();
+
+    const ast = try honey.parser.parse(ast_arena.allocator(), tokens);
+
+    std.debug.print("\n\n::[[ Parsing ]]::\n\n", .{});
+    std.debug.print("Parsed {} nodes:\n\n", .{ast.nodeCount()});
+    honey.ast_printer.print(&ast, &tokens, &src);
 
     // TODO: analyze parse tree
     // var semantic_arena = std.heap.ArenaAllocator.init(gpa);
