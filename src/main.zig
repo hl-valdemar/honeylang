@@ -36,13 +36,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     // print generated tokens
     std.debug.print("\n::[[ Scanning ]]::\n\n", .{});
     std.debug.print("Generated {d} tokens:\n\n", .{tokens.items.len});
-    for (tokens.items) |token| {
-        if (token.len > 0) {
-            std.debug.print("{} = \"{s}\"\n", .{ token.kind, src.getSlice(token.start, token.start + token.len) });
-        } else {
-            std.debug.print("{}\n", .{token.kind});
-        }
-    }
+    honey.token_printer.print(&tokens, &src);
 
     // 3. parse tokens
     var ast_arena = std.heap.ArenaAllocator.init(gpa);
@@ -50,6 +44,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
 
     const ast = try honey.parser.parse(ast_arena.allocator(), tokens);
 
+    // print generated parse tree
     std.debug.print("\n\n::[[ Parsing ]]::\n\n", .{});
     std.debug.print("Parsed {} nodes:\n\n", .{ast.nodeCount()});
     honey.ast_printer.print(&ast, &tokens, &src);
