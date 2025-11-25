@@ -46,7 +46,99 @@ add :: func(a: i32, b: i32) i32 {
     return a + b
 }
 
-main :: func() void {
-    add(1, 2)
+compute_result :: func(a: u32, b: u32) i32 {
+    return add(a as i32, b as i32)
 }
+
+main :: func() void {
+    compute(1, 2)
+}
+```
+
+## Imports
+
+```honey
+import "std/mem"
+import "std/mem/heap"
+
+main :: func() void {
+    buffer := heap.alloc(u8, 10)
+    defer heap.free(buffer)
+
+    # do stuff with the buffer...
+    result := mem.eql(u8, buffer, "hello?")
+
+    return result
+}
+```
+
+Or, alternatively:
+
+```honey
+import "std/mem"
+
+heap :: mem.heap
+
+main :: func() void {
+    buffer := heap.alloc(u8, 10)
+    defer heap.free(buffer)
+
+    # do stuff with the buffer...
+    result := mem.eql(u8, buffer, "hello?")
+
+    return result
+}
+```
+
+Or even just:
+
+```honey
+import "std/mem"
+
+some_func :: func() bool {
+    buffer := mem.heap.alloc(u8, 10)
+    defer mem.heap.free(buffer)
+
+    # do stuff with the buffer...
+    result := mem.eql(u8, buffer, "hello?")
+
+    return result
+}
+
+main :: func() void {
+    _ := some_func()  # assign to `_` to throw away expression value
+}
+```
+
+## Structs
+
+```honey
+import "std/mem/heap"
+
+PersonInfo :: struct {
+    name: []const u8,
+    age: u8,
+}
+
+main :: func() void {
+    # instantiate dynamically
+    person_ptr := heap.create(PersonInfo)  # returns a pointer to the allocated memory
+    defer heap.destroy(person_ptr)
+
+    # or statically
+    person_static := PersonInfo{
+        .name = "Carol",
+        .age = 42,
+    }
+
+    # do stuff with this person info
+}
+```
+
+## Type aliasing
+
+```honey
+# type is `type`
+EntityId :: u32
+EntityId: type :: u32
 ```
