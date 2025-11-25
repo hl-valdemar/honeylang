@@ -95,7 +95,7 @@ Or even just:
 ```honey
 import "std/mem"
 
-main :: func() void {
+some_func :: func() bool {
     buffer := mem.heap.alloc(u8, 10)
     defer mem.heap.free(buffer)
 
@@ -103,5 +103,34 @@ main :: func() void {
     result := mem.eql(u8, buffer, "hello?")
 
     return result
+}
+
+main :: func() void {
+    _ := some_func()  # assign to `_` to throw away expression value
+}
+```
+
+## Structs
+
+```honey
+import "std/mem/heap"
+
+PersonInfo :: struct {
+    name: []const u8,
+    age: u8,
+}
+
+main :: func() void {
+    # instantiate dynamically
+    person_ptr := heap.create(PersonInfo)  # returns a pointer to the allocated memory
+    defer heap.destroy(person_ptr)
+
+    # or statically
+    person_static := PersonInfo{
+        .name = "Carol",
+        .age = 42,
+    }
+
+    # do stuff with this person info
 }
 ```
