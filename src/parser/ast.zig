@@ -26,6 +26,9 @@ pub const NodeKind = enum {
     return_stmt,
     defer_stmt,
     assignment,
+
+    // parse error
+    err,
 };
 
 pub const Range = struct {
@@ -133,6 +136,10 @@ pub const Assignment = struct {
     value: NodeIndex,
 };
 
+pub const Error = struct {
+    msg: []const u8,
+};
+
 pub const Ast = struct {
     allocator: mem.Allocator,
 
@@ -156,6 +163,7 @@ pub const Ast = struct {
     returns: std.ArrayList(Return),
     defers: std.ArrayList(Defer),
     assignments: std.ArrayList(Assignment),
+    errors: std.ArrayList(Error),
 
     // auxiliary storage for variable-length children
     extra_data: std.ArrayList(NodeIndex),
@@ -185,6 +193,7 @@ pub const Ast = struct {
             .returns = try std.ArrayList(Return).initCapacity(allocator, capacity),
             .defers = try std.ArrayList(Defer).initCapacity(allocator, capacity),
             .assignments = try std.ArrayList(Assignment).initCapacity(allocator, capacity),
+            .errors = try std.ArrayList(Error).initCapacity(allocator, capacity),
 
             .extra_data = try std.ArrayList(NodeIndex).initCapacity(allocator, capacity),
         };
@@ -209,6 +218,7 @@ pub const Ast = struct {
         self.returns.deinit(self.allocator);
         self.defers.deinit(self.allocator);
         self.assignments.deinit(self.allocator);
+        self.errors.deinit(self.allocator);
 
         self.extra_data.deinit(self.allocator);
     }
@@ -491,6 +501,24 @@ pub const Ast = struct {
         return node_idx;
     }
 
+    pub fn addError(
+        self: *Ast,
+        msg: []const u8,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.errors.items.len);
+
+        try self.kinds.append(self.allocator, .err);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.errors.append(self.allocator, .{ .msg = msg });
+
+        return node_idx;
+    }
+
     pub fn getKind(self: *const Ast, idx: NodeIndex) NodeKind {
         return self.kinds.items[idx];
     }
@@ -578,6 +606,12 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .assignment);
         const data_idx = self.data_indices.items[idx];
         return self.assignments.items[data_idx];
+    }
+
+    pub fn getError(self: *const Ast, idx: NodeIndex) Error {
+        std.debug.assert(self.kinds.items[idx] == .err);
+        const data_idx = self.data_indices.items[idx];
+        return self.errors.items[data_idx];
     }
 
     pub fn addExtra(self: *Ast, data: []const NodeIndex) !Range {

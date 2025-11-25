@@ -265,6 +265,11 @@ fn printNode(
             const value_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}   ", .{child_prefix}) catch unreachable;
             printNode(ast, tokens, src, assign.value, value_prefix, true);
         },
+
+        .err => {
+            const err_data = ast.getError(idx);
+            std.debug.print("error: {s}\n", .{err_data.msg});
+        },
     }
 }
 

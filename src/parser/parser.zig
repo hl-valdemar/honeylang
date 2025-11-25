@@ -21,18 +21,25 @@ pub const ParseError = error{
     OutOfMemory,
 };
 
+pub const ParseErrorInfo = struct {
+    message: []const u8,
+    pos: SourceIndex,
+};
+
 pub const Parser = struct {
+    allocator: mem.Allocator,
+    errors: std.ArrayList(ParseErrorInfo),
     tokens: []const Token,
     pos: u32,
     ast: Ast,
-    allocator: mem.Allocator,
 
     pub fn init(allocator: mem.Allocator, tokens: TokenList) !Parser {
         return .{
+            .allocator = allocator,
+            .errors = try std.ArrayList(ParseErrorInfo).initCapacity(allocator, 1),
             .tokens = tokens.items,
             .pos = 0,
             .ast = try Ast.init(allocator),
-            .allocator = allocator,
         };
     }
 
@@ -55,7 +62,25 @@ pub const Parser = struct {
         defer decls.deinit(self.allocator);
 
         while (!self.check(.eof)) {
-            const decl = try self.parseDeclaration();
+            const decl = self.parseDeclaration() catch |err| {
+                // record the error
+                try self.errors.append(self.allocator, .{
+                    .message = errorToMessage(err),
+                    .pos = self.currentPos(),
+                });
+
+                // emit an error node
+                const err_node = try self.ast.addError(
+                    errorToMessage(err),
+                    self.currentPos(),
+                    self.currentPos(),
+                );
+                try decls.append(self.allocator, err_node);
+
+                // skip to next declaration
+                self.synchronize();
+                continue;
+            };
             try decls.append(self.allocator, decl);
         }
 
@@ -69,8 +94,11 @@ pub const Parser = struct {
         if (token.kind == .identifier) {
             const next = self.peekOffset(1) orelse return error.UnexpectedEof;
 
-            if (next.kind == .double_colon) {
-                // check if it's a function or const
+            if (next.kind == .colon) {
+                // must be a const declaration
+                return try self.parseConstDecl();
+            } else if (next.kind == .double_colon) {
+                // check if it's a function or a const
                 const after_colon = self.peekOffset(2) orelse return error.UnexpectedEof;
 
                 if (after_colon.kind == .func) {
@@ -630,4 +658,30 @@ pub const Parser = struct {
         }
         return 0;
     }
+
+    fn synchronize(self: *Parser) void {
+        // skip tokens until we find what looks like a new declaration:
+        // identifier followed by :: or :
+        while (self.peek()) |token| {
+            if (token.kind == .eof) return;
+
+            if (token.kind == .identifier) {
+                if (self.peekOffset(1)) |next| {
+                    if (next.kind == .double_colon or next.kind == .colon) {
+                        return; // found declaration boundary
+                    }
+                }
+            }
+
+            self.advance();
+        }
+    }
 };
+
+fn errorToMessage(err: ParseError) []const u8 {
+    return switch (err) {
+        error.UnexpectedEof => "unexpected end of file",
+        error.UnexpectedToken => "unexpected token",
+        error.OutOfMemory => "out of memory",
+    };
+}

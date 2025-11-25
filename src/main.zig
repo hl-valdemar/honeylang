@@ -9,7 +9,7 @@ pub fn main() !void {
     var gpa = heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
 
-    const file_path = "examples/func_decls.hon";
+    const file_path = "examples/const_decls.hon";
 
     switch (builtin.mode) {
         .Debug => try compileDebug(gpa.allocator(), file_path),
