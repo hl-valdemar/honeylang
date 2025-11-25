@@ -134,3 +134,11 @@ main :: func() void {
     # do stuff with this person info
 }
 ```
+
+## Type aliasing
+
+```honey
+# type is `type`
+EntityId :: u32
+EntityId: type :: u32
+```
