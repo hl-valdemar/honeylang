@@ -11,6 +11,8 @@ pub fn print(ast: *const Ast, tokens: *const TokenList, src: *const SourceCode) 
     printNode(ast, tokens, src, root, "", true);
 }
 
+// don't bother freeing the strings as this will only be called in debug
+// and the memory will be freed on program exit anyways
 fn printNode(
     ast: *const Ast,
     tokens: *const TokenList,
@@ -19,7 +21,7 @@ fn printNode(
     prefix: []const u8,
     is_last: bool,
 ) void {
-    // Print the connector (unless we're at root)
+    // print the connector (unless we're at root)
     if (prefix.len > 0) {
         std.debug.print("{s}", .{prefix});
         if (is_last) {
@@ -31,9 +33,9 @@ fn printNode(
 
     const kind = ast.getKind(idx);
 
-    // Calculate child prefix
+    // calculate child prefix
     const child_prefix = if (prefix.len == 0)
-        " " // Root's children start at position 1 (second character)
+        " " // root's children start at position 1 (second character)
     else if (is_last)
         std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{prefix}) catch unreachable
     else
@@ -88,7 +90,7 @@ fn printNode(
                 std.debug.print("{s}├─ type: void\n", .{child_prefix});
             }
 
-            // Print parameters
+            // print parameters
             const params = ast.getExtra(decl.params);
             std.debug.print("{s}├─ params: {d}\n", .{ child_prefix, params.len / 2 });
 

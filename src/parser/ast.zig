@@ -142,21 +142,6 @@ pub const Ast = struct {
     ends: std.ArrayList(SourceIndex),
     data_indices: std.ArrayList(u32),
 
-    // counters for efficient addition
-    program_count: u32 = 0,
-    const_decl_count: u32 = 0,
-    func_decl_count: u32 = 0,
-    var_decl_count: u32 = 0,
-    binary_op_count: u32 = 0,
-    unary_op_count: u32 = 0,
-    call_expr_count: u32 = 0,
-    identifier_count: u32 = 0,
-    literal_count: u32 = 0,
-    block_count: u32 = 0,
-    return_count: u32 = 0,
-    defer_count: u32 = 0,
-    assignment_count: u32 = 0,
-
     // node-specific data arrays
     programs: std.ArrayList(Program),
     const_decls: std.ArrayList(ConstDecl),
@@ -235,7 +220,7 @@ pub const Ast = struct {
         end: SourceIndex,
     ) !NodeIndex {
         const node_idx: NodeIndex = @intCast(self.kinds.items.len);
-        const data_idx = self.program_count;
+        const data_idx: NodeIndex = @intCast(self.programs.items.len);
 
         try self.kinds.append(self.allocator, .program);
         try self.starts.append(self.allocator, start);
@@ -243,7 +228,6 @@ pub const Ast = struct {
         try self.data_indices.append(self.allocator, data_idx);
         try self.programs.append(self.allocator, .{ .declarations = declarations });
 
-        self.program_count += 1;
         return node_idx;
     }
 
@@ -256,7 +240,7 @@ pub const Ast = struct {
         end: SourceIndex,
     ) !NodeIndex {
         const node_idx: NodeIndex = @intCast(self.kinds.items.len);
-        const data_idx = self.const_decl_count;
+        const data_idx: NodeIndex = @intCast(self.const_decls.items.len);
 
         try self.kinds.append(self.allocator, .const_decl);
         try self.starts.append(self.allocator, start);
@@ -268,7 +252,6 @@ pub const Ast = struct {
             .value = value,
         });
 
-        self.const_decl_count += 1;
         return node_idx;
     }
 
@@ -282,7 +265,7 @@ pub const Ast = struct {
         end: SourceIndex,
     ) !NodeIndex {
         const node_idx: NodeIndex = @intCast(self.kinds.items.len);
-        const data_idx = self.func_decl_count;
+        const data_idx: NodeIndex = @intCast(self.func_decls.items.len);
 
         try self.kinds.append(self.allocator, .func_decl);
         try self.starts.append(self.allocator, start);
@@ -295,7 +278,6 @@ pub const Ast = struct {
             .body = body,
         });
 
-        self.func_decl_count += 1;
         return node_idx;
     }
 
@@ -309,7 +291,7 @@ pub const Ast = struct {
         end: SourceIndex,
     ) !NodeIndex {
         const node_idx: NodeIndex = @intCast(self.kinds.items.len);
-        const data_idx = self.var_decl_count;
+        const data_idx: NodeIndex = @intCast(self.var_decls.items.len);
 
         try self.kinds.append(self.allocator, .var_decl);
         try self.starts.append(self.allocator, start);
@@ -322,7 +304,6 @@ pub const Ast = struct {
             .is_mutable = is_mutable,
         });
 
-        self.var_decl_count += 1;
         return node_idx;
     }
 
@@ -335,7 +316,7 @@ pub const Ast = struct {
         end: SourceIndex,
     ) !NodeIndex {
         const node_idx: NodeIndex = @intCast(self.kinds.items.len);
-        const data_idx = self.binary_op_count;
+        const data_idx: NodeIndex = @intCast(self.binary_ops.items.len);
 
         try self.kinds.append(self.allocator, .binary_op);
         try self.starts.append(self.allocator, start);
@@ -347,7 +328,6 @@ pub const Ast = struct {
             .right = right,
         });
 
-        self.binary_op_count += 1;
         return node_idx;
     }
 
@@ -359,7 +339,7 @@ pub const Ast = struct {
         end: SourceIndex,
     ) !NodeIndex {
         const node_idx: NodeIndex = @intCast(self.kinds.items.len);
-        const data_idx = self.unary_op_count;
+        const data_idx: NodeIndex = @intCast(self.unary_ops.items.len);
 
         try self.kinds.append(self.allocator, .unary_op);
         try self.starts.append(self.allocator, start);
@@ -370,7 +350,6 @@ pub const Ast = struct {
             .operand = operand,
         });
 
-        self.unary_op_count += 1;
         return node_idx;
     }
 
@@ -382,7 +361,7 @@ pub const Ast = struct {
         end: SourceIndex,
     ) !NodeIndex {
         const node_idx: NodeIndex = @intCast(self.kinds.items.len);
-        const data_idx = self.call_expr_count;
+        const data_idx: NodeIndex = @intCast(self.call_exprs.items.len);
 
         try self.kinds.append(self.allocator, .call_expr);
         try self.starts.append(self.allocator, start);
@@ -393,7 +372,6 @@ pub const Ast = struct {
             .args = args,
         });
 
-        self.call_expr_count += 1;
         return node_idx;
     }
 
@@ -404,7 +382,7 @@ pub const Ast = struct {
         end: SourceIndex,
     ) !NodeIndex {
         const node_idx: NodeIndex = @intCast(self.kinds.items.len);
-        const data_idx = self.identifier_count;
+        const data_idx: NodeIndex = @intCast(self.identifiers.items.len);
 
         try self.kinds.append(self.allocator, .identifier);
         try self.starts.append(self.allocator, start);
@@ -412,7 +390,6 @@ pub const Ast = struct {
         try self.data_indices.append(self.allocator, data_idx);
         try self.identifiers.append(self.allocator, .{ .token_idx = token_idx });
 
-        self.identifier_count += 1;
         return node_idx;
     }
 
@@ -423,7 +400,7 @@ pub const Ast = struct {
         end: SourceIndex,
     ) !NodeIndex {
         const node_idx: NodeIndex = @intCast(self.kinds.items.len);
-        const data_idx = self.literal_count;
+        const data_idx: NodeIndex = @intCast(self.literals.items.len);
 
         try self.kinds.append(self.allocator, .literal);
         try self.starts.append(self.allocator, start);
@@ -431,7 +408,6 @@ pub const Ast = struct {
         try self.data_indices.append(self.allocator, data_idx);
         try self.literals.append(self.allocator, .{ .token_idx = token_idx });
 
-        self.literal_count += 1;
         return node_idx;
     }
 
@@ -443,7 +419,7 @@ pub const Ast = struct {
         end: SourceIndex,
     ) !NodeIndex {
         const node_idx: NodeIndex = @intCast(self.kinds.items.len);
-        const data_idx = self.block_count;
+        const data_idx: NodeIndex = @intCast(self.blocks.items.len);
 
         try self.kinds.append(self.allocator, .block);
         try self.starts.append(self.allocator, start);
@@ -454,7 +430,6 @@ pub const Ast = struct {
             .deferred = deferred,
         });
 
-        self.block_count += 1;
         return node_idx;
     }
 
@@ -465,7 +440,7 @@ pub const Ast = struct {
         end: SourceIndex,
     ) !NodeIndex {
         const node_idx: NodeIndex = @intCast(self.kinds.items.len);
-        const data_idx = self.return_count;
+        const data_idx: NodeIndex = @intCast(self.returns.items.len);
 
         try self.kinds.append(self.allocator, .return_stmt);
         try self.starts.append(self.allocator, start);
@@ -473,7 +448,6 @@ pub const Ast = struct {
         try self.data_indices.append(self.allocator, data_idx);
         try self.returns.append(self.allocator, .{ .expr = expr });
 
-        self.return_count += 1;
         return node_idx;
     }
 
@@ -484,7 +458,7 @@ pub const Ast = struct {
         end: SourceIndex,
     ) !NodeIndex {
         const node_idx: NodeIndex = @intCast(self.kinds.items.len);
-        const data_idx = self.defer_count;
+        const data_idx: NodeIndex = @intCast(self.defers.items.len);
 
         try self.kinds.append(self.allocator, .defer_stmt);
         try self.starts.append(self.allocator, start);
@@ -492,7 +466,6 @@ pub const Ast = struct {
         try self.data_indices.append(self.allocator, data_idx);
         try self.defers.append(self.allocator, .{ .stmt = stmt });
 
-        self.defer_count += 1;
         return node_idx;
     }
 
@@ -504,7 +477,7 @@ pub const Ast = struct {
         end: SourceIndex,
     ) !NodeIndex {
         const node_idx: NodeIndex = @intCast(self.kinds.items.len);
-        const data_idx = self.assignment_count;
+        const data_idx: NodeIndex = @intCast(self.assignments.items.len);
 
         try self.kinds.append(self.allocator, .assignment);
         try self.starts.append(self.allocator, start);
@@ -515,7 +488,6 @@ pub const Ast = struct {
             .value = value,
         });
 
-        self.assignment_count += 1;
         return node_idx;
     }
 
