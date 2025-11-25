@@ -46,7 +46,62 @@ add :: func(a: i32, b: i32) i32 {
     return a + b
 }
 
+compute_result :: func(a: u32, b: u32) i32 {
+    return add(a as i32, b as i32)
+}
+
 main :: func() void {
-    add(1, 2)
+    compute(1, 2)
+}
+```
+
+## Imports
+
+```honey
+import "std/mem"
+import "std/mem/heap"
+
+main :: func() void {
+    buffer := heap.alloc(u8, 10)
+    defer heap.free(buffer)
+
+    # do stuff with the buffer...
+    result := mem.eql(u8, buffer, "hello?")
+
+    return result
+}
+```
+
+Or, alternatively:
+
+```honey
+import "std/mem"
+
+heap :: mem.heap
+
+main :: func() void {
+    buffer := heap.alloc(u8, 10)
+    defer heap.free(buffer)
+
+    # do stuff with the buffer...
+    result := mem.eql(u8, buffer, "hello?")
+
+    return result
+}
+```
+
+Or even just:
+
+```honey
+import "std/mem"
+
+main :: func() void {
+    buffer := mem.heap.alloc(u8, 10)
+    defer mem.heap.free(buffer)
+
+    # do stuff with the buffer...
+    result := mem.eql(u8, buffer, "hello?")
+
+    return result
 }
 ```

@@ -2,8 +2,9 @@ add :: func(a: i32, b: i32) i32 {
   return a + b
 }
 
-main :: func() u32 {
+main :: func() i32 {
+  defer y := 10  # executed after return
   mut x := 3
   x += 4
-  return x
+  return add(x, 3)
 }
