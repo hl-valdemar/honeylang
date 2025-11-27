@@ -9,11 +9,22 @@ pub fn main() !void {
     var gpa = heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
 
-    const file_path = "examples/func_decls.hon";
+    const allocator = gpa.allocator();
+
+    // get command line arguments
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    if (args.len < 2) {
+        std.debug.print("Usage: {s} <file>\n", .{args[0]});
+        return error.MissingArgument;
+    }
+
+    const file_path = args[1];
 
     switch (builtin.mode) {
-        .Debug => try compileDebug(gpa.allocator(), file_path),
-        else => try compileRelease(gpa.allocator(), file_path),
+        .Debug => try compileDebug(allocator, file_path),
+        else => try compileRelease(allocator, file_path),
     }
 }
 

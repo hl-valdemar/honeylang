@@ -3,6 +3,6 @@ import "lexer"
 
 # simply experimenting
 main :: func() void {
-  src := fs::read_to_string("program.hon")
-  tokens := lexer::scan(src)
+  src := fs.read_to_string("program.hon")
+  tokens := lexer.scan(src)
 }
