@@ -2,7 +2,9 @@
 
 ## Comments
 
-Comments are strings of characters prefixed with the `#` token. These are, of course, not evaluated or compiled into the binary, but are simply ignored by the compiler.
+Comments are strings of characters prefixed with the `#` token. These are, of
+course, not evaluated or compiled into the binary, but are simply ignored by
+the compiler.
 
 ```honey
 # Comments are prefixed with a pound, so this is a comment!
@@ -10,12 +12,15 @@ Comments are strings of characters prefixed with the `#` token. These are, of co
 
 ## Logical operators and comparators
 
-Logical operators in the Honey language include `not`, `and`, and `or`, while `<`, `>`, `<=`, `>=`, `==`, and `!=` comprise the comparison operators. All pretty standard.
+Logical operators in the Honey language include `not`, `and`, and `or`, while
+`<`, `>`, `<=`, `>=`, `==`, and `!=` comprise the comparison operators. All
+pretty standard.
 
 ## Type Inference
 
-Types are inferred from the context in which they're first used.
-Once a type is determined for any given name, it will be locked in place and must be cast to the appropriate type explicitly if used in operations with different types.
+Types are inferred from the context in which they're first used. Once a type is
+determined for any given name, it will be locked in place and must be cast to
+the appropriate type explicitly if used in operations with different types.
 
 ```honey
 # type is inferred from the immediate value, when not used in any context
@@ -141,4 +146,27 @@ main :: func() void {
 # type is `type`
 EntityId :: u32
 EntityId: type :: u32
+```
+
+## Runtime dependent global state
+
+Runtime dependent global state allows for mutable globals, which can be handy
+when managing a module needs to maintain some internal state for cross cutting
+concerns (e.g., easy singletons).
+
+```honey
+import "std/debug"
+
+# mutable global state
+mut x := 21
+
+modify_x :: func() void {
+    x += 2
+}
+
+main :: func() void {
+    debug.print(x)  # prints '21'
+    modify_x()
+    debug.print(x)  # prints '23'
+}
 ```
