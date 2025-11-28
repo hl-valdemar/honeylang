@@ -132,53 +132,165 @@ mut counter := 0
 # BAD :: counter  # ERROR: comptime cannot reference runtime mutable
 ```
 
+## Discarding Values
+
+The special name `_` acts as a sink for values you want to explicitly discard.
+Use assignment (`=`), not declaration (`:=`), since `_` is not a variable being
+declared:
+
+```honey
+_ = add(1, 2)        # explicitly discard the result
+result := add(1, 2)  # actually use it
+```
+
+**Unused value warning:** If a function returns a value and you neither use it
+nor assign it to `_`, the compiler emits a warning:
+
+```honey
+add(1, 2)  # WARNING: unused value
+```
+
+If you're calling a function purely for side effects, it should return `void`.
+If it returns something, you should either use it or explicitly discard it.
+
+## Uninitialized Variables
+
+Honey provides `undefined` for explicit uninitialized variables:
+
+```honey
+x: i32 = undefined   # explicitly uninitialized
+y: i32 = 0           # explicitly zero
+z := get_value()     # initialized from expression
+```
+
+**Why `undefined` instead of zero-initialization?**
+
+Zero-initialization is *safe* in the sense of "no garbage memory," but it's
+*deceptive* - your program runs without crashing but may have a logic bug
+because you forgot to set something and zero happened to be wrong.
+
+`undefined` is honest. The compiler performs flow analysis to catch uses of
+potentially undefined variables:
+
+```honey
+main :: func() void {
+    x: i32 = undefined
+    
+    if some_condition {
+        x = 10
+    }
+    
+    print(x)  # ERROR: x may be undefined here
+}
+```
+
+In debug builds, undefined memory is filled with poison values (e.g., 0xAA)
+so that if a use slips past the compiler, you get an obvious crash or clearly
+wrong data rather than a subtle bug.
+
 ## Pointers and References
 
 Honey uses distinct symbols for pointer operations to avoid ambiguity:
 
 | Symbol | Context | Meaning |
 |--------|---------|---------|
-| `@` | Type | Pointer to |
+| `@` | Type | Pointer to (read-only) |
+| `@mut` | Type | Pointer to (mutable) |
 | `&` | Expression | Address of (reference) |
 | `^` | Expression (postfix) | Dereference |
 
 This keeps `*` unambiguous as multiplication.
 
-```honey
-main :: func() void {
-    x: i32 = 3
-    y: @i32 = &x       # y is a pointer to x
-    z: i32 = y^        # z is the value at y (dereference)
-    
-    y^ = 10            # assign through pointer, x is now 10
-}
-```
+### Pointer Mutability
 
-Pointer chains work naturally with postfix dereference:
+Pointers respect the mutability of the data they point to. By default, pointers
+are read-only (`@T`). To mutate through a pointer, you need a mutable pointer
+(`@mut T`) pointing to mutable data.
 
 ```honey
 main :: func() void {
-    x: i32 = 42
-    y: @i32 = &x       # pointer to x
-    z: @@i32 = &y      # pointer to pointer to x
+    x: i32 = 3              # immutable variable
+    mut y: i32 = 4          # mutable variable
     
-    a: i32 = y^        # dereference once
-    b: i32 = z^^       # dereference twice
+    a: @i32 = &x            # OK: read-only pointer to immutable
+    b: @i32 = &y            # OK: read-only pointer to mutable (downgrade is fine)
+    c: @mut i32 = &x        # ERROR: cannot take mutable pointer to immutable
+    d: @mut i32 = &y        # OK: mutable pointer to mutable
+    
+    val := a^               # OK: reading through any pointer
+    a^ = 10                 # ERROR: cannot write through @i32
+    d^ = 10                 # OK: y is now 10
 }
 ```
 
-Accessing struct fields through pointers:
+### Pointer Variable Mutability
+
+The pointer *variable* can also be mutable or immutable, independently of what
+it points to. This controls whether the pointer itself can be reassigned:
+
+```honey
+main :: func() void {
+    mut x: i32 = 1
+    mut y: i32 = 2
+    
+    ptr: @mut i32 = &x      # immutable pointer to mutable data
+    ptr^ = 10               # OK: can write through pointer
+    ptr = &y                # ERROR: ptr itself is immutable
+    
+    mut ptr2: @mut i32 = &x # mutable pointer to mutable data
+    ptr2^ = 10              # OK: can write through pointer
+    ptr2 = &y               # OK: can reassign pointer
+}
+```
+
+### All Four Combinations
+
+```honey
+ptr1: @i32              # immutable pointer to immutable data
+                        # - cannot reassign ptr1
+                        # - cannot write through ptr1
+
+ptr2: @mut i32          # immutable pointer to mutable data
+                        # - cannot reassign ptr2
+                        # - can write through ptr2
+
+mut ptr3: @i32          # mutable pointer to immutable data
+                        # - can reassign ptr3
+                        # - cannot write through ptr3
+
+mut ptr4: @mut i32      # mutable pointer to mutable data
+                        # - can reassign ptr4
+                        # - can write through ptr4
+```
+
+### Pointer Chains
+
+Multi-level pointers work naturally:
+
+```honey
+main :: func() void {
+    mut x: i32 = 42
+    mut y: @mut i32 = &x   # pointer to x
+    z: @@mut i32 = &y      # pointer to pointer to x
+    
+    a: i32 = y^            # dereference once
+    b: i32 = z^^           # dereference twice
+}
+```
+
+### Struct Field Access Through Pointers
 
 ```honey
 Buffer :: struct {
-    data: @u8,
+    data: @mut u8,
     len: u64,
 }
 
 main :: func() void {
-    buf: Buffer = ...
-    ptr: @Buffer = &buf
-    data := ptr^.data  # dereference then access field
+    mut buf: Buffer = ...
+    ptr: @mut Buffer = &buf
+    data := ptr^.data      # dereference then access field
+    ptr^.len = 100         # modify field through pointer
 }
 ```
 
@@ -349,7 +461,7 @@ some_func :: func() bool {
 }
 
 main :: func() void {
-    _ := some_func()  # assign to `_` to discard expression value
+    _ = some_func()
 }
 ```
 
@@ -392,6 +504,8 @@ EntityId: type :: u32  # equivalent, explicit form
 | `NAME :: expr`                     | Compile-time constant                      |
 | `name := expr`                     | Runtime immutable (initialized at startup) |
 | `mut name := expr`                 | Runtime mutable                            |
+| `name: T = undefined`              | Explicitly uninitialized variable          |
+| `_ = expr`                         | Discard a value                            |
 | `name :: func(...) T { }`          | Runtime function                           |
 | `name :: comptime func(...) T { }` | Compile-time only function                 |
 | `name :: inline func(...) T { }`   | Force-inlined runtime function             |
@@ -401,11 +515,22 @@ EntityId: type :: u32  # equivalent, explicit form
 
 | Syntax | Meaning |
 |--------|---------|
-| `@T` | Pointer to T |
-| `@@T` | Pointer to pointer to T |
+| `@T` | Pointer to immutable T (read-only) |
+| `@mut T` | Pointer to mutable T (can write through) |
+| `@@T` | Pointer to pointer to immutable T |
+| `@@mut T` | Pointer to pointer to mutable T |
 | `&x` | Address of x |
 | `p^` | Dereference p |
 | `p^^` | Dereference twice |
+
+### Pointer Mutability Combinations
+
+| Declaration | Reassign pointer? | Write through pointer? |
+|-------------|-------------------|------------------------|
+| `ptr: @T` | No | No |
+| `ptr: @mut T` | No | Yes |
+| `mut ptr: @T` | Yes | No |
+| `mut ptr: @mut T` | Yes | Yes |
 
 ### Function Calls
 
