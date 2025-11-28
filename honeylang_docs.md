@@ -30,6 +30,7 @@ Honey draws a clear line between compile-time and runtime evaluation:
 └─────────────────────────────────────────────────────────────┘
                            │
                            │ comptime values flow down
+                           │
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  RUNTIME WORLD                                              │
@@ -188,28 +189,206 @@ In debug builds, undefined memory is filled with poison values (e.g., 0xAA)
 so that if a use slips past the compiler, you get an obvious crash or clearly
 wrong data rather than a subtle bug.
 
+## Control Flow
+
+### If Statements
+
+Basic conditional execution:
+
+```honey
+if some_condition {
+    do_something()
+}
+
+if x > 0 {
+    print("positive")
+} else {
+    print("non-positive")
+}
+```
+
+Parentheses around the condition are optional but allowed for visual clarity:
+
+```honey
+if (complex_expr and another_expr) {
+    do_something()
+}
+```
+
+For optional unwrapping with `if`, see Optional Types.
+
+### Match Statements
+
+Pattern matching on values:
+
+```honey
+match status {
+    .ok: print("success"),
+    .error: print("failure"),
+    .pending: {
+        log("still waiting")
+        retry()
+    },
+    else: print("unknown status"),
+}
+```
+
+Single expressions use a comma. Multiple statements require braces. The `else`
+arm handles any unmatched values.
+
+For enum types, the compiler checks exhaustiveness—if you handle all cases,
+`else` is not required - in fact, including the `else` arm when handling all
+cases, the compiler will error about unreachable code. If you add a new enum
+variant later, the compiler will error at every non-exhaustive match, helping
+you handle the new case everywhere.
+
+### Ranges
+
+Ranges represent a sequence of values, commonly used in for loops:
+
+```honey
+0..10      # exclusive: 0, 1, 2, ..., 9
+0..=10     # inclusive: 0, 1, 2, ..., 10
+```
+
+**Parenthesization rule:** Each side of `..` must be either a simple term
+(literal or identifier) or a parenthesized expression. This eliminates
+precedence ambiguity:
+
+```honey
+0..10           # OK: both sides are literals
+0..n            # OK: both sides are simple
+0..(n + 1)      # OK: complex expression is parenthesized
+(a + 1)..(b - 1)  # OK: both sides parenthesized
+
+# 0..n + 1      # ERROR: must parenthesize complex expressions
+```
+
+This rule keeps the grammar simple and forces clarity at the call site—no
+precedence rules to remember.
+
+### For Loops
+
+Iterate over arrays, slices, or ranges:
+
+```honey
+# iterate over elements
+for val in some_array {
+    print(val)
+}
+
+# iterate with index (value first, then index)
+for val, idx in some_array {
+    print("element {d} is {v}", {idx, val})
+}
+
+# iterate over a range
+for i in 0..10 {
+    print(i)  # prints 0 through 9
+}
+
+# inclusive range
+for i in 0..=10 {
+    print(i)  # prints 0 through 10
+}
+
+# with computed bounds
+for i in 0..(len - 1) {
+    process(data[i])
+}
+```
+
+### While Loops
+
+Basic while loop:
+
+```honey
+mut i := 0
+while i < 10 {
+    print(i)
+    i += 1
+}
+```
+
+**With continue expression:** The expression after `:` runs after each
+iteration, including after `continue` statements. This prevents the common bug
+of forgetting to increment:
+
+```honey
+mut i := 0
+while i < 10 : i += 1 {
+    if skip_condition {
+        continue  # i += 1 still runs!
+    }
+    process(i)
+}
+```
+
+The continue expression is particularly useful for pointer iteration:
+
+```honey
+mut ptr := start
+while ptr < end : ptr += 1 {
+    if ptr^ == 0 {
+        continue  # ptr still advances
+    }
+    process(ptr^)
+}
+```
+
+Note that pointer arithmetic requires a many-item pointer, and is generally
+considered unsafe. That is, it's the programmers job to ensure that the pointer
+always points to valid memory, and failing to uphold this invariant results in
+undefined behavior. See Pointers.
+
+### Break and Continue
+
+`break` exits the innermost loop immediately:
+
+```honey
+for item in items {
+    if item == target {
+        break
+    }
+}
+```
+
+`continue` skips to the next iteration:
+
+```honey
+for item in items {
+    if should_skip(item) {
+        continue
+    }
+    process(item)
+}
+```
+
+In while loops with a continue expression, `continue` executes that expression
+before the next iteration.
+
 ## Pointers
 
 Honey has two kinds of pointers, both **non-nullable by default**:
 
-| Type | Name | Arithmetic | Use Case |
-|------|------|------------|----------|
-| `@T` | Single-item pointer | No | Point to one value |
-| `*T` | Many-item pointer | Yes | Point into arrays/buffers, low-level work |
+| Type | Name                | Arithmetic | Use Case                                  |
+|------|---------------------|------------|-------------------------------------------|
+| `@T` | Single-item pointer | No         | Point to one value                        |
+| `*T` | Many-item pointer   | Yes        | Point into arrays/buffers, low-level work |
 
 Unlike C/C++ pointers, Honey pointers cannot be null unless explicitly marked
 optional (`?@T` or `?*T`). See Optional Types.
 
 **Pointer operations:**
 
-| Symbol | Context | Meaning |
-|--------|---------|---------|
-| `@T` | Type | Single-item pointer (read-only) |
-| `@mut T` | Type | Single-item pointer (mutable) |
-| `*T` | Type | Many-item pointer (read-only) |
-| `*mut T` | Type | Many-item pointer (mutable) |
-| `&` | Expression | Address of |
-| `^` | Expression (postfix) | Dereference |
+| Symbol   | Context              | Meaning                         |
+|----------|----------------------|---------------------------------|
+| `@T`     | Type                 | Single-item pointer (read-only) |
+| `@mut T` | Type                 | Single-item pointer (mutable)   |
+| `*T`     | Type                 | Many-item pointer (read-only)   |
+| `*mut T` | Type                 | Many-item pointer (mutable)     |
+| `&`      | Expression (prefix)  | Address of                      |
+| `^`      | Expression (postfix) | Dereference                     |
 
 ### Single-Item vs Many-Item Pointers
 
@@ -437,12 +616,12 @@ slice: []u8 = &arr            # slice referencing the array
 Following Honey's "immutable by default" principle, slice and array element
 mutability works the same as pointer mutability:
 
-| Type | Meaning |
-|------|---------|
-| `[]T` | Slice of immutable elements (cannot modify through slice) |
-| `[]mut T` | Slice of mutable elements (can modify through slice) |
-| `[N]T` | Array of immutable elements |
-| `[N]mut T` | Array of mutable elements |
+| Type       | Meaning                                                   |
+|------------|-----------------------------------------------------------|
+| `[]T`      | Slice of immutable elements (cannot modify through slice) |
+| `[]mut T`  | Slice of mutable elements (can modify through slice)      |
+| `[N]T`     | Array of immutable elements                               |
+| `[N]mut T` | Array of mutable elements                                 |
 
 ```honey
 # immutable elements (default)
@@ -476,9 +655,18 @@ name := "world"               # type inferred as []u8
 ```
 
 Since `[]u8` has immutable elements by default, you cannot modify a string
-literal (which is correct—string literals are stored in read-only memory).
+literal (FYI, string literals are stored in read-only memory).
 
-To work with mutable text, allocate a buffer:
+To work with mutable text, instantiate it statically:
+
+```honey
+main :: func() void {
+    buffer: [1024]mut u8 = {0} ** 1024
+    buffer[0] = 'H'   # OK: can modify elements
+}
+```
+
+Or allocate a buffer:
 
 ```honey
 import "std/mem/heap"
@@ -495,10 +683,10 @@ main :: func() void {
 
 The mutability model is consistent across pointers, arrays, and slices:
 
-| Pointer | Array | Slice | Meaning |
-|---------|-------|-------|---------|
-| `@T` | `[N]T` | `[]T` | Immutable target/elements |
-| `@mut T` | `[N]mut T` | `[]mut T` | Mutable target/elements |
+| Pointer  | Array      | Slice     | Meaning                   |
+|----------|------------|-----------|---------------------------|
+| `@T`     | `[N]T`     | `[]T`     | Immutable target/elements |
+| `@mut T` | `[N]mut T` | `[]mut T` | Mutable target/elements   |
 
 ## Optional Types
 
@@ -619,16 +807,16 @@ This is important for avoiding unnecessary computation or side effects.
 
 ### Optional Type Summary
 
-| Syntax | Meaning |
-|--------|---------|
-| `?T` | Optional type (may be `none`) |
-| `none` | Absent value |
-| `x orelse default` | Unwrap with fallback value |
-| `x?` | Force unwrap (traps if `none`) |
-| `if x \|v\| { }` | Conditional unwrap |
-| `if x \|v : guard\| { }` | Conditional unwrap with guard |
-| `if x and y \|a, b\| { }` | Multi-unwrap (short-circuits) |
-| `if (x and y) \|a, b : guard\| { }` | Multi-unwrap with guard |
+| Syntax                              | Meaning                        |
+|-------------------------------------|--------------------------------|
+| `?T`                                | Optional type (may be `none`)  |
+| `none`                              | Absent value                   |
+| `x orelse default`                  | Unwrap with fallback value     |
+| `x?`                                | Force unwrap (traps if `none`) |
+| `if x \|v\| { }`                    | Conditional unwrap             |
+| `if x \|v : guard\| { }`            | Conditional unwrap with guard  |
+| `if x and y \|a, b\| { }`           | Multi-unwrap (short-circuits)  |
+| `if (x and y) \|a, b : guard\| { }` | Multi-unwrap with guard        |
 
 ## Functions
 
@@ -846,6 +1034,30 @@ EntityId: type :: u32  # equivalent, explicit form
 | `name :: comptime func(...) T { }` | Compile-time only function                 |
 | `name :: inline func(...) T { }`   | Force-inlined runtime function             |
 | `name :: noinline func(...) T { }` | Never-inlined runtime function             |
+
+### Control Flow
+
+| Syntax                           | Meaning                                     |
+|----------------------------------|---------------------------------------------|
+| `if cond { }`                    | Conditional execution                       |
+| `if cond { } else { }`           | Conditional with else branch                |
+| `match val { pat: expr, ... }`   | Pattern matching                            |
+| `for x in collection { }`        | Iterate over elements                       |
+| `for x, i in collection { }`     | Iterate with index                          |
+| `for i in 0..n { }`              | Iterate over exclusive range                |
+| `for i in 0..=n { }`             | Iterate over inclusive range                |
+| `while cond { }`                 | While loop                                  |
+| `while cond : cont_expr { }`     | While loop with continue expression         |
+| `break`                          | Exit innermost loop                         |
+| `continue`                       | Skip to next iteration                      |
+
+### Ranges
+
+| Syntax       | Meaning                                              |
+|--------------|------------------------------------------------------|
+| `a..b`       | Exclusive range (a to b-1)                           |
+| `a..=b`      | Inclusive range (a to b)                             |
+| `0..(n + 1)` | Complex expressions must be parenthesized            |
 
 ### Pointers
 
