@@ -1,0 +1,15 @@
+DEBUG :: true
+
+mut did_something := false
+
+do_something :: func() void {
+  did_something = true
+}
+
+main :: func() void {
+  do_something()
+
+  if did_something {
+    print("something was done!")
+  }
+}
