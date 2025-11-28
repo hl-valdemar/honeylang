@@ -188,24 +188,62 @@ In debug builds, undefined memory is filled with poison values (e.g., 0xAA)
 so that if a use slips past the compiler, you get an obvious crash or clearly
 wrong data rather than a subtle bug.
 
-## Pointers and References
+## Pointers
 
-Honey uses distinct symbols for pointer operations to avoid ambiguity:
+Honey has two kinds of pointers, both **non-nullable by default**:
+
+| Type | Name | Arithmetic | Use Case |
+|------|------|------------|----------|
+| `@T` | Single-item pointer | No | Point to one value |
+| `*T` | Many-item pointer | Yes | Point into arrays/buffers, low-level work |
+
+Unlike C/C++ pointers, Honey pointers cannot be null unless explicitly marked
+optional (`?@T` or `?*T`). See Optional Types.
+
+**Pointer operations:**
 
 | Symbol | Context | Meaning |
 |--------|---------|---------|
-| `@` | Type | Pointer to (read-only) |
-| `@mut` | Type | Pointer to (mutable) |
-| `&` | Expression | Address of (reference) |
+| `@T` | Type | Single-item pointer (read-only) |
+| `@mut T` | Type | Single-item pointer (mutable) |
+| `*T` | Type | Many-item pointer (read-only) |
+| `*mut T` | Type | Many-item pointer (mutable) |
+| `&` | Expression | Address of |
 | `^` | Expression (postfix) | Dereference |
 
-This keeps `*` unambiguous as multiplication.
+### Single-Item vs Many-Item Pointers
+
+Single-item pointers (`@T`) point to exactly one value. The compiler prevents
+arithmetic on them, catching bugs where you accidentally index a single value:
+
+```honey
+main :: func() void {
+    x: i32 = 42
+    ptr: @i32 = &x
+    
+    val := ptr^          # OK: dereference
+    # bad := ptr + 1     # ERROR: no arithmetic on single-item pointer
+}
+```
+
+Many-item pointers (`*T`) point to an unknown number of items and support
+pointer arithmetic. Use them for low-level memory work:
+
+```honey
+main :: func() void {
+    arr: [4]i32 = {1, 2, 3, 4}
+    ptr: *i32 = &arr[0]     # many-item pointer into array
+    
+    first := ptr^           # OK: dereference
+    second := (ptr + 1)^    # OK: arithmetic, then dereference
+}
+```
 
 ### Pointer Mutability
 
-Pointers respect the mutability of the data they point to. By default, pointers
-are read-only (`@T`). To mutate through a pointer, you need a mutable pointer
-(`@mut T`) pointing to mutable data.
+Both pointer types respect the mutability of the data they point to. By default,
+pointers are read-only (`@T`, `*T`). To mutate through a pointer, you need a
+mutable pointer (`@mut T`, `*mut T`) pointing to mutable data.
 
 ```honey
 main :: func() void {
@@ -222,6 +260,8 @@ main :: func() void {
     d^ = 10                 # OK: y is now 10
 }
 ```
+
+The same rules apply to many-item pointers (`*T`, `*mut T`).
 
 ### Pointer Variable Mutability
 
@@ -245,7 +285,10 @@ main :: func() void {
 
 ### All Four Combinations
 
+These combinations apply to both single-item (`@`) and many-item (`*`) pointers:
+
 ```honey
+# Single-item pointers
 ptr1: @i32              # immutable pointer to immutable data
                         # - cannot reassign ptr1
                         # - cannot write through ptr1
@@ -261,6 +304,12 @@ mut ptr3: @i32          # mutable pointer to immutable data
 mut ptr4: @mut i32      # mutable pointer to mutable data
                         # - can reassign ptr4
                         # - can write through ptr4
+
+# Many-item pointers (same combinations, plus arithmetic)
+buf1: *u8               # immutable many-item pointer to immutable data
+buf2: *mut u8           # immutable many-item pointer to mutable data
+mut buf3: *u8           # mutable many-item pointer to immutable data
+mut buf4: *mut u8       # mutable many-item pointer to mutable data
 ```
 
 ### Pointer Chains
@@ -282,17 +331,304 @@ main :: func() void {
 
 ```honey
 Buffer :: struct {
-    data: @mut u8,
+    data: *mut u8,      # many-item pointer to buffer data
     len: u64,
 }
 
 main :: func() void {
     mut buf: Buffer = ...
-    ptr: @mut Buffer = &buf
-    data := ptr^.data      # dereference then access field
-    ptr^.len = 100         # modify field through pointer
+    ptr: @mut Buffer = &buf   # single-item pointer to one Buffer
+    data := ptr^.data         # dereference then access field
+    ptr^.len = 100            # modify field through pointer
 }
 ```
+
+### Pointer Arithmetic
+
+Only many-item pointers (`*T`) support arithmetic. This prevents accidental
+arithmetic on pointers that are meant to reference a single value:
+
+```honey
+import "std/mem"
+
+main :: func() void {
+    buffer: []mut u8 = mem.alloc(u8, 100)
+    defer mem.free(buffer)
+    
+    ptr: *mut u8 = &buffer[0]   # many-item pointer into buffer
+    
+    # arithmetic operations
+    second := ptr + 1           # pointer to second element
+    tenth := ptr + 9            # pointer to tenth element
+    
+    # difference between pointers (returns offset)
+    offset := tenth - ptr       # offset is 9
+    
+    # comparison
+    if ptr < tenth {
+        print("ptr comes before tenth")
+    }
+    
+    # increment/decrement (requires mutable binding)
+    mut cursor: *mut u8 = ptr
+    cursor += 1                 # advance one element
+    cursor -= 1                 # back one element
+}
+```
+
+Single-item pointers (`@T`) do **not** support arithmetic:
+
+```honey
+main :: func() void {
+    x: i32 = 42
+    ptr: @i32 = &x
+    
+    # bad := ptr + 1    # ERROR: cannot do arithmetic on @i32
+}
+```
+
+**Safety note:** Pointer arithmetic can create invalid pointers. The compiler
+does not bounds-check pointer arithmetic—it's the programmer's responsibility
+to ensure pointers remain valid. Out-of-bounds access is undefined behavior.
+
+### Nullable Pointers
+
+To represent a pointer that may be absent, use an optional pointer type:
+
+```honey
+ptr: @Buffer = get_buffer()    # must return valid pointer, cannot be null
+opt: ?@Buffer = find_buffer()  # may be none, must unwrap before use
+
+# same for many-item pointers
+data: *u8 = get_data()         # must be valid
+maybe: ?*u8 = find_data()      # may be none
+
+# use orelse or conditional unwrap to handle nullable pointers
+if opt |p| {
+    use(p)
+}
+```
+
+## Arrays and Slices
+
+Honey distinguishes between fixed-size arrays and dynamically-sized slices.
+
+### Arrays
+
+Arrays have a fixed size known at compile time. The size is part of the type:
+
+```honey
+arr: [4]u8 = {1, 2, 3, 4}      # fixed array of 4 bytes
+zeros: [16]i32 = {0} ** 16    # array initialized to all zeros
+```
+
+### Slices
+
+Slices are a pointer-length pair that reference a contiguous sequence of
+elements. They don't own the data they point to:
+
+```honey
+arr: [4]u8 = {1, 2, 3, 4}
+slice: []u8 = &arr            # slice referencing the array
+```
+
+### Element Mutability
+
+Following Honey's "immutable by default" principle, slice and array element
+mutability works the same as pointer mutability:
+
+| Type | Meaning |
+|------|---------|
+| `[]T` | Slice of immutable elements (cannot modify through slice) |
+| `[]mut T` | Slice of mutable elements (can modify through slice) |
+| `[N]T` | Array of immutable elements |
+| `[N]mut T` | Array of mutable elements |
+
+```honey
+# immutable elements (default)
+data: []u8 = &buffer
+data[0] = 65              # ERROR: cannot modify through []u8
+
+# mutable elements
+mut_data: []mut u8 = &mut_buffer
+mut_data[0] = 65          # OK: can modify through []mut u8
+```
+
+### Slice Variable Mutability
+
+Just like pointers, the slice *variable* itself can be mutable or immutable,
+independently of element mutability:
+
+```honey
+slice: []u8             # cannot reassign slice, cannot modify elements
+slice: []mut u8         # cannot reassign slice, CAN modify elements
+mut slice: []u8         # CAN reassign slice, cannot modify elements
+mut slice: []mut u8     # CAN reassign slice, CAN modify elements
+```
+
+### String Literals
+
+String literals have type `[]u8`—a slice of immutable bytes:
+
+```honey
+greeting: []u8 = "hello"      # string literal, immutable
+name := "world"               # type inferred as []u8
+```
+
+Since `[]u8` has immutable elements by default, you cannot modify a string
+literal (which is correct—string literals are stored in read-only memory).
+
+To work with mutable text, allocate a buffer:
+
+```honey
+import "std/mem/heap"
+
+main :: func() void {
+    buffer: []mut u8 = heap.alloc(u8, 1024)
+    defer heap.free(buffer)
+    
+    buffer[0] = 'H'   # OK: can modify elements
+}
+```
+
+### Mutability Comparison
+
+The mutability model is consistent across pointers, arrays, and slices:
+
+| Pointer | Array | Slice | Meaning |
+|---------|-------|-------|---------|
+| `@T` | `[N]T` | `[]T` | Immutable target/elements |
+| `@mut T` | `[N]mut T` | `[]mut T` | Mutable target/elements |
+
+## Optional Types
+
+To represent a value that may or may not be present, use optional types with
+the `?` prefix.
+
+### Basic Syntax
+
+```honey
+x: ?i32 = none      # optional with no value
+y: ?u8 = 255        # optional with a value
+z: ?@Buffer = none  # optional pointer (nullable pointer)
+```
+
+### Unwrapping Optionals
+
+**Force unwrap with `?` postfix** - Extracts the value, traps/panics if `none`:
+
+```honey
+y: ?u8 = 255
+val := y?  # val is u8, equals 255
+
+x: ?i32 = none
+bad := x?  # runtime trap/panic - x is none
+```
+
+**Unwrap with default using `orelse`**:
+
+```honey
+x: ?i32 = none
+y := x orelse 0      # y is i32, equals 0
+
+name: ?[]u8 = get_name()
+display := name orelse "anonymous"
+```
+
+### Conditional Unwrapping
+
+Use `if` with capture syntax to safely unwrap and bind the inner value:
+
+```honey
+name: ?[]u8 = get_name()
+
+if name |n| {
+    # n is []u8 here, block only runs if name != none
+    print(n)
+}
+```
+
+**With else branch:**
+
+```honey
+if config |c| {
+    use(c)
+} else {
+    use_defaults()
+}
+```
+
+**With guard clause** - Add a condition on the unwrapped value after `:`:
+
+```honey
+age: ?u8 = get_age()
+
+if age |a : a >= 18| {
+    print("adult")
+}
+```
+
+The guard is evaluated only if the optional contains a value. If the guard
+evaluates to `false`, the `else` branch (if present) is taken.
+
+### Multi-Unwrap
+
+Unwrap multiple optionals with `and`. This **short-circuits**: if the first
+optional is `none`, subsequent expressions are not evaluated.
+
+```honey
+name: ?[]u8 = get_name()
+age: ?u8 = get_age()
+
+if name and age |n, a| {
+    # both n and a are guaranteed non-none here
+    print("{s} is {d} years old", {n, a})
+}
+```
+
+**With guard clause on multiple values:**
+
+```honey
+if name and hat |n, h : n == "Huginn" and h.brand == .gucci| {
+    print("{s}'s got that drip\n", {n})
+}
+```
+
+Parentheses around the expression are optional, but can aid readability when
+combined with guards:
+
+```honey
+# without parentheses
+if name and hat |n, h : guard| { ... }
+
+# with parentheses for clarity
+if (name and hat) |n, h : guard| { ... }
+```
+
+### Short-Circuit Evaluation
+
+The `and` in multi-unwrap short-circuits left-to-right:
+
+```honey
+if get_name() and get_hat() |n, h| {
+    # get_hat() is only called if get_name() returned non-none
+}
+```
+
+This is important for avoiding unnecessary computation or side effects.
+
+### Optional Type Summary
+
+| Syntax | Meaning |
+|--------|---------|
+| `?T` | Optional type (may be `none`) |
+| `none` | Absent value |
+| `x orelse default` | Unwrap with fallback value |
+| `x?` | Force unwrap (traps if `none`) |
+| `if x \|v\| { }` | Conditional unwrap |
+| `if x \|v : guard\| { }` | Conditional unwrap with guard |
+| `if x and y \|a, b\| { }` | Multi-unwrap (short-circuits) |
+| `if (x and y) \|a, b : guard\| { }` | Multi-unwrap with guard |
 
 ## Functions
 
@@ -355,7 +691,7 @@ make_array_type :: comptime func(T: type, N: u32) type {
 }
 
 # runtime function with comptime parameter - called normally
-print_n_times :: func(comptime N: u32, msg: []const u8) void {
+print_n_times :: func(comptime N: u32, msg: []u8) void {
     # compiler can unroll this because N is comptime-known
     ...
 }
@@ -471,7 +807,7 @@ main :: func() void {
 import "std/mem/heap"
 
 PersonInfo :: struct {
-    name: []const u8,
+    name: []u8,
     age: u8,
 }
 
@@ -513,28 +849,64 @@ EntityId: type :: u32  # equivalent, explicit form
 
 ### Pointers
 
-| Syntax | Meaning |
-|--------|---------|
-| `@T` | Pointer to immutable T (read-only) |
-| `@mut T` | Pointer to mutable T (can write through) |
-| `@@T` | Pointer to pointer to immutable T |
-| `@@mut T` | Pointer to pointer to mutable T |
-| `&x` | Address of x |
-| `p^` | Dereference p |
-| `p^^` | Dereference twice |
+| Syntax   | Meaning                                        |
+|----------|------------------------------------------------|
+| `@T`     | Single-item pointer (read-only, no arithmetic) |
+| `@mut T` | Single-item pointer (mutable, no arithmetic)   |
+| `*T`     | Many-item pointer (read-only, with arithmetic) |
+| `*mut T` | Many-item pointer (mutable, with arithmetic)   |
+| `@@T`    | Pointer to pointer (single-item)               |
+| `**T`    | Pointer to pointer (many-item)                 |
+| `&x`     | Address of x                                   |
+| `p^`     | Dereference p                                  |
+| `p^^`    | Dereference twice                              |
 
 ### Pointer Mutability Combinations
 
-| Declaration | Reassign pointer? | Write through pointer? |
-|-------------|-------------------|------------------------|
-| `ptr: @T` | No | No |
-| `ptr: @mut T` | No | Yes |
-| `mut ptr: @T` | Yes | No |
-| `mut ptr: @mut T` | Yes | Yes |
+Applies to both `@T` (single-item) and `*T` (many-item) pointers:
+
+| Declaration                           | Reassign pointer? | Write through pointer? |
+|---------------------------------------|-------------------|------------------------|
+| `ptr: @T` / `ptr: *T`                 | No                | No                     |
+| `ptr: @mut T` / `ptr: *mut T`         | No                | Yes                    |
+| `mut ptr: @T` / `mut ptr: *T`         | Yes               | No                     |
+| `mut ptr: @mut T` / `mut ptr: *mut T` | Yes               | Yes                    |
+
+### Arrays and Slices
+
+| Syntax     | Meaning                                  |
+|------------|------------------------------------------|
+| `[N]T`     | Fixed-size array of N immutable elements |
+| `[N]mut T` | Fixed-size array of N mutable elements   |
+| `[]T`      | Slice of immutable elements              |
+| `[]mut T`  | Slice of mutable elements                |
+| `"hello"`  | String literal (type `[]u8`)             |
+
+### Slice Mutability Combinations
+
+| Declaration      | Reassign slice? | Modify elements? |
+|------------------|-----------------|------------------|
+| `s: []T`         | No              | No               |
+| `s: []mut T`     | No              | Yes              |
+| `mut s: []T`     | Yes             | No               |
+| `mut s: []mut T` | Yes             | Yes              |
+
+### Optional Types
+
+| Syntax                              | Meaning                        |
+|-------------------------------------|--------------------------------|
+| `?T`                                | Optional type (may be `none`)  |
+| `none`                              | Absent value                   |
+| `x orelse default`                  | Unwrap with fallback value     |
+| `x?`                                | Force unwrap (traps if `none`) |
+| `if x \|v\| { }`                    | Conditional unwrap             |
+| `if x \|v : guard\| { }`            | Conditional unwrap with guard  |
+| `if x and y \|a, b\| { }`           | Multi-unwrap (short-circuits)  |
+| `if (x and y) \|a, b : guard\| { }` | Multi-unwrap with guard        |
 
 ### Function Calls
 
-| Syntax | Meaning |
-|--------|---------|
-| `func_name(args)` | Runtime function call |
+| Syntax             | Meaning                                               |
+|--------------------|-------------------------------------------------------|
+| `func_name(args)`  | Runtime function call                                 |
 | `func_name!(args)` | Comptime function call (required for `comptime func`) |
