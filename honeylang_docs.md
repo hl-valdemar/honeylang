@@ -1122,3 +1122,87 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 |--------------------|-------------------------------------------------------|
 | `func_name(args)`  | Runtime function call                                 |
 | `func_name!(args)` | Comptime function call (required for `comptime func`) |
+
+## Compilation Philosophy
+
+Honey follows an "always compile" philosophy. The compiler will always produce
+an executable, even in the presence of errors. This enables incremental
+development and experiential learning.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  COMPILATION                                                │
+│                                                             │
+│  Source → Always produces executable                        │
+│           ├─ Clean code → normal instructions               │
+│           ├─ Warnings → normal instructions + console msg   │
+│           └─ Errors → trap/poison + console msg             │
+│                                                             │
+│  Exit code: 0 only if zero warnings AND zero errors         │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  RUNTIME                                                    │
+│                                                             │
+│  Execute → hits trap? → crash with clear message            │
+│          → hits poison value? → obvious garbage / crash     │
+│          → avoids error paths? → runs fine                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why this approach?**
+
+- **Incremental development:** Work on one part of your program while another
+  is incomplete. If your execution path avoids the broken code, you can still
+  test what you're working on.
+
+- **Experiential learning:** Want to know what happens when you return stack
+  memory? The compiler warns you, but lets you run it anyway. You learn by
+  seeing the trap fire, not by being blocked from experimenting.
+
+- **CI/CD compatibility:** The compiler returns a non-zero exit code when
+  warnings or errors are present, so automated pipelines still catch issues
+  before shipping.
+
+### Warnings vs Errors
+
+```honey
+# Warning: you probably don't want this, but it's technically legal
+dangerous :: func() []u8 {
+    buffer: [10]u8 = undefined
+    return buffer[0..]  # ⚠️ WARNING: returning slice to stack memory
+}
+
+# Error: this fundamentally cannot work, trap inserted
+broken :: func() i32 {
+    return "hello"  # ❌ ERROR: type mismatch → trap inserted
+}
+
+# Error: incomplete code
+todo :: func() i32 {
+    # no return statement → trap inserted at function exit
+}
+```
+
+## TODO: Define the complete categorization of warnings vs errors
+     
+Questions to resolve:
+
+1. Type errors: If someone writes `x: i32 = "hello"`, what goes in the 
+binary?
+    - Trap instruction at that site?
+    - Zero-initialize with poison pattern (e.g., 0xAAAAAAAA) and trap on use?
+    - Skip the entire function?
+
+2. Comptime errors: How does this interact with compile-time evaluation?
+    - `X :: 1 + "oops"` is a comptime error
+    - Does comptime error → runtime trap at usage sites?
+    - Or does comptime need stricter rules since there's no "runtime" to 
+      defer to?
+
+3. Specific categorizations needed:
+    - Returning stack memory: warning or error?
+    - Use of undefined variable: warning or error?
+    - Unreachable code: warning or error?
+    - Unused declarations: warning or error?
+    - Integer overflow: warning or error? (probably depends on build mode)
