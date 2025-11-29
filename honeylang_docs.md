@@ -1,5 +1,89 @@
 # Honey Language Documentation
 
+## Compilation Philosophy
+
+Honey follows an "always compile" philosophy. The compiler will always produce
+an executable, even in the presence of errors. This enables incremental
+development and experiential learning.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  COMPILATION                                                │
+│                                                             │
+│  Source → Always produces executable                        │
+│           ├─ Clean code → normal instructions               │
+│           ├─ Warnings → normal instructions + console msg   │
+│           └─ Errors → trap/poison + console msg             │
+│                                                             │
+│  Exit code: 0 only if zero warnings AND zero errors         │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  RUNTIME                                                    │
+│                                                             │
+│  Execute → hits trap? → crash with clear message            │
+│          → hits poison value? → obvious garbage / crash     │
+│          → avoids error paths? → runs fine                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why this approach?**
+
+- **Incremental development:** Work on one part of your program while another
+  is incomplete. If your execution path avoids the broken code, you can still
+  test what you're working on.
+
+- **Experiential learning:** Want to know what happens when you return stack
+  memory? The compiler warns you, but lets you run it anyway. You learn by
+  seeing the trap fire, not by being blocked from experimenting.
+
+- **CI/CD compatibility:** The compiler returns a non-zero exit code when
+  warnings or errors are present, so automated pipelines still catch issues
+  before shipping.
+
+### Warnings vs Errors
+
+```honey
+# Warning: you probably don't want this, but it's technically legal
+dangerous :: func() []u8 {
+    buffer: [10]u8 = undefined
+    return buffer[0..]  # ⚠️ WARNING: returning slice to stack memory
+}
+
+# Error: this fundamentally cannot work, trap inserted
+broken :: func() i32 {
+    return "hello"  # ❌ ERROR: type mismatch → trap inserted
+}
+
+# Error: incomplete code
+todo :: func() i32 {
+    # no return statement → trap inserted at function exit
+}
+```
+
+### TODO: Define the complete categorization of warnings vs errors
+     
+Questions to resolve:
+
+1. Type errors: If someone writes `x: i32 = "hello"`, what goes in the 
+binary?
+    - Trap instruction at that site?
+    - Zero-initialize with poison pattern (e.g., 0xAAAAAAAA) and trap on use?
+    - Skip the entire function?
+
+2. Comptime errors: How does this interact with compile-time evaluation?
+    - `X :: 1 + "oops"` is a comptime error
+    - Does comptime error → runtime trap at usage sites?
+    - Or does comptime need stricter rules since there's no "runtime" to 
+      defer to?
+
+3. Specific categorizations needed:
+    - Returning stack memory: warning or error?
+    - Use of undefined variable: warning or error?
+    - Unreachable code: warning or error?
+    - Unused declarations: warning or error?
+    - Integer overflow: warning or error? (probably depends on build mode)
+
 ## Comments
 
 Comments are strings of characters prefixed with the `#` token. These are not
@@ -547,11 +631,11 @@ Only many-item pointers (`*T`) support arithmetic. This prevents accidental
 arithmetic on pointers that are meant to reference a single value:
 
 ```honey
-import "std/mem"
+import "std/mem/heap"
 
 main :: func() void {
-    buffer: []mut u8 = mem.alloc(u8, 100)
-    defer mem.free(buffer)
+    buffer: []mut u8 = heap.alloc(u8, size: 100)
+    defer heap.free(buffer)
     
     ptr: *mut u8 = &buffer[0]   # many-item pointer into buffer
     
@@ -691,7 +775,7 @@ Or allocate a buffer:
 import "std/mem/heap"
 
 main :: func() void {
-    buffer: []mut u8 = heap.alloc(u8, 1024)
+    buffer: []mut u8 = heap.alloc(u8, size: 1024)
     defer heap.free(buffer)
     
     buffer[0] = 'H'   # OK: can modify elements
@@ -949,7 +1033,7 @@ add :: inline func(a: i32, b: i32) i32 {
 **`noinline`** - Prevent inlining. Useful for debugging or controlling code size:
 
 ```honey
-complex_operation :: noinline func(...) {
+complex_operation :: noinline func(...) void {
     ...
 }
 ```
@@ -959,6 +1043,87 @@ complex_operation :: noinline func(...) {
 Annotations are instructions, not hints. If you annotate it, the compiler
 respects it.
 
+### Default Arguments
+
+Functions can have parameters with default values. When calling such functions,
+you can omit arguments that have defaults, or provide them using named argument
+syntax.
+
+**Declaration:**
+
+```honey
+greet :: func(name: []u8, greeting: []u8 = "Hello", times: u32 = 1) void {
+    for _ in 0..times {
+        print("{s}, {s}!", {greeting, name})
+    }
+}
+```
+
+**Calling with defaults:**
+
+```honey
+greet("Alice")                          # uses defaults: "Hello", 1
+greet("Bob", greeting: "Hi")            # override greeting, use default times
+greet("Carol", times: 3)                # use default greeting, override times
+greet("Dave", greeting: "Hey", times: 2)  # override both
+```
+
+**Named argument syntax is required** when skipping earlier defaulted parameters
+to set later ones. This avoids ambiguity about argument order:
+
+```honey
+greet("Eve", "Howdy", 5)    # positional: all arguments in order
+greet("Eve", times: 5)      # named: skip greeting, set times
+# greet("Eve", 5)           # ERROR: ambiguous - is 5 the greeting or times?
+```
+
+**Comptime parameters cannot have defaults.**
+
+### Default Arguments vs Descriptor Structs
+
+For functions with many optional parameters, consider using a descriptor struct
+instead of many default arguments.
+
+**Use default arguments when:**
+- 1-3 optional parameters
+- Parameters are independent of each other
+- The common case uses mostly defaults
+
+```honey
+# Good use of default arguments
+alloc :: func(comptime T: type, size: usize = 1) []T { ... }
+
+read_file :: func(path: []u8, buffer_size: usize = 4096) ![]u8 { ... }
+```
+
+**Use descriptor structs when:**
+- Many optional parameters (4+)
+- Parameters form a logical group (configuration)
+- You want to name the configuration for clarity
+
+```honey
+# Good use of descriptor struct
+WindowDesc :: struct {
+    width: u32 = 800,
+    height: u32 = 600,
+    title: []u8 = "Untitled",
+    resizable: bool = true,
+    vsync: bool = true,
+    fullscreen: bool = false,
+    monitor: ?@Monitor = none,
+}
+
+create_window :: func(desc: WindowDesc) !Window { ... }
+
+# Clean to use, easy to extend without breaking callers
+window := create_window({ .title = "My Game", .fullscreen = true })
+```
+
+The descriptor struct approach has an advantage: adding new fields with
+defaults doesn't break any existing call sites. With default arguments, adding
+a new parameter (even with a default) changes the function signature, and
+likely the parameter order.
+
 ## Imports
 
 ```honey
@@ -966,7 +1131,7 @@ import "std/mem"
 import "std/mem/heap"
 
 main :: func() void {
-    buffer := heap.alloc(u8, 10)
+    buffer := heap.alloc(u8, size: 10)
     defer heap.free(buffer)
 
     result := mem.eql(u8, buffer, "hello?")
@@ -982,7 +1147,7 @@ import "std/mem"
 heap :: mem.heap
 
 main :: func() void {
-    buffer := heap.alloc(u8, 10)
+    buffer := heap.alloc(u8, size: 10)
     defer heap.free(buffer)
 
     result := mem.eql(u8, buffer, "hello?")
@@ -996,7 +1161,7 @@ Or using fully qualified paths:
 import "std/mem"
 
 some_func :: func() bool {
-    buffer := mem.heap.alloc(u8, 10)
+    buffer := mem.heap.alloc(u8, size: 10)
     defer mem.heap.free(buffer)
 
     result := mem.eql(u8, buffer, "hello?")
@@ -1007,6 +1172,210 @@ main :: func() void {
     _ = some_func()
 }
 ```
+
+## Memory Allocation
+
+Memory allocation in Honey is designed to be **explicit but not verbose**. We
+reject the dogma that global state is inherently evil—allocators are a
+cross-cutting concern that nearly every function needs, making them a perfect
+candidate for sensible defaults.
+
+### Philosophy
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  DESIGN PRINCIPLES                                          │
+│                                                             │
+│  1. No hidden magic: allocation calls are visible           │
+│  2. Sensible defaults: thread-local heap for common cases   │
+│  3. Explicit override: custom allocators when needed        │
+│  4. Build-mode aware: different behavior for debug/release  │
+│  5. Immutable defaults: no "action at a distance" bugs      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### The Default Heap Allocator
+
+Honey provides a **thread-local global heap allocator** that is:
+
+- Determined at compile time by build mode
+- **Immutable at runtime**—cannot be reconfigured
+
+```honey
+import "std/mem/heap"
+
+process :: func(input: []u8) []u8 {
+    # heap.alloc() is clear and explicit
+    result := heap.alloc(u8, size: input.len * 2)
+    
+    # ... work with result ...
+    
+    return result  # caller is responsible for heap.free()
+}
+
+main :: func() void {
+    data := process("hello")
+    defer heap.free(data)
+    
+    # use data...
+}
+```
+
+The behavior of `heap` depends on build mode:
+
+| Build Mode    | Allocator Behavior                              |
+|---------------|-------------------------------------------------|
+| Debug         | Tracking allocator with leak detection          |
+| Release       | Fast allocator, zero overhead                   |
+| ReleaseSafe   | Bounds-checking allocator                       |
+
+This is configured at compile time. You cannot change which allocator `heap`
+uses at runtime. This is intentional—it prevents bugs where memory allocated
+with one allocator is freed with another.
+
+### Why Immutable Defaults?
+
+Consider what would happen if you could reconfigure the default allocator:
+
+```honey
+# ❌ THIS IS NOT ALLOWED (and doesn't exist in Honey)
+
+mem.heap_set(my_custom_heap)
+
+# Somewhere else in the codebase...
+data := heap.alloc(u8, size: 100)
+
+# Later, someone changes it again...
+mem.heap_set(different_heap)
+
+# Now who frees `data`? With which allocator?
+heap.free(data)  # 💥 Wrong allocator - undefined behavior!
+```
+
+This is "action at a distance"—the behavior of `heap.free()` depends on what
+some unrelated code did earlier. By making `heap` immutable, Honey guarantees:
+
+**Whatever you allocate with, you free with.**
+
+### Custom Allocators
+
+For specialized needs, you create explicit allocator instances. These are not
+global—you manage their lifetime and pass them where needed.
+
+**Arena Allocator** - Fast bump allocation, bulk deallocation:
+
+```honey
+import "std/mem"
+import "std/mem/heap"
+
+process_file :: func(path: []u8) !Data {
+    # create arena backed by heap memory
+    backing := heap.alloc(u8, size: mem.megabytes(1))
+    defer heap.free(backing)
+    
+    arena := mem.Arena.init(backing)
+    
+    # all temporary allocations from arena (fast bump allocation)
+    file_contents := arena.alloc(u8, size: file_size)
+    parsed := arena.alloc(ParsedData)         # size defaults to 1
+    tokens := arena.alloc(Token, size: 1000)
+    
+    # ... process ...
+    
+    # copy result to heap for return
+    result := heap.create(Data)
+    mem.copy(result, parsed)
+    
+    return result
+    # arena goes out of scope - no individual frees needed
+}
+```
+
+**Pool Allocator** - O(1) fixed-size allocation, no fragmentation:
+
+```honey
+import "std/mem"
+
+EntitySystem :: struct {
+    pool: mem.Pool(Entity),
+}
+
+init_entities :: func() EntitySystem {
+    return EntitySystem{
+        pool = mem.Pool(Entity).init(10_000),
+    }
+}
+
+spawn :: func(sys: @mut EntitySystem) @Entity {
+    return sys.pool.alloc()  # O(1), no fragmentation
+}
+
+despawn :: func(sys: @mut EntitySystem, entity: @Entity) void {
+    sys.pool.free(entity)  # returned to pool for reuse
+}
+```
+
+### Passing Allocators to Functions
+
+When a function needs to allocate memory with a caller-provided allocator,
+accept it as a parameter:
+
+```honey
+import "std/mem"
+
+# Function that uses caller's allocator
+parse :: func(input: []u8, allocator: @mem.Allocator) !ParseResult {
+    buffer := allocator.alloc(u8, size: input.len)
+    defer allocator.free(buffer)
+    
+    # ... parse into buffer ...
+    
+    result := allocator.alloc(ParseResult)  # size defaults to 1
+    return result
+}
+
+# Caller decides which allocator to use
+main :: func() void {
+    # use an arena for this parsing work
+    arena := mem.Arena.init(backing)
+    result := parse(input, &arena) catch |err| {
+        # handle error
+    }
+    
+    # or use a pool
+    pool := mem.Pool(ParseResult).init(100)
+    result := parse(input, &pool) catch |err| {
+        # handle error
+    }
+}
+```
+
+### Memory Allocation Summary
+
+| What                        | How                 | When to Use                      |
+|-----------------------------|---------------------|----------------------------------|
+| `heap.alloc(T, size: n)`    | Thread-local global | General purpose, 90% of cases    |
+| `heap.create(T)`            | Thread-local global | Allocate single item             |
+| `arena.alloc(T, size: n)`   | Explicit instance   | Temporary/scoped work, bulk free |
+| `pool.alloc()`              | Explicit instance   | Many same-sized objects, O(1)    |
+
+**The golden rule:** Allocate and free with the same allocator. The type system
+helps enforce this—memory from `heap` can only be freed with `heap`, memory
+from your arena can only be freed with that arena.
+
+### Compared to Other Languages
+
+| Language | Approach | Honey's Advantage |
+|----------|----------|-------------------|
+| C | Hidden malloc, easy to mismatch | Explicit allocator at call site |
+| C++ | Allocator templates, complex | Simple, no template complexity |
+| Rust | Explicit everywhere, verbose | Sensible defaults reduce noise |
+| Zig | Allocator parameter threading | Less verbose for common cases |
+| Odin | Hidden context parameter | Fully transparent, nothing hidden |
+| Go | Hidden GC | Explicit control, no GC pauses |
+
+Honey sits in a sweet spot: explicit enough to always know what's happening,
+convenient enough that you don't drown in boilerplate.
 
 ## Structs
 
@@ -1141,87 +1510,3 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 |--------------------|-------------------------------------------------------|
 | `func_name(args)`  | Runtime function call                                 |
 | `func_name!(args)` | Comptime function call (required for `comptime func`) |
-
-## Compilation Philosophy
-
-Honey follows an "always compile" philosophy. The compiler will always produce
-an executable, even in the presence of errors. This enables incremental
-development and experiential learning.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  COMPILATION                                                │
-│                                                             │
-│  Source → Always produces executable                        │
-│           ├─ Clean code → normal instructions               │
-│           ├─ Warnings → normal instructions + console msg   │
-│           └─ Errors → trap/poison + console msg             │
-│                                                             │
-│  Exit code: 0 only if zero warnings AND zero errors         │
-└─────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│  RUNTIME                                                    │
-│                                                             │
-│  Execute → hits trap? → crash with clear message            │
-│          → hits poison value? → obvious garbage / crash     │
-│          → avoids error paths? → runs fine                  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Why this approach?**
-
-- **Incremental development:** Work on one part of your program while another
-  is incomplete. If your execution path avoids the broken code, you can still
-  test what you're working on.
-
-- **Experiential learning:** Want to know what happens when you return stack
-  memory? The compiler warns you, but lets you run it anyway. You learn by
-  seeing the trap fire, not by being blocked from experimenting.
-
-- **CI/CD compatibility:** The compiler returns a non-zero exit code when
-  warnings or errors are present, so automated pipelines still catch issues
-  before shipping.
-
-### Warnings vs Errors
-
-```honey
-# Warning: you probably don't want this, but it's technically legal
-dangerous :: func() []u8 {
-    buffer: [10]u8 = undefined
-    return buffer[0..]  # ⚠️ WARNING: returning slice to stack memory
-}
-
-# Error: this fundamentally cannot work, trap inserted
-broken :: func() i32 {
-    return "hello"  # ❌ ERROR: type mismatch → trap inserted
-}
-
-# Error: incomplete code
-todo :: func() i32 {
-    # no return statement → trap inserted at function exit
-}
-```
-
-## TODO: Define the complete categorization of warnings vs errors
-     
-Questions to resolve:
-
-1. Type errors: If someone writes `x: i32 = "hello"`, what goes in the 
-binary?
-    - Trap instruction at that site?
-    - Zero-initialize with poison pattern (e.g., 0xAAAAAAAA) and trap on use?
-    - Skip the entire function?
-
-2. Comptime errors: How does this interact with compile-time evaluation?
-    - `X :: 1 + "oops"` is a comptime error
-    - Does comptime error → runtime trap at usage sites?
-    - Or does comptime need stricter rules since there's no "runtime" to 
-      defer to?
-
-3. Specific categorizations needed:
-    - Returning stack memory: warning or error?
-    - Use of undefined variable: warning or error?
-    - Unreachable code: warning or error?
-    - Unused declarations: warning or error?
-    - Integer overflow: warning or error? (probably depends on build mode)
