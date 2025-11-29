@@ -2,12 +2,31 @@
 
 ## Comments
 
-Comments are strings of characters prefixed with the `#` token. These are, of
-course, not evaluated or compiled into the binary, but are simply ignored by
-the compiler.
+Comments are strings of characters prefixed with the `#` token. These are not
+evaluated or compiled into the binary, they are simply ignored.
 
 ```honey
-# Comments are prefixed with a pound, so yes, this is a comment.
+# Comments are prefixed with a pound, like this.
+```
+
+### Doc Comments
+
+Doc comments are comments meant for documenting structures and behaviors and
+are just like comments but prefixed with the `#!` token. They can only appear
+in relation to any such constructs and will produce an error if left without
+context.
+
+Doc comments will be included in generated documentation.
+
+```honey
+#! This is a doc comment describing the purpose of the struct below.
+PersonInfo :: struct {
+    name: []u8,
+    age: u8,
+}
+
+#! This doc comment stands alone and is thus invalid
+<missing construct>
 ```
 
 ## Logical Operators and Comparators
