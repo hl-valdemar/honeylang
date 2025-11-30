@@ -714,17 +714,81 @@ arr: [4]u8 = {1, 2, 3, 4}
 slice: []u8 = &arr            # slice referencing the array
 ```
 
+### Sentinel-Terminated Types
+
+For C interoperability, Honey supports sentinel-terminated slices and arrays.
+These guarantee a sentinel value (typically null) follows the data:
+
+```honey
+# Sentinel-terminated slice
+c_string: [:0]u8 = "hello"    # null-terminated, length 5
+
+# Sentinel-terminated array (fixed size, stack allocated)
+buffer: [256:0]u8 = undefined # 256 bytes + null terminator
+```
+
+A `[:0]u8` has:
+- A pointer to the data
+- A length (excluding the sentinel)
+- A guarantee that `data[len] == 0`
+
+**Sentinel values other than zero:**
+
+```honey
+# Terminated by 0xFF instead of 0x00
+packet: [:0xFF]u8 = ...
+buffer: [64:0xFF]u8 = ...
+```
+
+**Sentinels are a C interop detail.** In normal Honey code, always use `.len`
+for bounds. The sentinel exists to satisfy C APIs that expect null-terminated
+strings—Honey code should treat slices uniformly regardless of whether they
+have a sentinel.
+
+### Coercion
+
+Sentinel-terminated types coerce to their non-sentinel equivalents:
+
+```honey
+process :: func(data: []u8) void { ... }
+
+main :: func() void {
+    c_str: [:0]u8 = "hello"
+    process(c_str)  # [:0]u8 coerces to []u8
+}
+```
+
+This is safe because `[]u8` makes no assumptions about what follows the data.
+The sentinel guarantee is simply dropped.
+
+The reverse (converting `[]u8` to `[:0]u8`) requires allocation or copying,
+since there's no guarantee a null terminator exists:
+
+```honey
+main :: func() void {
+    data: []u8 = get_some_data()  # not null-terminated
+    
+    # TODO: exact API TBD, but conversion requires allocation
+    # because we must copy the data and append a null terminator
+    c_str: [:0]u8 = ... # allocate, copy data, add sentinel
+}
+```
+
 ### Element Mutability
 
 Following Honey's "immutable by default" principle, slice and array element
 mutability works the same as pointer mutability:
 
-| Type       | Meaning                                                   |
-|------------|-----------------------------------------------------------|
-| `[]T`      | Slice of immutable elements (cannot modify through slice) |
-| `[]mut T`  | Slice of mutable elements (can modify through slice)      |
-| `[N]T`     | Array of immutable elements                               |
-| `[N]mut T` | Array of mutable elements                                 |
+| Type         | Meaning                                                   |
+|--------------|-----------------------------------------------------------|
+| `[]T`        | Slice of immutable elements (cannot modify through slice) |
+| `[]mut T`    | Slice of mutable elements (can modify through slice)      |
+| `[:0]T`      | Sentinel-terminated slice of immutable elements           |
+| `[:0]mut T`  | Sentinel-terminated slice of mutable elements             |
+| `[N]T`       | Array of immutable elements                               |
+| `[N]mut T`   | Array of mutable elements                                 |
+| `[N:0]T`     | Sentinel-terminated array of immutable elements           |
+| `[N:0]mut T` | Sentinel-terminated array of mutable elements             |
 
 ```honey
 # immutable elements (default)
@@ -734,6 +798,10 @@ data[0] = 65              # ERROR: cannot modify through []u8
 # mutable elements
 mut_data: []mut u8 = &mut_buffer
 mut_data[0] = 65          # OK: can modify through []mut u8
+
+# sentinel-terminated, mutable
+c_buffer: [:0]mut u8 = get_c_buffer()
+c_buffer[0] = 65          # OK: can modify
 ```
 
 ### Slice Variable Mutability
@@ -742,54 +810,46 @@ Just like pointers, the slice *variable* itself can be mutable or immutable,
 independently of element mutability:
 
 ```honey
-slice: []u8             # cannot reassign slice, cannot modify elements
-slice: []mut u8         # cannot reassign slice, CAN modify elements
-mut slice: []u8         # CAN reassign slice, cannot modify elements
-mut slice: []mut u8     # CAN reassign slice, CAN modify elements
+slice: []u8               # cannot reassign slice, cannot modify elements
+slice: []mut u8           # cannot reassign slice, CAN modify elements
+mut slice: []u8           # CAN reassign slice, cannot modify elements
+mut slice: []mut u8       # CAN reassign slice, CAN modify elements
 ```
 
 ### String Literals
 
-String literals have type `[]u8`—a slice of immutable bytes:
+String literals have type `[:0]u8`—a sentinel-terminated slice of immutable
+bytes. This means they are always null-terminated and can be passed directly
+to C functions:
 
 ```honey
-greeting: []u8 = "hello"      # string literal, immutable
-name := "world"               # type inferred as []u8
+greeting: [:0]u8 = "hello"    # null-terminated string literal
+name := "world"               # type inferred as [:0]u8
 ```
 
-Since `[]u8` has immutable elements by default, you cannot modify a string
-literal (FYI, string literals are stored in read-only memory).
-
-To work with mutable text, instantiate it statically:
+String literals coerce to `[]u8` when sentinel-termination is not required:
 
 ```honey
+process :: func(data: []u8) void { ... }
+
 main :: func() void {
-    buffer: [1024]mut u8 = {0} ** 1024
-    buffer[0] = 'H'   # OK: can modify elements
+    process("hello")  # [:0]u8 coerces to []u8
 }
 ```
 
-Or allocate a buffer:
-
-```honey
-import "std/mem/heap"
-
-main :: func() void {
-    buffer: []mut u8 = heap.alloc(u8, size: 1024)
-    defer heap.free(buffer)
-    
-    buffer[0] = 'H'   # OK: can modify elements
-}
-```
+Since `[:0]u8` has immutable elements by default, you cannot modify a string
+literal (string literals are stored in read-only memory anyway).
 
 ### Mutability Comparison
 
 The mutability model is consistent across pointers, arrays, and slices:
 
-| Pointer  | Array      | Slice     | Meaning                   |
-|----------|------------|-----------|---------------------------|
-| `@T`     | `[N]T`     | `[]T`     | Immutable target/elements |
-| `@mut T` | `[N]mut T` | `[]mut T` | Mutable target/elements   |
+| Pointer  | Array       | Slice       | Meaning                   |
+|----------|-------------|-------------|---------------------------|
+| `@T`     | `[N]T`      | `[]T`       | Immutable target/elements |
+| `@mut T` | `[N]mut T`  | `[]mut T`   | Mutable target/elements   |
+| —        | `[N:0]T`    | `[:0]T`     | Sentinel, immutable       |
+| —        | `[N:0]mut T`| `[:0]mut T` | Sentinel, mutable         |
 
 ## Optional Types
 
@@ -1377,6 +1437,163 @@ from your arena can only be freed with that arena.
 Honey sits in a sweet spot: explicit enough to always know what's happening,
 convenient enough that you don't drown in boilerplate.
 
+## C Interoperability
+
+Honey is designed for seamless interoperability with C libraries. The key
+mechanisms are sentinel-terminated types, ABI-specific declarations, and
+opaque types.
+
+### C Functions
+
+Declare C functions using the `c` modifier:
+
+```honey
+# External C function (no body = defined elsewhere)
+puts :: c func(s: [:0]u8) i32
+strlen :: c func(s: [:0]u8) usize
+malloc :: c func(size: usize) ?*mut u8
+free :: c func(ptr: *mut u8) void
+```
+
+The `c` modifier indicates the function uses the C calling convention. The
+absence of a body indicates the function is defined externally (in a C library
+or object file).
+
+**Honey functions callable from C:**
+
+```honey
+# Honey implementation with C calling convention
+my_callback :: c func(data: @u8, len: usize) i32 {
+    # Honey code, but callable from C
+    return 0
+}
+```
+
+This is useful for callbacks, plugins, or exposing a C API from Honey code.
+
+### Other ABIs
+
+The same pattern extends to other calling conventions:
+
+```honey
+# Future support for other ABIs
+fortran_sub :: fortran func(...)
+cobol_proc :: cobol func(...)
+```
+
+### String Interop
+
+Honey string literals are `[:0]u8`, making C interop natural:
+
+```honey
+puts :: c func(s: [:0]u8) i32
+getenv :: c func(name: [:0]u8) ?[:0]u8
+
+main :: func() void {
+    # String literals work directly
+    puts("Hello from Honey!")
+    
+    # Receiving C strings
+    if getenv("PATH") |path| {
+        puts(path)
+    }
+}
+```
+
+**Performance note:** When receiving a `[:0]u8` from C and only passing it to
+other C functions (never accessing `.len`), the compiler may skip length
+computation entirely.
+
+### Opaque Types
+
+For C types you only interact with through pointers, use `opaque`:
+
+```honey
+# Opaque type - can only be used through pointers
+FILE :: opaque
+
+fopen :: c func(path: [:0]u8, mode: [:0]u8) ?@mut FILE
+fclose :: c func(file: @mut FILE) i32
+fread :: c func(buf: *mut u8, size: usize, count: usize, file: @mut FILE) usize
+
+main :: func() void {
+    if fopen("data.txt", "r") |file| {
+        defer fclose(file)
+        
+        buffer: [1024]mut u8 = undefined
+        bytes_read := fread(&buffer, 1, 1024, file)
+        # ...
+    }
+}
+```
+
+Opaque types cannot be:
+- Instantiated directly (no `FILE{}` or stack allocation)
+- Measured (`size_of!(FILE)` is an error)
+- Copied or inspected
+
+They can only be used as pointer targets (`@FILE`, `?@FILE`, etc.), which
+matches how C APIs expose them.
+
+### Struct Layout
+
+By default, Honey structs may have fields reordered or padded for optimization:
+
+```honey
+# Honey struct - compiler may optimize layout
+Point :: struct {
+    x: f64,
+    y: f64,
+}
+```
+
+For C interop, use `c struct` to guarantee C-compatible layout:
+
+```honey
+# C-layout struct - guaranteed to match C
+Point :: c struct {
+    x: f64,
+    y: f64,
+}
+
+distance :: c func(a: @Point, b: @Point) f64
+```
+
+Use `c struct` when:
+- Passing structs to/from C functions
+- Memory-mapping C data structures
+- Interfacing with hardware or file formats with specific layouts
+
+**Other ABI layouts:**
+
+```honey
+# Fortran-compatible layout (future)
+Matrix :: fortran struct {
+    data: *f64,
+    rows: i32,
+    cols: i32,
+}
+```
+
+### Pointer Correspondence
+
+| Honey | C Equivalent | Notes |
+|-------|--------------|-------|
+| `@T` | `const T*` | Single item, non-null |
+| `@mut T` | `T*` | Single item, non-null, mutable |
+| `?@T` | `const T*` | Single item, nullable |
+| `?@mut T` | `T*` | Single item, nullable, mutable |
+| `*T` | `const T*` | Many items, non-null |
+| `*mut T` | `T*` | Many items, non-null, mutable |
+| `?*T` | `const T*` | Many items, nullable |
+| `?*mut T` | `T*` | Many items, nullable, mutable |
+| `[:0]u8` | `const char*` | Null-terminated string |
+| `[:0]mut u8` | `char*` | Mutable null-terminated string |
+
+**Note:** C makes no distinction between single-item and many-item pointers, or
+between nullable and non-nullable. Honey's type system is stricter—choose the
+appropriate type based on how the C API actually uses the pointer.
+
 ## Structs
 
 ```honey
@@ -1422,6 +1639,8 @@ EntityId: type :: u32  # equivalent, explicit form
 | `name :: comptime func(...) T { }` | Compile-time only function                 |
 | `name :: inline func(...) T { }`   | Force-inlined runtime function             |
 | `name :: noinline func(...) T { }` | Never-inlined runtime function             |
+| `name :: c func(...) T`            | C function declaration (external)          |
+| `name :: c func(...) T { }`        | Honey function with C calling convention   |
 
 ### Control Flow
 
@@ -1474,22 +1693,31 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 
 ### Arrays and Slices
 
-| Syntax     | Meaning                                  |
-|------------|------------------------------------------|
-| `[N]T`     | Fixed-size array of N immutable elements |
-| `[N]mut T` | Fixed-size array of N mutable elements   |
-| `[]T`      | Slice of immutable elements              |
-| `[]mut T`  | Slice of mutable elements                |
-| `"hello"`  | String literal (type `[]u8`)             |
+| Syntax       | Meaning                                       |
+|--------------|-----------------------------------------------|
+| `[N]T`       | Fixed-size array of N immutable elements      |
+| `[N]mut T`   | Fixed-size array of N mutable elements        |
+| `[N:0]T`     | Sentinel-terminated array, immutable elements |
+| `[N:0]mut T` | Sentinel-terminated array, mutable elements   |
+| `[]T`        | Slice of immutable elements                   |
+| `[]mut T`    | Slice of mutable elements                     |
+| `[:0]T`      | Sentinel-terminated slice, immutable elements |
+| `[:0]mut T`  | Sentinel-terminated slice, mutable elements   |
+| `[:S]T`      | Slice terminated by sentinel value S          |
+| `"hello"`    | String literal (type `[:0]u8`)                |
 
 ### Slice Mutability Combinations
 
-| Declaration      | Reassign slice? | Modify elements? |
-|------------------|-----------------|------------------|
-| `s: []T`         | No              | No               |
-| `s: []mut T`     | No              | Yes              |
-| `mut s: []T`     | Yes             | No               |
-| `mut s: []mut T` | Yes             | Yes              |
+| Declaration        | Reassign? | Modify elements? |
+|--------------------|-----------|------------------|
+| `s: []T`           | No        | No               |
+| `s: []mut T`       | No        | Yes              |
+| `mut s: []T`       | Yes       | No               |
+| `mut s: []mut T`   | Yes       | Yes              |
+| `s: [:0]T`         | No        | No               |
+| `s: [:0]mut T`     | No        | Yes              |
+| `mut s: [:0]T`     | Yes       | No               |
+| `mut s: [:0]mut T` | Yes       | Yes              |
 
 ### Optional Types
 
@@ -1510,3 +1738,25 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 |--------------------|-------------------------------------------------------|
 | `func_name(args)`  | Runtime function call                                 |
 | `func_name!(args)` | Comptime function call (required for `comptime func`) |
+
+### Function Modifiers
+
+| Syntax                          | Meaning                                |
+|---------------------------------|----------------------------------------|
+| `name :: func(...) T { }`       | Regular function                       |
+| `name :: inline func(...) T { }`| Force-inlined function                 |
+| `name :: noinline func(...) T { }` | Never-inlined function              |
+| `name :: comptime func(...) T { }` | Compile-time only function          |
+| `name :: c func(...) T`         | C calling convention (external)        |
+| `name :: c func(...) T { }`     | C calling convention (Honey impl)      |
+
+### C Interop
+
+| Syntax              | Meaning                              |
+|---------------------|--------------------------------------|
+| `name :: c func(...)` | C function declaration (external)  |
+| `name :: c func(...) { }` | Honey function with C ABI      |
+| `Name :: c struct { }` | C-layout struct                   |
+| `Name :: opaque`    | Opaque C type (pointer-only)         |
+| `[:0]u8`            | C string type (`const char*`)        |
+| `[:0]mut u8`        | Mutable C string (`char*`)           |
