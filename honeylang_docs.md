@@ -180,6 +180,47 @@ SHOULD_WORK :: ANSWER * PI
 X: f32 :: 10
 ```
 
+## Type Casting
+
+Honeylang does not support implicit type casting. All conversions must be explicit using one of four comptime functions:
+
+| Function          | Purpose                           | Traps when...                      |
+|-------------------|-----------------------------------|------------------------------------|
+| `as!(x, T)`       | Convert value, preserving meaning | Value doesn't fit in target type   |
+| `truncate!(x, T)` | Keep low bits, discard rest       | Never                              |
+| `bitcast!(x, T)`  | Reinterpret bits, no conversion   | Sizes don't match (compile error)  |
+| `ptrcast!(p, T)`  | Change pointer type               | Gaining mutability (compile error) |
+
+**Examples:**
+
+```honey
+# checked conversion
+x: i64 = 1000
+y := as!(x, i32)      # OK: 1000 fits in i32
+z := as!(x, u8)       # TRAP: 1000 > 255
+
+# truncation
+a: u32 = 0xDEADBEEF
+b := truncate!(a, u8) # b == 0xEF (low byte)
+
+# bit reinterpretation
+n: i32 = -1
+m := bitcast!(n, u32) # m == 0xFFFFFFFF (same bits)
+
+f: f32 = 3.14
+bits := bitcast!(f, u32)  # IEEE 754 representation
+
+# pointer to integer (usize only)
+ptr: @u8 = &data
+addr := as!(ptr, usize)
+ptr2 := as!(addr, @u8)
+
+# pointer type change
+buf: *u8 = get_buffer()
+ints := ptrcast!(buf, *u32)  # element type change
+single := ptrcast!(buf, @u8) # many → single (restricting)
+```
+
 ## Declarations
 
 ### Compile-time Constants
