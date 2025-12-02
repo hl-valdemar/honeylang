@@ -1665,6 +1665,617 @@ EntityId :: u32
 EntityId: type :: u32  # equivalent, explicit form
 ```
 
+## Composition Over Inheritance
+
+Honey does not have class-based inheritance. This is a deliberate design choice,
+not an omission. Inheritance hierarchies tend to create rigid, tightly-coupled
+code that becomes difficult to modify as requirements evolve.
+
+Instead, Honey encourages **composition**: building complex types by combining
+simpler ones, and **interfaces**: contracts about what functions must exist.
+
+### The Problem with Inheritance
+
+In languages with inheritance, you often see patterns like:
+
+```
+Animal
+├── Mammal
+│   ├── Dog
+│   └── Cat
+└── Bird
+    ├── Eagle
+    └── Penguin  # Can't fly... awkward
+```
+
+This creates problems:
+
+- **Rigid hierarchies:** Adding "flying mammal" (bat) breaks the model
+- **God classes:** Base classes accumulate methods "just in case"
+- **Hidden coupling:** Changing a base class ripples through all descendants
+- **Diamond problem:** Multiple inheritance creates ambiguity
+
+### Honey's Model
+
+Honey enforces a clean separation:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  NAMESPACES                                                 │
+│  - Organization units                                       │
+│  - Contain: functions, constants, types, nested namespaces  │
+│  - Can have mutable state (module-level globals)            │
+│  - Can implement interfaces                                 │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  STRUCTS                                                    │
+│  - Pure data layout                                         │
+│  - Contain: fields only                                     │
+│  - No methods, no behavior                                  │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  INTERFACES                                                 │
+│  - Contracts about what a namespace must provide            │
+│  - Contain: associated types, function signatures           │
+│  - Checked at compile time via `impl` declarations          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Namespaces
+
+Namespaces are organizational units that contain functions, types, constants,
+and can even hold mutable state. They are the primary way to group related
+functionality.
+
+### Basic Namespace Syntax
+
+```honey
+geometry :: namespace {
+    # Constants
+    PI :: 3.14159265359
+    
+    # Types (pure data)
+    Point :: struct {
+        x: f32,
+        y: f32,
+    }
+    
+    Circle :: struct {
+        center: Point,
+        radius: f32,
+    }
+    
+    # Functions
+    distance :: func(a: @Point, b: @Point) f32 {
+        dx := b.x - a.x
+        dy := b.y - a.y
+        return sqrt(dx * dx + dy * dy)
+    }
+    
+    area :: func(c: @Circle) f32 {
+        return PI * c.radius * c.radius
+    }
+}
+
+main :: func() void {
+    p1 := geometry.Point{ .x = 0, .y = 0 }
+    p2 := geometry.Point{ .x = 3, .y = 4 }
+    
+    d := geometry.distance(&p1, &p2)  # 5.0
+}
+```
+
+### Nested Namespaces
+
+Namespaces can be nested to create hierarchies:
+
+```honey
+# std/mem.hon
+mem :: namespace {
+    # Direct contents of mem
+    copy :: func(dst: []mut u8, src: []u8) void { ... }
+    
+    # Nested namespace
+    heap :: namespace {
+        alloc :: func(comptime T: type, size: usize = 1) []T { ... }
+        free :: func(ptr: *mut u8) void { ... }
+    }
+    
+    # Another nested namespace
+    arena :: namespace {
+        State :: struct { ... }
+        
+        init :: func(backing: []mut u8) State { ... }
+        alloc :: func(state: @mut State, comptime T: type, size: usize = 1) []T { ... }
+    }
+}
+
+# Usage
+main :: func() void {
+    buffer := mem.heap.alloc(u8, size: 1024)
+    defer mem.heap.free(buffer.ptr)
+    
+    mem.copy(buffer, "hello")
+}
+```
+
+### Namespaces with Mutable State
+
+Namespaces can contain mutable globals, enabling singleton patterns:
+
+```honey
+heap :: namespace {
+    # Private mutable state
+    mut state: HeapState = HeapState.init()
+    
+    # Public functions operate on the state
+    alloc :: func(comptime T: type, size: usize = 1) []T {
+        # operates directly on state
+        ...
+    }
+    
+    free :: func(ptr: *mut u8) void {
+        # operates directly on state
+        ...
+    }
+}
+
+# Clean usage - no state passing needed
+main :: func() void {
+    buffer := heap.alloc(u8, size: 1024)
+    defer heap.free(buffer.ptr)
+}
+```
+
+### Functions Over Methods
+
+Rather than methods attached to types, write functions that operate on the data
+they need:
+
+```honey
+# Define data
+Position :: struct { x: f32, y: f32 }
+Velocity :: struct { dx: f32, dy: f32 }
+Health :: struct { current: u32, max: u32 }
+
+# Functions work on specific data, not class hierarchies
+physics :: namespace {
+    move :: func(pos: @mut Position, vel: @Velocity, dt: f32) void {
+        pos.x += vel.dx * dt
+        pos.y += vel.dy * dt
+    }
+}
+
+combat :: namespace {
+    take_damage :: func(health: @mut Health, amount: u32) void {
+        if amount >= health.current {
+            health.current = 0
+        } else {
+            health.current -= amount
+        }
+    }
+    
+    is_alive :: func(health: @Health) bool {
+        return health.current > 0
+    }
+}
+
+# Compose entities from the parts they need
+Player :: struct {
+    pos: Position,
+    vel: Velocity,
+    health: Health,
+}
+
+Projectile :: struct {
+    pos: Position,
+    vel: Velocity,
+    # No health - projectiles don't need it
+}
+
+# Update functions use the appropriate operations
+update_player :: func(player: @mut Player, dt: f32) void {
+    physics.move(&player.pos, &player.vel, dt)
+}
+
+update_projectile :: func(proj: @mut Projectile, dt: f32) void {
+    physics.move(&proj.pos, &proj.vel, dt)
+}
+```
+
+## Interfaces
+
+Interfaces define contracts about what functions and types a namespace must
+provide. They enable generic programming without inheritance or virtual dispatch.
+
+### Basic Interface Syntax
+
+An interface declares associated types and function signatures:
+
+```honey
+Serializable :: interface {
+    # Associated types
+    Data: type,
+    
+    # Required functions
+    serialize: func(value: @Data, writer: @Writer) void!,
+    deserialize: func(reader: @Reader) Data!,
+}
+```
+
+A namespace satisfies an interface by providing all required types and functions.
+Use `impl` to declare this (idiomatically placed at the top of the namespace):
+
+```honey
+json :: namespace {
+    impl Serializable  # compile-time assertion
+    
+    Data :: Point
+    
+    serialize :: func(value: @Data, writer: @Writer) void! {
+        try writer.write_str("{\"x\":")
+        try writer.write_f32(value.x)
+        try writer.write_str(",\"y\":")
+        try writer.write_f32(value.y)
+        try writer.write_str("}")
+    }
+    
+    deserialize :: func(reader: @Reader) Data! {
+        # parse JSON...
+    }
+}
+```
+
+### Associated Types
+
+All types in an interface are associated types. The implementing namespace
+provides concrete types for each:
+
+```honey
+Collection :: interface {
+    Container: type,
+    Element: type,
+    
+    len: func(c: @Container) usize,
+    get: func(c: @Container, idx: usize) ?@Element,
+    set: func(c: @mut Container, idx: usize, value: Element) void,
+}
+
+int_array :: namespace {
+    impl Collection
+    
+    Container :: struct { items: [256]i32, count: usize }
+    Element :: i32
+    
+    len :: func(c: @Container) usize { 
+        return c.count 
+    }
+    
+    get :: func(c: @Container, idx: usize) ?@Element {
+        if idx >= c.count { return none }
+        return &c.items[idx]
+    }
+    
+    set :: func(c: @mut Container, idx: usize, value: Element) void {
+        if idx >= 256 { return }
+        c.items[idx] = value
+        if idx >= c.count { c.count = idx + 1 }
+    }
+}
+```
+
+### Using Interfaces in Generic Code
+
+Generic functions take implementation namespaces as comptime parameters:
+
+```honey
+# I is a namespace that satisfies Collection
+sum_all :: func(comptime I: Collection, container: @I.Container) i64 {
+    mut total: i64 = 0
+    for i in 0..I.len(container) {
+        if I.get(container, i) |val| {
+            total += as!(val^, i64)
+        }
+    }
+    return total
+}
+
+main :: func() void {
+    mut arr: int_array.Container = ...
+    
+    # Pass the implementing namespace explicitly
+    total := sum_all(int_array, &arr)
+}
+```
+
+The implementation is always explicit at the call site. No hidden dispatch, no
+"which implementation wins?" questions.
+
+### Type Constraints with Function Requirements
+
+When an associated type must satisfy another interface, use `is`:
+
+```honey
+Comparable :: interface {
+    Element: type,
+    compare: func(a: @Element, b: @Element) Ordering,
+}
+
+SortedCollection :: interface {
+    Container: type,
+    Element: type is Comparable,  # constraint
+    
+    insert: func(c: @mut Container, value: Element) void,
+    find: func(c: @Container, value: @Element) ?@Element,
+}
+```
+
+The constraint `Element: type is Comparable` means: "this namespace must also
+provide the functions from `Comparable`, specialized for `Element`."
+
+When implementing:
+
+```honey
+sorted_ints :: namespace {
+    impl SortedCollection
+    
+    Container :: struct { items: [256]i32, count: usize }
+    Element :: i32
+    
+    # Required by Comparable constraint
+    compare :: func(a: @Element, b: @Element) Ordering {
+        if a^ < b^ { return .less }
+        if a^ > b^ { return .greater }
+        return .equal
+    }
+    
+    # Required by SortedCollection
+    insert :: func(c: @mut Container, value: Element) void { ... }
+    find :: func(c: @Container, value: @Element) ?@Element { ... }
+}
+```
+
+### Associated Namespaces
+
+For reuse, interfaces can require associated namespaces instead of pulling in
+function requirements:
+
+```honey
+HashMap :: interface {
+    Map: type,
+    Key: type,
+    KeyOps: Comparable where .Element is Key,  # associated NAMESPACE
+    Value: type,
+    
+    get: func(m: @Map, key: @Key) ?@Value,
+    put: func(m: @mut Map, key: Key, value: Value) void,
+}
+```
+
+Here `KeyOps` must be a namespace satisfying `Comparable`, with its `Element`
+type matching `Key`. This lets you delegate to existing implementations:
+
+```honey
+# Standard library provides canonical implementations
+# std/ops.hon
+ops :: namespace {
+    i32 :: namespace {
+        impl Comparable
+        
+        Element :: i32
+        
+        compare :: func(a: @Element, b: @Element) Ordering {
+            if a^ < b^ { return .less }
+            if a^ > b^ { return .greater }
+            return .equal
+        }
+    }
+    
+    f32 :: namespace {
+        impl Comparable
+        
+        Element :: f32
+        
+        compare :: func(a: @Element, b: @Element) Ordering { ... }
+    }
+    
+    # ... etc for other primitive types
+}
+```
+
+Now implementations reuse standard library namespaces:
+
+```honey
+import "std/ops"
+
+int_hash_map :: namespace {
+    impl HashMap
+    
+    Map :: struct { entries: [256]?Entry, count: usize }
+    Entry :: struct { key: i32, value: []u8 }
+    
+    Key :: i32
+    KeyOps :: ops.i32  # reuse standard library!
+    Value :: []u8
+    
+    get :: func(m: @Map, key: @Key) ?@Value { 
+        # can use KeyOps.compare(a, b) here
+        ...
+    }
+    
+    put :: func(m: @mut Map, key: Key, value: Value) void { ... }
+}
+```
+
+For custom types, create your own ops namespace:
+
+```honey
+Point :: struct { x: f32, y: f32 }
+
+point_ops :: namespace {
+    impl Comparable
+    
+    Element :: Point
+    
+    compare :: func(a: @Element, b: @Element) Ordering {
+        # compare by x, then by y
+        if a.x < b.x { return .less }
+        if a.x > b.x { return .greater }
+        if a.y < b.y { return .less }
+        if a.y > b.y { return .greater }
+        return .equal
+    }
+}
+```
+
+### Multiple Constraints
+
+Associated types can have multiple constraints:
+
+```honey
+Hashable :: interface {
+    Element: type,
+    hash: func(value: @Element) u64,
+}
+
+HashSet :: interface {
+    Set: type,
+    Element: type is Comparable, Hashable,  # multiple constraints
+    
+    insert: func(s: @mut Set, value: Element) bool,
+    contains: func(s: @Set, value: @Element) bool,
+    remove: func(s: @mut Set, value: @Element) bool,
+}
+```
+
+The implementing namespace must provide functions from both `Comparable` and
+`Hashable`.
+
+### Comptime Functions Returning Namespaces
+
+Comptime functions can return namespaces, enabling generic implementations:
+
+```honey
+storage :: comptime func(T: type, size: usize) namespace {
+    return namespace {
+        impl Collection
+        
+        Container :: struct { items: [size]T }
+        Element :: T
+        
+        len :: func(c: @Container) usize { 
+            return size 
+        }
+        
+        get :: func(c: @Container, idx: usize) ?@Element {
+            if idx >= size { return none }
+            return &c.items[idx]
+        }
+        
+        set :: func(c: @mut Container, idx: usize, value: Element) void {
+            if idx >= size { return }
+            c.items[idx] = value
+        }
+    }
+}
+
+# Instantiate specialized namespaces
+IntStorage :: storage(i32, 100)
+FloatStorage :: storage(f32, 256)
+
+main :: func() void {
+    mut ints: IntStorage.Container = undefined
+    IntStorage.set(&ints, 0, 42)
+    
+    # Works with generic code
+    total := sum_all(IntStorage, &ints)
+}
+```
+
+### Fully Generic Data Structures
+
+Combining all features for a fully generic hash map:
+
+```honey
+import "std/ops"
+
+hash_map :: comptime func(
+    K: type, 
+    V: type, 
+    KOps: Comparable where .Element is K,
+    capacity: usize = 256,
+) namespace {
+    return namespace {
+        impl HashMap
+        
+        Map :: struct {
+            entries: [capacity]?Entry,
+            count: usize,
+        }
+        Entry :: struct { key: K, value: V, hash: u64 }
+        
+        Key :: K
+        KeyOps :: KOps
+        Value :: V
+        
+        get :: func(m: @Map, key: @Key) ?@Value {
+            # use KeyOps.compare for key comparison
+            ...
+        }
+        
+        put :: func(m: @mut Map, key: Key, value: Value) void { ... }
+    }
+}
+
+# Usage with primitives
+IntStringMap :: hash_map(i32, []u8, ops.i32)
+
+# Usage with custom types
+PointDataMap :: hash_map(Point, Data, point_ops, capacity: 1024)
+
+main :: func() void {
+    mut m: IntStringMap.Map = undefined
+    IntStringMap.put(&m, 42, "answer")
+    
+    if IntStringMap.get(&m, &42) |val| {
+        print(val^)
+    }
+}
+```
+
+## Interface Summary
+
+| Syntax | Meaning |
+|--------|---------|
+| `interface { ... }` | Define an interface |
+| `Name: type` | Associated type |
+| `Name: type is X` | Associated type with constraint (pulls in X's functions) |
+| `Name: type is X, Y` | Associated type with multiple constraints |
+| `Name: Interface` | Associated namespace satisfying Interface |
+| `Name: Interface where .T is U` | Associated namespace with type constraint |
+| `impl InterfaceName` | Declare that this namespace satisfies the interface |
+| `comptime I: Interface` | Generic parameter requiring a satisfying namespace |
+| `I.TypeName` | Access associated type from implementation |
+| `I.func_name(...)` | Call function from implementation |
+
+## Design Principles
+
+1. **Structs are pure data.** No methods, no behavior, just field layout.
+
+2. **Namespaces hold behavior.** Functions, constants, types, nested namespaces.
+
+3. **Interfaces are contracts.** They specify what a namespace must provide.
+
+4. **Implementations are explicit.** You always see which namespace provides
+   which functions at the call site.
+
+5. **No hidden dispatch.** Runtime polymorphism requires explicit vtables.
+
+6. **Composition over inheritance.** Build complex behavior by combining simple
+   namespaces, not by inheriting from base classes.
+
 ## Summary of Syntax
 
 ### Declarations
@@ -1791,6 +2402,21 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 | `name :: c func(...) T`         | C calling convention (external)        |
 | `name :: c func(...) T { }`     | C calling convention (Honey impl)      |
 
+### Interfaces
+
+| Syntax                          | Meaning                                                  |
+|---------------------------------|----------------------------------------------------------|
+| `interface { ... }`             | Define an interface                                      |
+| `Name: type`                    | Associated type                                          |
+| `Name: type is X`               | Associated type with constraint (pulls in X's functions) |
+| `Name: type is X, Y`            | Associated type with multiple constraints                |
+| `Name: Interface`               | Associated namespace satisfying Interface                |
+| `Name: Interface where .T is U` | Associated namespace with type constraint                |
+| `impl InterfaceName`            | Declare that this namespace satisfies the interface      |
+| `comptime I: Interface`         | Generic parameter requiring a satisfying namespace       |
+| `I.TypeName`                    | Access associated type from implementation               |
+| `I.func_name(...)`              | Call function from implementation                        |
+
 ### C Interop
 
 | Syntax              | Meaning                              |
@@ -1801,3 +2427,4 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 | `Name :: opaque`    | Opaque C type (pointer-only)         |
 | `[:0]u8`            | C string type (`const char*`)        |
 | `[:0]mut u8`        | Mutable C string (`char*`)           |
+
