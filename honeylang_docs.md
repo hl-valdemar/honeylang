@@ -511,6 +511,24 @@ for item in items {
 In while loops with a continue expression, `continue` executes that expression
 before the next iteration.
 
+## Yield
+
+Sometimes, it can be beneficial to open a nested scope for certain types of
+work. Typically this work computes some result that is in turn used for
+something else. For this purpose, honeylang supports yielding values from such
+a scope in assignment.
+
+```honey
+data := {
+    # ...
+
+    result := ...
+    yield result  # once done, yield the result
+}
+
+# `data` now holds the value from `result`
+```
+
 ## Pointers
 
 Honey has two kinds of pointers, both **non-nullable by default**:
@@ -1658,6 +1676,28 @@ main :: func() void {
 }
 ```
 
+## Tuples
+
+### Declaration and instantiation
+```honey
+point: (f32, f32) = (1.0, 2.0)
+single: (i32,) = (42,)  # trailing comma for 1-tuple
+```
+
+### Access by index
+```honey
+x := point[0]
+y := point[1]
+```
+
+### In structs
+```honey
+Line :: struct {
+    start: (f32, f32),
+    end: (f32, f32),
+}
+```
+
 ## Type Aliasing
 
 ```honey
@@ -2275,6 +2315,191 @@ main :: func() void {
 
 6. **Composition over inheritance.** Build complex behavior by combining simple
    namespaces, not by inheriting from base classes.
+
+## Error Handling
+
+Honey handles errors as values. There is no hidden control flow—a function that
+can fail declares this in its signature, and the caller must explicitly handle
+the possibility of failure.
+
+### Fallible Functions
+
+Functions that can fail declare their error type after `!`:
+
+```honey
+read_file :: func(path: []u8) []u8 ! IoError { ... }
+```
+
+This reads as: "returns `[]u8` or fails with `IoError`."
+
+The space around `!` is idiomatic but not required.
+
+### Error Types
+
+Errors can be enums (when you only need to identify what went wrong) or tagged
+unions (when errors need to carry additional context).
+
+**Simple errors (enum):**
+
+```honey
+SimpleError :: enum {
+    OutOfMemory,
+    InvalidSize,
+    Timeout,
+}
+```
+
+**Rich errors (tagged union):**
+
+```honey
+IoError :: union(enum) {
+    NotFound: struct { path: []u8 },
+    PermissionDenied: struct { path: []u8, operation: []u8 },
+    Timeout: struct { after_ms: u64 },
+    ConnectionReset: void,  # no additional data needed
+}
+```
+
+**Constrained tagged union:**
+
+When you have a predefined set of error kinds, you can constrain the union:
+
+```honey
+IoErrorKind :: enum {
+    not_found,
+    permission_denied,
+    timeout,
+}
+
+IoError :: union(IoErrorKind) {
+    not_found: struct { path: []u8 },
+    permission_denied: struct { path: []u8 },
+    timeout: struct { after_ms: u64 },
+}
+```
+
+### Error Composition
+
+Functions that can fail with multiple error types use `|` to compose them:
+
+```honey
+process :: func(path: []u8) Ast ! IoError | ParseError { ... }
+```
+
+Parentheses are optional but can aid readability:
+
+```honey
+process :: func(path: []u8) Ast ! (IoError | ParseError) { ... }
+```
+
+Composed error types can also be defined standalone:
+
+```honey
+ProcessError :: IoError | ParseError | ValidationError
+
+process :: func(path: []u8) Ast ! ProcessError { ... }
+```
+
+### Inline Error Types
+
+For simple one-off cases, you can inline the error type:
+
+```honey
+# Inline enum
+simple :: func() void ! enum{Failed, Timeout} { ... }
+
+# Inline tagged union (when payloads are needed)
+complex :: func() Data ! union(enum) {
+    OutOfMemory: struct { requested: usize },
+    InvalidInput: void,
+} { ... }
+```
+
+For anything non-trivial, prefer named error types for clarity.
+
+### Propagation with `try`
+
+The `try` keyword unwraps a successful result or returns early with the error:
+
+```honey
+process :: func(path: []u8) Ast ! IoError | ParseError {
+    data := try read_file(path)   # returns early if IoError
+    ast := try parse(data)        # returns early if ParseError
+    return ast
+}
+```
+
+When the function's error type is a composition, `try` automatically widens
+narrower error types to match the return type.
+
+### Handling with `catch`
+
+The `catch` keyword handles errors and provides a value to continue with.
+
+**Provide a fallback value:**
+
+```honey
+data := read_file(path) catch default_data
+```
+
+**Handle with a block using `yield`:**
+
+```honey
+data := read_file(path) catch |e| {
+    log("read failed: {}", {e})
+    yield empty_data
+}
+use(data)  # continues with data = empty_data
+```
+
+The `yield` keyword provides a value from the catch block to the enclosing
+assignment. Execution continues after the statement.
+
+**Return from the function instead:**
+
+```honey
+data := read_file(path) catch |e| {
+    log("read failed: {}", {e})
+    return  # exits the enclosing function
+}
+use(data)  # never reached if error occurred
+```
+
+Use `return` when the error is unrecoverable at this level.
+
+**Match on specific error variants:**
+
+```honey
+data := read_file(path) catch |e| match e {
+    .NotFound |info|: {
+        print("file not found: {s}", {info.path})
+        yield create_default(info.path)
+    },
+    .Timeout |info|: {
+        print("timed out after {d}ms", {info.after_ms})
+        yield retry(path)
+    },
+    .PermissionDenied: {
+        panic("cannot recover from permission error")
+    },
+    .ConnectionReset: {
+        yield retry(path)
+    },
+}
+```
+
+### Summary
+
+| Syntax                     | Meaning                                            |
+|----------------------------|----------------------------------------------------|
+| `T ! E`                    | Function returns `T` or fails with `E`             |
+| `T ! E1 \| E2`             | Function can fail with either error type           |
+| `T ! (E1 \| E2)`           | Same, with optional parentheses                    |
+| `try expr`                 | Unwrap success or return early with error          |
+| `expr catch fallback`      | Provide fallback value on error                    |
+| `expr catch \|e\| { ... }` | Handle error with block                            |
+| `yield value`              | Provide value from catch block, continue execution |
+| `return` / `return value`  | Exit function from within catch block              |
 
 ## Summary of Syntax
 
