@@ -1243,6 +1243,298 @@ defaults doesn't break any existing call sites. With default arguments, adding
 a new parameter (even with a default) changes the function signature, and
 likely the parameter order.
 
+## First-Class Functions
+
+Functions in Honey are first-class values. They can be passed as arguments,
+returned from other functions, and stored in structs. This enables powerful
+patterns like callbacks, higher-order functions, and configurable behavior.
+
+Honey does **not** have closures—functions cannot capture variables from their
+enclosing scope. If a function needs data, it takes it as a parameter. This
+keeps data flow explicit and avoids hidden state or lifetime complexity.
+
+### Function Types
+
+A function declaration uses the `func` keyword followed by its signature:
+
+```honey
+is_even :: func(x: i32) bool {
+    return x % 2 == 0
+}
+```
+
+To store or pass a function, you need a **pointer** to it—just like any other
+value. The type `@func(i32) bool` is a pointer to a function taking `i32` and
+returning `bool`:
+
+```honey
+Predicate :: @func(i32) bool
+callback: Predicate = &is_even  # & takes pointer to function
+```
+
+This follows the same pattern as all other pointers in Honey:
+
+```honey
+x: i32 = 42
+ptr: @i32 = &x           # pointer to i32
+
+is_even :: func(x: i32) bool { ... }
+fp: @func(i32) bool = &is_even  # pointer to function
+```
+
+### Named Parameters in Function Types
+
+Parameter names can be added to function pointer types for documentation. Names
+are purely labels—they don't affect type compatibility:
+
+```honey
+# These are all the same type
+@func(i32, i32) i32
+@func(a: i32, b: i32) i32
+@func(left: i32, right: i32) i32
+@func(width: i32, height: i32) i32
+
+# Named parameters make intent clear
+AreaFunc :: @func(width: i32, height: i32) i32
+DistanceFunc :: @func(x1: f32, y1: f32, x2: f32, y2: f32) f32
+EventHandler :: @func(event: @Event, ctx: @mut Context) void
+
+# Mixing named and unnamed is allowed
+Comparator :: @func(a: i32, i32) i32  # second param unnamed
+```
+
+When assigning a function to a typed variable, only the types must match—the
+function's actual parameter names are irrelevant:
+
+```honey
+AreaFunc :: @func(width: i32, height: i32) i32
+
+# Different parameter names - still compatible
+compute :: func(w: i32, h: i32) i32 {
+    return w * h
+}
+
+main :: func() void {
+    calc: AreaFunc = &compute  # OK - signatures match structurally
+}
+```
+
+### Passing Functions as Arguments
+
+Functions can be passed to other functions, enabling callbacks and
+higher-order programming:
+
+```honey
+apply_twice :: func(x: i32, f: @func(i32) i32) i32 {
+    return f(f(x))
+}
+
+double :: func(x: i32) i32 {
+    return x * 2
+}
+
+square :: func(x: i32) i32 {
+    return x * x
+}
+
+main :: func() void {
+    a := apply_twice(5, &double)  # 20
+    b := apply_twice(3, &square)  # 81
+}
+```
+
+Common patterns like `map` and `filter`:
+
+```honey
+filter :: func(
+    data: []i32,
+    keep: @func(value: i32) bool,
+    allocator: @Allocator,
+) []i32 {
+    # ... return new slice with elements where keep() returned true
+}
+
+map :: func(
+    data: []i32,
+    transform: @func(value: i32) i32,
+    allocator: @Allocator,
+) []i32 {
+    # ... return new slice with transformed elements
+}
+
+is_positive :: func(x: i32) bool { return x > 0 }
+negate :: func(x: i32) i32 { return -x }
+
+main :: func() void {
+    data: []i32 = &{-2, -1, 0, 1, 2}
+
+    positives := filter(data, &is_positive, heap)
+    defer heap.free(positives)
+
+    negated := map(data, &negate, heap)
+    defer heap.free(negated)
+}
+```
+
+### Returning Functions
+
+Functions can return pointers to other functions:
+
+```honey
+Operation :: enum { add, sub, mul, div }
+
+add :: func(a: i32, b: i32) i32 { return a + b }
+sub :: func(a: i32, b: i32) i32 { return a - b }
+mul :: func(a: i32, b: i32) i32 { return a * b }
+div :: func(a: i32, b: i32) i32 { return a / b }
+
+get_operation :: func(op: Operation) @func(a: i32, b: i32) i32 {
+    return match op {
+        .add: &add,
+        .sub: &sub,
+        .mul: &mul,
+        .div: &div,
+    }
+}
+
+main :: func() void {
+    f := get_operation(.mul)
+    result := f(6, 7)  # 42
+}
+```
+
+### Storing Functions in Structs
+
+Functions can be stored as struct fields, enabling configurable behavior:
+
+```honey
+EventHandlers :: struct {
+    on_click: @func(x: i32, y: i32, button: MouseButton) void,
+    on_key: @func(key: KeyCode, modifiers: Modifiers) void,
+    on_resize: @func(width: u32, height: u32) void,
+}
+
+Widget :: struct {
+    bounds: Rect,
+    handlers: EventHandlers,
+}
+
+# Handler implementations
+handle_click :: func(x: i32, y: i32, button: MouseButton) void {
+    print("click at ({d}, {d})", {x, y})
+}
+
+handle_key :: func(key: KeyCode, modifiers: Modifiers) void {
+    print("key pressed: {}", {key})
+}
+
+handle_resize :: func(width: u32, height: u32) void {
+    print("resized to {d}x{d}", {width, height})
+}
+
+main :: func() void {
+    widget := Widget{
+        .bounds = Rect{ .x = 0, .y = 0, .w = 100, .h = 50 },
+        .handlers = EventHandlers{
+            .on_click = &handle_click,
+            .on_key = &handle_key,
+            .on_resize = &handle_resize,
+        },
+    }
+
+    # Invoke stored function
+    widget.handlers.on_click(10, 20, .left)
+}
+```
+
+### Optional Function Fields
+
+Function fields can be optional for handlers that aren't always needed:
+
+```honey
+EventHandlers :: struct {
+    on_click: ?@func(x: i32, y: i32) void,
+    on_hover: ?@func(x: i32, y: i32) void,
+    on_leave: ?@func() void,
+}
+
+dispatch_click :: func(handlers: @EventHandlers, x: i32, y: i32) void {
+    if handlers.on_click |handler| {
+        handler(x, y)
+    }
+}
+```
+
+### Functions with State
+
+Since Honey has no closures, functions that need state take it as a parameter:
+
+```honey
+# State is explicit - passed in, not captured
+process_with_count :: func(
+    data: []i32,
+    state: @mut ProcessState,
+    handler: @func(value: i32, state: @mut ProcessState) void,
+) void {
+    for value in data {
+        handler(value, state)
+    }
+}
+
+ProcessState :: struct {
+    count: i32,
+    sum: i64,
+}
+
+accumulate :: func(value: i32, state: @mut ProcessState) void {
+    state.count += 1
+    state.sum += as!(value, i64)
+}
+
+main :: func() void {
+    data: []i32 = &{1, 2, 3, 4, 5}
+    mut state := ProcessState{ .count = 0, .sum = 0 }
+
+    process_with_count(data, &state, &accumulate)
+
+    print("processed {d} items, sum = {d}", {state.count, state.sum})
+}
+```
+
+### Idiomatic Patterns
+
+While storing functions in structs enables method-like patterns, the idiomatic
+Honey approach uses namespaces to group related functions:
+
+```honey
+# Idiomatic: namespace groups type and operations
+counter :: namespace {
+    State :: struct { value: i32 }
+
+    make :: func(initial: i32) State {
+        return State{ .value = initial }
+    }
+
+    increment :: func(c: @mut State) void {
+        c.value += 1
+    }
+
+    get :: func(c: @State) i32 {
+        return c.value
+    }
+}
+
+main :: func() void {
+    mut c := counter.make(0)
+    counter.increment(&c)
+    counter.increment(&c)
+    print("count: {d}", {counter.get(&c)})  # 2
+}
+```
+
+Reserve function-in-struct patterns for cases where the behavior truly needs
+to vary per instance, such as event handlers, plugins, or strategy patterns.
+
 ## Imports
 
 ```honey
