@@ -373,18 +373,113 @@ match status {
         log("still waiting")
         retry()
     },
-    else: print("unknown status"),
 }
 ```
 
-Single expressions use a comma. Multiple statements require braces. The `else`
-arm handles any unmatched values.
+Single expressions use a comma. Multiple statements require braces.
 
-For enum types, the compiler checks exhaustiveness—if you handle all cases,
-`else` is not required - in fact, including the `else` arm when handling all
-cases, the compiler will error about unreachable code. If you add a new enum
-variant later, the compiler will error at every non-exhaustive match, helping
-you handle the new case everywhere.
+**Matching on integers and other values:**
+
+```honey
+match code {
+    0: print("zero"),
+    1: print("one"),
+    2: print("two"),
+    else: print("other"),
+}
+```
+
+**The `else` arm** handles any unmatched values. For non-enum types (integers,
+strings, etc.), `else` is required since exhaustive matching isn't possible.
+
+**Exhaustiveness checking:** For enum types, the compiler checks that all
+variants are handled. If you handle all cases, `else` is not required—in fact,
+including `else` when all cases are covered produces a compiler error about
+unreachable code. This means adding a new enum variant later will cause
+compiler errors at every non-exhaustive match, helping you handle the new case
+everywhere.
+
+```honey
+Status :: enum { ok, error, pending }
+
+match status {
+    .ok: handle_ok(),
+    .error: handle_error(),
+    .pending: handle_pending(),
+    # no else needed - all variants covered
+}
+```
+
+**Union variant matching with payload capture:**
+
+When matching on tagged unions, use `|name|` to capture the variant's payload:
+
+```honey
+Result :: union(enum) {
+    success: Data,
+    failure: struct {
+        msg: []u8,
+        code: i32,
+    },
+    pending: void,
+}
+
+match result {
+    .success |data|: {
+        process(data)
+    },
+    .failure |info|: {
+        print("error {d}: {s}", {info.code, info.msg})
+    },
+    .pending: {
+        # void payload - no capture needed
+        wait()
+    },
+}
+```
+
+The capture syntax is consistent with optional unwrapping (`if opt |val| { }`)
+and error handling (`catch |e| { }`).
+
+**Void payloads:** When a union variant has a `void` payload, simply omit the
+capture:
+
+```honey
+Event :: union(enum) {
+    click: struct { x: i32, y: i32 },
+    keypress: KeyCode,
+    quit: void,
+}
+
+match event {
+    .click |pos|: handle_click(pos.x, pos.y),
+    .keypress |key|: handle_key(key),
+    .quit: should_exit = true,
+}
+```
+
+**Match expressions:** When matching on an expression (rather than a variable),
+the result is evaluated once:
+
+```honey
+match get_status() {
+    .ok: print("success"),
+    .error: print("failure"),
+}
+# get_status() is only called once
+```
+
+For union payload capture on expressions, the capture binds the payload
+directly:
+
+```honey
+match fetch_result() {
+    .success |data|: use(data),
+    .failure |err|: log(err.msg),
+}
+```
+
+For error handling patterns using match, see the Error Handling section.
 
 ### Ranges
 
@@ -514,7 +609,7 @@ before the next iteration.
 ## Yield
 
 Sometimes, it can be beneficial to open a nested scope for certain types of
-work. Typically this work computes some result that is in turn used for
+work. Typically, this work computes some result that is in turn used for
 something else. For this purpose, honeylang supports yielding values from such
 a scope in assignment.
 
