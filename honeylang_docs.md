@@ -949,10 +949,12 @@ msg: [:0]u8 =
 To mix raw multi-line content with escape sequences, use concatenation:
 
 ```honey
-message: [:0]u8 = "Header:\t" ++
+message: [:0]u8 = 
+    "Header:\t" ++
     |raw content here
     |more content
-++ "\nFooter"
+    |
+    ++ "Footer"
 ```
 
 ### Mutability Comparison
