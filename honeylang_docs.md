@@ -899,6 +899,62 @@ main :: func() void {
 Since `[:0]u8` has immutable elements by default, you cannot modify a string
 literal (string literals are stored in read-only memory anyway).
 
+### Multi-Line Strings
+
+Multi-line strings use the `|` character to mark each line. Content starts
+immediately after the pipe. Newlines between lines are implicit.
+
+```honey
+config: [:0]u8 =
+    |# Database configuration
+    |host = localhost
+    |port = 5432
+    |
+    |[server]
+    |address = 0.0.0.0
+```
+
+Key properties:
+
+- Content begins immediately after `|`
+- Newlines are automatically inserted between lines
+- Empty `|` produces a blank line
+- No escape sequence processing (raw content)
+- No trailing newline after the last line
+
+If your content contains `|` characters, only the leading pipe is special:
+
+```honey
+table: [:0]u8 =
+    |Name    | Age | City
+    |--------|-----|--------
+    |Alice   | 30  | Paris
+```
+
+If you need a trailing newline, add an empty line at the end:
+
+```honey
+# No trailing newline
+msg: [:0]u8 =
+    |hello
+    |world
+
+# With trailing newline
+msg: [:0]u8 =
+    |hello
+    |world
+    |
+```
+
+To mix raw multi-line content with escape sequences, use concatenation:
+
+```honey
+message: [:0]u8 = "Header:\t" ++
+    |raw content here
+    |more content
+++ "\nFooter"
+```
+
 ### Mutability Comparison
 
 The mutability model is consistent across pointers, arrays, and slices:
@@ -2709,6 +2765,41 @@ complex :: func() Data ! union(enum) {
 
 For anything non-trivial, prefer named error types for clarity.
 
+### Returning Errors
+
+The `error` keyword is a control flow statement that exits the function via
+the error channel—symmetric to `return` for success values:
+
+```honey
+parse_section :: func(p: @mut Parser) void ! ParseError {
+    start_line := p.line
+    p.advance()
+    
+    # ... parsing logic ...
+    
+    if p.pos >= p.input.len or p.input[p.pos] != ']' {
+        error .unclosed_section{.line = start_line}
+    }
+    
+    # ... continue on success ...
+}
+```
+
+Since errors are just union values, you can also construct them separately:
+
+```honey
+# Construct error value (it's just a union)
+e: ParseError = .timeout{.ms = 500}
+
+# Return it via error channel later
+error e
+```
+
+The symmetry:
+
+- `return x` — exit function with success value
+- `error e` — exit function with error value
+
 ### Propagation with `try`
 
 The `try` keyword unwraps a successful result or returns early with the error:
@@ -2787,7 +2878,9 @@ data := read_file(path) catch |e| match e {
 | `T ! E`                    | Function returns `T` or fails with `E`             |
 | `T ! E1 \| E2`             | Function can fail with either error type           |
 | `T ! (E1 \| E2)`           | Same, with optional parentheses                    |
-| `try expr`                 | Unwrap success or return early with error          |
+| `error e`                  | Exit function via error channel                    |
+| `error .variant{...}`      | Construct and return error in one step             |
+| `try expr`                 | Unwrap success or propagate error                  |
 | `expr catch fallback`      | Provide fallback value on error                    |
 | `expr catch \|e\| { ... }` | Handle error with block                            |
 | `yield value`              | Provide value from catch block, continue execution |
@@ -2875,6 +2968,13 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 | `[:S]T`      | Slice terminated by sentinel value S          |
 | `"hello"`    | String literal (type `[:0]u8`)                |
 
+### Multi-Line Strings
+
+| Syntax       | Meaning                                       |
+|--------------|-----------------------------------------------|
+| `\|content`  | Line of multi-line string                     |
+| `\|`         | Empty line (blank line in output)             |
+
 ### Slice Mutability Combinations
 
 | Declaration        | Reassign? | Modify elements? |
@@ -2919,6 +3019,19 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 | `name :: c func(...) T`         | C calling convention (external)        |
 | `name :: c func(...) T { }`     | C calling convention (Honey impl)      |
 
+### Error Handling
+
+| Syntax                     | Meaning                                            |
+|----------------------------|----------------------------------------------------|
+| `T ! E`                    | Function returns `T` or fails with `E`             |
+| `T ! E1 \| E2`             | Function can fail with either error type           |
+| `error e`                  | Exit function via error channel                    |
+| `error .variant{...}`      | Construct and return error in one step             |
+| `try expr`                 | Unwrap success or propagate error                  |
+| `expr catch fallback`      | Provide fallback value on error                    |
+| `expr catch \|e\| { ... }` | Handle error with block                            |
+| `yield value`              | Provide value from catch block, continue execution |
+
 ### Interfaces
 
 | Syntax                          | Meaning                                                  |
@@ -2944,4 +3057,3 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 | `Name :: opaque`    | Opaque C type (pointer-only)         |
 | `[:0]u8`            | C string type (`const char*`)        |
 | `[:0]mut u8`        | Mutable C string (`char*`)           |
-
