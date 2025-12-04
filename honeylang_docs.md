@@ -609,7 +609,7 @@ before the next iteration.
 ## Yield
 
 Sometimes, it can be beneficial to open a nested scope for certain types of
-work. Typically this work computes some result that is in turn used for
+work. Typically, this work computes some result that is in turn used for
 something else. For this purpose, honeylang supports yielding values from such
 a scope in assignment.
 
