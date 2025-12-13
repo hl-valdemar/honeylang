@@ -22,18 +22,18 @@ pub fn fromFile(allocator: mem.Allocator, file_path: []const u8, id: Id) !Source
 }
 
 pub const Id = u16; // allows for more than 65k files
-pub const Index = u32; // allows for more than 4m characters (in each file)
+pub const SourceIndex = u32; // allows for more than 4m characters (in each file)
 
 pub const SourceCode = struct {
     file_path: ?[]const u8 = null,
     buffer: []u8,
     id: Id,
 
-    pub fn get(self: *const SourceCode, idx: Index) ?u8 {
+    pub fn get(self: *const SourceCode, idx: SourceIndex) ?u8 {
         if (idx < self.buffer.len) return self.buffer[idx] else return null;
     }
 
-    pub fn getSlice(self: *const SourceCode, start: Index, end: Index) []u8 {
+    pub fn getSlice(self: *const SourceCode, start: SourceIndex, end: SourceIndex) []const u8 {
         return self.buffer[start..end];
     }
 };

@@ -1,5 +1,7 @@
 # Honey Language Documentation
 
+Specification v0.1
+
 ## Compilation Philosophy
 
 Honey follows an "always compile" philosophy. The compiler will always produce
@@ -2081,18 +2083,18 @@ Matrix :: fortran struct {
 
 ### Pointer Correspondence
 
-| Honey | C Equivalent | Notes |
-|-------|--------------|-------|
-| `@T` | `const T*` | Single item, non-null |
-| `@mut T` | `T*` | Single item, non-null, mutable |
-| `?@T` | `const T*` | Single item, nullable |
-| `?@mut T` | `T*` | Single item, nullable, mutable |
-| `*T` | `const T*` | Many items, non-null |
-| `*mut T` | `T*` | Many items, non-null, mutable |
-| `?*T` | `const T*` | Many items, nullable |
-| `?*mut T` | `T*` | Many items, nullable, mutable |
-| `[:0]u8` | `const char*` | Null-terminated string |
-| `[:0]mut u8` | `char*` | Mutable null-terminated string |
+| Honey        | C Equivalent  | Notes                          |
+|--------------|---------------|--------------------------------|
+| `@T`         | `const T*`    | Single item, non-null          |
+| `@mut T`     | `T*`          | Single item, non-null, mutable |
+| `?@T`        | `const T*`    | Single item, nullable          |
+| `?@mut T`    | `T*`          | Single item, nullable, mutable |
+| `*T`         | `const T*`    | Many items, non-null           |
+| `*mut T`     | `T*`          | Many items, non-null, mutable  |
+| `?*T`        | `const T*`    | Many items, nullable           |
+| `?*mut T`    | `T*`          | Many items, nullable, mutable  |
+| `[:0]u8`     | `const char*` | Null-terminated string         |
+| `[:0]mut u8` | `char*`       | Mutable null-terminated string |
 
 **Note:** C makes no distinction between single-item and many-item pointers, or
 between nullable and non-nullable. Honey's type system is stricter—choose the

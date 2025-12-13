@@ -8,7 +8,7 @@ const TokenList = @import("../lexer/token.zig").TokenList;
 const ast = @import("ast.zig");
 const Ast = @import("ast.zig").Ast;
 const NodeIndex = @import("ast.zig").NodeIndex;
-const SourceIndex = @import("../source/source.zig").Index;
+const SourceIndex = @import("../source/source.zig").SourceIndex;
 
 pub fn parse(allocator: mem.Allocator, tokens: TokenList) !Ast {
     var parser = try Parser.init(allocator, tokens);
@@ -48,16 +48,17 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) ParseError!Ast {
-        const decls = try self.parseProgram();
+        const start_pos = self.currentStart();
+        const decls = try self.parseDecls();
+        const end_pos = self.previousEnd();
 
-        // create root program node
-        const root = try self.ast.addProgram(decls, 0, 0); // always at index 0
+        const root = try self.ast.addProgram(decls, start_pos, end_pos);
         self.ast.root = root;
 
         return self.ast;
     }
 
-    fn parseProgram(self: *Parser) ParseError!ast.Range {
+    fn parseDecls(self: *Parser) ParseError!ast.Range {
         var decls = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 10);
         defer decls.deinit(self.allocator);
 
@@ -66,14 +67,14 @@ pub const Parser = struct {
                 // record the error
                 try self.errors.append(self.allocator, .{
                     .message = errorToMessage(err),
-                    .pos = self.currentPos(),
+                    .pos = self.currentStart(),
                 });
 
                 // emit an error node
                 const err_node = try self.ast.addError(
                     errorToMessage(err),
-                    self.currentPos(),
-                    self.currentPos(),
+                    self.currentStart(),
+                    self.currentStart(),
                 );
                 try decls.append(self.allocator, err_node);
 
@@ -113,7 +114,7 @@ pub const Parser = struct {
     }
 
     fn parseConstDecl(self: *Parser) ParseError!NodeIndex {
-        const start_pos = self.currentPos();
+        const start_pos = self.currentStart();
 
         // parse name
         const name = try self.parseIdentifier();
@@ -130,13 +131,13 @@ pub const Parser = struct {
         // parse value expression
         const value = try self.parseExpression();
 
-        const end_pos = self.currentPos();
+        const end_pos = self.previousEnd();
 
         return try self.ast.addConstDecl(name, type_node, value, start_pos, end_pos);
     }
 
     fn parseFuncDecl(self: *Parser) ParseError!NodeIndex {
-        const start_pos = self.currentPos();
+        const start_pos = self.currentStart();
 
         // parse name
         const name = try self.parseIdentifier();
@@ -162,7 +163,7 @@ pub const Parser = struct {
         // parse body
         const body = try self.parseBlock();
 
-        const end_pos = self.currentPos();
+        const end_pos = self.previousEnd();
 
         return try self.ast.addFuncDecl(
             name,
@@ -202,7 +203,7 @@ pub const Parser = struct {
     }
 
     fn parseBlock(self: *Parser) ParseError!NodeIndex {
-        const start_pos = self.currentPos();
+        const start_pos = self.currentStart();
 
         try self.expect(.left_curly);
 
@@ -229,7 +230,7 @@ pub const Parser = struct {
         const stmt_range = try self.ast.addExtra(statements.items);
         const defer_range = try self.ast.addExtra(deferred.items);
 
-        const end_pos = self.currentPos();
+        const end_pos = self.previousEnd();
 
         return try self.ast.addBlock(stmt_range, defer_range, start_pos, end_pos);
     }
@@ -263,31 +264,31 @@ pub const Parser = struct {
     }
 
     fn parseReturn(self: *Parser) ParseError!NodeIndex {
-        const start_pos = self.currentPos();
+        const start_pos = self.currentStart();
 
         try self.expect(.return_);
 
         const expr = try self.parseExpression();
 
-        const end_pos = self.currentPos();
+        const end_pos = self.previousEnd();
 
         return try self.ast.addReturn(expr, start_pos, end_pos);
     }
 
     fn parseDefer(self: *Parser) ParseError!NodeIndex {
-        const start_pos = self.currentPos();
+        const start_pos = self.currentStart();
 
         try self.expect(.defer_);
 
         const stmt = try self.parseStatement();
 
-        const end_pos = self.currentPos();
+        const end_pos = self.previousEnd();
 
         return try self.ast.addDefer(stmt, start_pos, end_pos);
     }
 
     fn parseVarDecl(self: *Parser) ParseError!NodeIndex {
-        const start_pos = self.currentPos();
+        const start_pos = self.currentStart();
 
         // optional 'mut'
         const is_mutable = self.match(.mut);
@@ -310,7 +311,7 @@ pub const Parser = struct {
         // parse value
         const value = try self.parseExpression();
 
-        const end_pos = self.currentPos();
+        const end_pos = self.previousEnd();
 
         return try self.ast.addVarDecl(
             name,
@@ -323,7 +324,7 @@ pub const Parser = struct {
     }
 
     fn parseAssignment(self: *Parser) ParseError!NodeIndex {
-        const start_pos = self.currentPos();
+        const start_pos = self.currentStart();
 
         const target = try self.parseIdentifier();
 
@@ -361,10 +362,10 @@ pub const Parser = struct {
                 target_ref,
                 rhs,
                 start_pos,
-                self.currentPos(),
+                self.currentStart(),
             );
 
-            const end_pos = self.currentPos();
+            const end_pos = self.previousEnd();
 
             return try self.ast.addAssignment(target, binary_op, start_pos, end_pos);
         }
@@ -374,7 +375,7 @@ pub const Parser = struct {
 
         const value = try self.parseExpression();
 
-        const end_pos = self.currentPos();
+        const end_pos = self.previousEnd();
 
         return try self.ast.addAssignment(target, value, start_pos, end_pos);
     }
@@ -389,7 +390,7 @@ pub const Parser = struct {
         while (self.match(.or_)) {
             const start_pos = self.ast.getLocation(left).start;
             const right = try self.parseLogicalAnd();
-            const end_pos = self.currentPos();
+            const end_pos = self.previousEnd();
 
             left = try self.ast.addBinaryOp(
                 .or_,
@@ -409,7 +410,7 @@ pub const Parser = struct {
         while (self.match(.and_)) {
             const start_pos = self.ast.getLocation(left).start;
             const right = try self.parseComparative();
-            const end_pos = self.currentPos();
+            const end_pos = self.previousEnd();
 
             left = try self.ast.addBinaryOp(
                 .and_,
@@ -441,7 +442,7 @@ pub const Parser = struct {
                 const start_pos = self.ast.getLocation(left).start;
                 self.advance();
                 const right = try self.parseAdditive();
-                const end_pos = self.currentPos();
+                const end_pos = self.previousEnd();
 
                 left = try self.ast.addBinaryOp(
                     binary_op,
@@ -471,7 +472,7 @@ pub const Parser = struct {
                 const start_pos = self.ast.getLocation(left).start;
                 self.advance();
                 const right = try self.parseMultiplicative();
-                const end_pos = self.currentPos();
+                const end_pos = self.previousEnd();
 
                 left = try self.ast.addBinaryOp(
                     binary_op,
@@ -503,7 +504,7 @@ pub const Parser = struct {
                 const start_pos = self.ast.getLocation(left).start;
                 self.advance();
                 const right = try self.parseUnary();
-                const end_pos = self.currentPos();
+                const end_pos = self.previousEnd();
 
                 left = try self.ast.addBinaryOp(
                     binary_op,
@@ -530,10 +531,10 @@ pub const Parser = struct {
         };
 
         if (op) |unary_op| {
-            const start_pos = self.currentPos();
+            const start_pos = self.currentStart();
             self.advance();
             const operand = try self.parseUnary(); // right associative
-            const end_pos = self.currentPos();
+            const end_pos = self.previousEnd();
 
             return try self.ast.addUnaryOp(unary_op, operand, start_pos, end_pos);
         }
@@ -566,29 +567,29 @@ pub const Parser = struct {
     }
 
     fn parseIdentifier(self: *Parser) ParseError!NodeIndex {
-        const start_pos = self.currentPos();
+        const start_pos = self.currentStart();
 
         try self.expect(.identifier);
 
-        const end_pos = self.currentPos();
+        const end_pos = self.previousEnd();
         const token_idx: u32 = @intCast(self.pos - 1);
 
         return try self.ast.addIdentifier(token_idx, start_pos, end_pos);
     }
 
     fn parseLiteral(self: *Parser) ParseError!NodeIndex {
-        const start_pos = self.currentPos();
+        const start_pos = self.currentStart();
         const token_idx: u32 = @intCast(self.pos);
 
         self.advance();
 
-        const end_pos = self.currentPos();
+        const end_pos = self.previousEnd();
 
         return try self.ast.addLiteral(token_idx, start_pos, end_pos);
     }
 
     fn parseCallExpr(self: *Parser) ParseError!NodeIndex {
-        const start_pos = self.currentPos();
+        const start_pos = self.currentStart();
 
         const func = try self.parseIdentifier();
 
@@ -607,7 +608,7 @@ pub const Parser = struct {
         try self.expect(.right_paren);
 
         const args_range = try self.ast.addExtra(args.items);
-        const end_pos = self.currentPos();
+        const end_pos = self.previousEnd();
 
         return try self.ast.addCallExpr(func, args_range, start_pos, end_pos);
     }
@@ -651,10 +652,24 @@ pub const Parser = struct {
         self.pos += 1;
     }
 
-    fn currentPos(self: *const Parser) SourceIndex {
-        if (self.pos > 0 and self.pos <= self.tokens.len) {
-            const token = self.tokens[self.pos - 1];
-            return token.start;
+    /// Return the start position of the current token (before consuming).
+    fn currentStart(self: *const Parser) SourceIndex {
+        if (self.pos < self.tokens.len) {
+            return self.tokens[self.pos].start;
+        }
+        // at end, return end of last token
+        if (self.tokens.len > 0) {
+            const last = self.tokens[self.tokens.len - 1];
+            return last.start + last.len;
+        }
+        return 0;
+    }
+
+    /// Return the end position of the previous token (after consuming).
+    fn previousEnd(self: *const Parser) SourceIndex {
+        if (self.pos > 0) {
+            const prev = self.tokens[self.pos - 1];
+            return prev.start + prev.len;
         }
         return 0;
     }

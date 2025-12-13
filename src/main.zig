@@ -60,11 +60,16 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     std.debug.print("Parsed {} nodes:\n\n", .{ast.nodeCount()});
     honey.ast_printer.print(&ast, &tokens, &src);
 
-    // TODO: analyze parse tree
-    // var semantic_arena = std.heap.ArenaAllocator.init(gpa);
-    // defer semantic_arena.deinit();
-    //
-    // try honey.semantic.analyze(semantic_arena.allocator(), ast);
+    // 4. analyze parse tree
+    var semantic_arena = std.heap.ArenaAllocator.init(gpa);
+    defer semantic_arena.deinit();
+
+    const sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &ast, &tokens, &src);
+
+    // print generated symbol table
+    std.debug.print("\n\n::[[ Semantic Analysis ]]::\n\n", .{});
+    std.debug.print("Collected {d} symbols:\n\n", .{sem_result.symbols.count()});
+    honey.symbol_printer.print(&sem_result.symbols, &src);
 }
 
 pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8) !void {

@@ -2,7 +2,7 @@ const std = @import("std");
 const mem = @import("std").mem;
 const ascii = @import("std").ascii;
 
-const SourceIndex = @import("../source/source.zig").Index;
+const SourceIndex = @import("../source/source.zig").SourceIndex;
 const SourceCode = @import("../source/source.zig").SourceCode;
 
 const Token = @import("token.zig").Token;

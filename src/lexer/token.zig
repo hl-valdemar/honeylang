@@ -5,7 +5,7 @@ const source = @import("../source/source.zig");
 pub const Token = struct {
     kind: Kind,
     src_id: source.Id,
-    start: source.Index,
+    start: source.SourceIndex,
     len: u8, // allows for tokens of 255 characters
 };
 

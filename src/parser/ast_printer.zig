@@ -7,12 +7,149 @@ const TokenList = @import("../lexer/token.zig").TokenList;
 const SourceCode = @import("../source/source.zig").SourceCode;
 
 pub fn print(ast: *const Ast, tokens: *const TokenList, src: *const SourceCode) void {
+    printSummary(ast, tokens, src);
+    std.debug.print("\n", .{});
+    printTree(ast, tokens, src);
+}
+
+pub fn printSummary(ast: *const Ast, tokens: *const TokenList, src: *const SourceCode) void {
+    const count = ast.nodeCount();
+
+    if (count == 0) {
+        std.debug.print("(no nodes)\n", .{});
+        return;
+    }
+
+    // print header
+    std.debug.print("{s:<5} {s:<14} {s:<12} {s}\n", .{
+        "idx",
+        "kind",
+        "location",
+        "info",
+    });
+    std.debug.print("{s:-<5} {s:-<14} {s:-<12} {s:-<24}\n", .{
+        "",
+        "",
+        "",
+        "",
+    });
+
+    // print each node
+    for (0..count) |i| {
+        const idx: NodeIndex = @intCast(i);
+        printNodeSummary(ast, tokens, src, idx);
+    }
+}
+
+fn printNodeSummary(ast: *const Ast, tokens: *const TokenList, src: *const SourceCode, idx: NodeIndex) void {
+    const kind = ast.getKind(idx);
+    const loc = ast.getLocation(idx);
+    const kind_str = @tagName(kind);
+
+    // format location
+    var loc_buf: [12]u8 = undefined;
+    const loc_str = std.fmt.bufPrint(&loc_buf, "{d}..{d}", .{ loc.start, loc.end }) catch "?";
+
+    // get additional info based on node kind
+    const info = getNodeInfo(ast, tokens, src, idx, kind);
+
+    std.debug.print("{d:<5} {s:<14} {s:<12} {s}\n", .{
+        idx,
+        kind_str,
+        loc_str,
+        info,
+    });
+}
+
+fn getNodeInfo(
+    ast: *const Ast,
+    tokens: *const TokenList,
+    src: *const SourceCode,
+    idx: NodeIndex,
+    kind: NodeKind,
+) []const u8 {
+    // static buffer for formatting - reused each call
+    const S = struct {
+        var buf: [64]u8 = undefined;
+    };
+
+    return switch (kind) {
+        .program => blk: {
+            const prog = ast.getProgram(idx);
+            break :blk std.fmt.bufPrint(&S.buf, "decls: {d}", .{prog.declarations.len}) catch "?";
+        },
+        .const_decl => blk: {
+            const decl = ast.getConstDecl(idx);
+            const name = getIdentifierName(ast, tokens, src, decl.name);
+            break :blk std.fmt.bufPrint(&S.buf, "name: {s}", .{name}) catch "?";
+        },
+        .func_decl => blk: {
+            const decl = ast.getFuncDecl(idx);
+            const name = getIdentifierName(ast, tokens, src, decl.name);
+            const param_count = decl.params.len / 2; // params stored as name, type pairs
+            break :blk std.fmt.bufPrint(&S.buf, "name: {s}, params: {d}", .{ name, param_count }) catch "?";
+        },
+        .var_decl => blk: {
+            const decl = ast.getVarDecl(idx);
+            const name = getIdentifierName(ast, tokens, src, decl.name);
+            const mut_str = if (decl.is_mutable) "mut" else "immut";
+            break :blk std.fmt.bufPrint(&S.buf, "name: {s}, {s}", .{ name, mut_str }) catch "?";
+        },
+        .identifier => blk: {
+            const name = getIdentifierName(ast, tokens, src, idx);
+            break :blk std.fmt.bufPrint(&S.buf, "\"{s}\"", .{name}) catch "?";
+        },
+        .literal => blk: {
+            const lit = ast.getLiteral(idx);
+            const token = tokens.items[lit.token_idx];
+            const value = src.getSlice(token.start, token.start + token.len);
+            break :blk std.fmt.bufPrint(&S.buf, "\"{s}\"", .{value}) catch "?";
+        },
+        .binary_op => blk: {
+            const op = ast.getBinaryOp(idx);
+            break :blk std.fmt.bufPrint(&S.buf, "op: {s}", .{@tagName(op.op)}) catch "?";
+        },
+        .unary_op => blk: {
+            const op = ast.getUnaryOp(idx);
+            break :blk std.fmt.bufPrint(&S.buf, "op: {s}", .{@tagName(op.op)}) catch "?";
+        },
+        .block => blk: {
+            const block = ast.getBlock(idx);
+            break :blk std.fmt.bufPrint(&S.buf, "stmts: {d}, deferred: {d}", .{
+                block.statements.len,
+                block.deferred.len,
+            }) catch "?";
+        },
+        .return_stmt => "return",
+        .defer_stmt => "defer",
+        .assignment => blk: {
+            const assign = ast.getAssignment(idx);
+            const name = getIdentifierName(ast, tokens, src, assign.target);
+            break :blk std.fmt.bufPrint(&S.buf, "target: {s}", .{name}) catch "?";
+        },
+        .call_expr => blk: {
+            const call = ast.getCallExpr(idx);
+            const name = getIdentifierName(ast, tokens, src, call.func);
+            break :blk std.fmt.bufPrint(&S.buf, "func: {s}, args: {d}", .{ name, call.args.len }) catch "?";
+        },
+        .err => blk: {
+            const err = ast.getError(idx);
+            break :blk std.fmt.bufPrint(&S.buf, "\"{s}\"", .{err.msg}) catch "?";
+        },
+    };
+}
+
+fn getIdentifierName(ast: *const Ast, tokens: *const TokenList, src: *const SourceCode, idx: NodeIndex) []const u8 {
+    const ident = ast.getIdentifier(idx);
+    const token = tokens.items[ident.token_idx];
+    return src.getSlice(token.start, token.start + token.len);
+}
+
+pub fn printTree(ast: *const Ast, tokens: *const TokenList, src: *const SourceCode) void {
     const root = ast.root;
     printNode(ast, tokens, src, root, "", true);
 }
 
-// don't bother freeing the strings as this will only be called in debug
-// and the memory will be freed on program exit anyways
 fn printNode(
     ast: *const Ast,
     tokens: *const TokenList,
@@ -33,9 +170,9 @@ fn printNode(
 
     const kind = ast.getKind(idx);
 
-    // calculate child prefix
+    // calculate child prefix (don't bother freeing - debug only)
     const child_prefix = if (prefix.len == 0)
-        " " // root's children start at position 1 (second character)
+        " "
     else if (is_last)
         std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{prefix}) catch unreachable
     else
@@ -54,19 +191,19 @@ fn printNode(
         },
 
         .const_decl => {
-            std.debug.print("declaration (const):\n", .{});
+            std.debug.print("const_decl:\n", .{});
             const decl = ast.getConstDecl(idx);
 
             std.debug.print("{s}├─ name: ", .{child_prefix});
             printIdentifierValue(ast, tokens, src, decl.name);
             std.debug.print("\n", .{});
 
-            if (decl.type_node) |type_idx| {
+            if (decl.type_id) |type_idx| {
                 std.debug.print("{s}├─ type: ", .{child_prefix});
                 printIdentifierValue(ast, tokens, src, type_idx);
                 std.debug.print("\n", .{});
             } else {
-                std.debug.print("{s}├─ type: <unresolved>\n", .{child_prefix});
+                std.debug.print("{s}├─ type: <inferred>\n", .{child_prefix});
             }
 
             std.debug.print("{s}└─ value:\n", .{child_prefix});
@@ -75,7 +212,7 @@ fn printNode(
         },
 
         .func_decl => {
-            std.debug.print("declaration (func):\n", .{});
+            std.debug.print("func_decl:\n", .{});
             const decl = ast.getFuncDecl(idx);
 
             std.debug.print("{s}├─ name: ", .{child_prefix});
@@ -83,11 +220,11 @@ fn printNode(
             std.debug.print("\n", .{});
 
             if (decl.return_type) |ret_type| {
-                std.debug.print("{s}├─ type: ", .{child_prefix});
+                std.debug.print("{s}├─ return: ", .{child_prefix});
                 printIdentifierValue(ast, tokens, src, ret_type);
                 std.debug.print("\n", .{});
             } else {
-                std.debug.print("{s}├─ type: void\n", .{child_prefix});
+                std.debug.print("{s}├─ return: void\n", .{child_prefix});
             }
 
             // print parameters
@@ -117,46 +254,25 @@ fn printNode(
                 }
             }
 
-            std.debug.print("{s}└─ block:\n", .{child_prefix});
+            std.debug.print("{s}└─ body:\n", .{child_prefix});
             const body_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}   ", .{child_prefix}) catch unreachable;
-            const block = ast.getBlock(decl.body);
-
-            const stmts = ast.getExtra(block.statements);
-            const defers = ast.getExtra(block.deferred);
-
-            std.debug.print("{s}├─ statements: {d}\n", .{ body_prefix, stmts.len });
-            if (stmts.len > 0) {
-                const stmt_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│  ", .{body_prefix}) catch unreachable;
-                for (stmts, 0..) |stmt, j| {
-                    const is_last_stmt = (j == stmts.len - 1);
-                    printNode(ast, tokens, src, stmt, stmt_prefix, is_last_stmt);
-                }
-            }
-
-            std.debug.print("{s}└─ deferred: {d}\n", .{ body_prefix, defers.len });
-            if (defers.len > 0) {
-                const defer_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}   ", .{body_prefix}) catch unreachable;
-                for (defers, 0..) |def, j| {
-                    const is_last_defer = (j == defers.len - 1);
-                    printNode(ast, tokens, src, def, defer_prefix, is_last_defer);
-                }
-            }
+            printNode(ast, tokens, src, decl.body, body_prefix, true);
         },
 
         .var_decl => {
-            std.debug.print("var decl:\n", .{});
+            std.debug.print("var_decl:\n", .{});
             const decl = ast.getVarDecl(idx);
 
             std.debug.print("{s}├─ name: ", .{child_prefix});
             printIdentifierValue(ast, tokens, src, decl.name);
             std.debug.print("\n", .{});
 
-            if (decl.type_node) |type_idx| {
+            if (decl.type_id) |type_idx| {
                 std.debug.print("{s}├─ type: ", .{child_prefix});
                 printIdentifierValue(ast, tokens, src, type_idx);
                 std.debug.print("\n", .{});
             } else {
-                std.debug.print("{s}├─ type: <unresolved>\n", .{child_prefix});
+                std.debug.print("{s}├─ type: <inferred>\n", .{child_prefix});
             }
 
             std.debug.print("{s}├─ mutable: {}\n", .{ child_prefix, decl.is_mutable });
@@ -168,7 +284,7 @@ fn printNode(
 
         .binary_op => {
             const op = ast.getBinaryOp(idx);
-            std.debug.print("binary op: {s}\n", .{@tagName(op.op)});
+            std.debug.print("binary_op: {s}\n", .{@tagName(op.op)});
 
             printNode(ast, tokens, src, op.left, child_prefix, false);
             printNode(ast, tokens, src, op.right, child_prefix, true);
@@ -176,13 +292,13 @@ fn printNode(
 
         .unary_op => {
             const op = ast.getUnaryOp(idx);
-            std.debug.print("unary op: {s}\n", .{@tagName(op.op)});
+            std.debug.print("unary_op: {s}\n", .{@tagName(op.op)});
 
             printNode(ast, tokens, src, op.operand, child_prefix, true);
         },
 
         .call_expr => {
-            std.debug.print("call expr:\n", .{});
+            std.debug.print("call_expr:\n", .{});
             const call = ast.getCallExpr(idx);
 
             std.debug.print("{s}├─ func: ", .{child_prefix});

@@ -1,7 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 
-pub const SourceIndex = @import("../source/source.zig").Index;
+pub const SourceIndex = @import("../source/source.zig").SourceIndex;
 
 pub const NodeIndex = u32;
 
@@ -51,7 +51,7 @@ pub const Program = struct {
 
 pub const ConstDecl = struct {
     name: NodeIndex,
-    type_node: ?NodeIndex,
+    type_id: ?NodeIndex,
     value: NodeIndex,
 };
 
@@ -64,7 +64,7 @@ pub const FuncDecl = struct {
 
 pub const VarDecl = struct {
     name: NodeIndex,
-    type_node: ?NodeIndex,
+    type_id: ?NodeIndex,
     value: NodeIndex,
     is_mutable: bool,
 };
@@ -244,7 +244,7 @@ pub const Ast = struct {
     pub fn addConstDecl(
         self: *Ast,
         name: NodeIndex,
-        type_node: ?NodeIndex,
+        type_id: ?NodeIndex,
         value: NodeIndex,
         start: SourceIndex,
         end: SourceIndex,
@@ -258,7 +258,7 @@ pub const Ast = struct {
         try self.data_indices.append(self.allocator, data_idx);
         try self.const_decls.append(self.allocator, .{
             .name = name,
-            .type_node = type_node,
+            .type_id = type_id,
             .value = value,
         });
 
@@ -294,7 +294,7 @@ pub const Ast = struct {
     pub fn addVarDecl(
         self: *Ast,
         name: NodeIndex,
-        type_node: ?NodeIndex,
+        type_id: ?NodeIndex,
         value: NodeIndex,
         is_mutable: bool,
         start: SourceIndex,
@@ -309,7 +309,7 @@ pub const Ast = struct {
         try self.data_indices.append(self.allocator, data_idx);
         try self.var_decls.append(self.allocator, .{
             .name = name,
-            .type_node = type_node,
+            .type_id = type_id,
             .value = value,
             .is_mutable = is_mutable,
         });
