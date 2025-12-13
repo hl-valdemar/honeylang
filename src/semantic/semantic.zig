@@ -7,6 +7,7 @@ const TokenList = @import("../lexer/token.zig").TokenList;
 const SourceCode = @import("../source/source.zig").SourceCode;
 
 const SymbolTable = @import("symbols.zig").SymbolTable;
+const SymbolIndex = @import("symbols.zig").SymbolIndex;
 const TypeState = @import("types.zig").TypeState;
 const TypeId = @import("types.zig").TypeId;
 const ErrorList = @import("errors.zig").ErrorList;
@@ -51,7 +52,14 @@ pub const SemanticContext = struct {
     }
 
     pub fn analyze(self: *SemanticContext) !SemanticResult {
+        // 1. collect all symbols
         try self.collectSymbols();
+
+        // 2. infer types from anchors
+        try self.inferTypes();
+
+        // 3. finalize (pending → unresolved)
+        self.finalizeTypes();
 
         return .{
             .symbols = self.symbols,
@@ -131,6 +139,36 @@ pub const SemanticContext = struct {
         }
     }
 
+    fn collectFuncDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const decl = self.ast.getFuncDecl(node_idx);
+
+        // get name
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        // Functions always have a resolved type (the function type itself)
+        // For now, we just mark it as resolved with a placeholder
+        // TODO: proper function type representation
+
+        const result = try self.symbols.register(
+            name,
+            name_token.start,
+            .function,
+            .resolved,
+            .void, // placeholder - functions need proper type representation
+            node_idx,
+        );
+
+        if (result == null) {
+            try self.errors.add(.{
+                .kind = .duplicate_symbol,
+                .start = name_token.start,
+                .end = name_token.start + name_token.len,
+            });
+        }
+    }
+
     fn resolveTypeName(name: []const u8) ?TypeId {
         const type_map = std.StaticStringMap(TypeId).initComptime(.{
             .{ "void", .void },
@@ -148,5 +186,24 @@ pub const SemanticContext = struct {
             .{ "f64", .f64 },
         });
         return type_map.get(name);
+    }
+
+    fn inferTypes(self: *SemanticContext) !void {
+        // TODO: Iterate until no changes
+        // - Find pending symbols
+        // - Walk their value expressions
+        // - If expression contains resolved type anchor, propagate
+        _ = self;
+    }
+
+    fn finalizeTypes(self: *SemanticContext) void {
+        // any symbol still pending → unresolved (will trap at runtime)
+        const count = self.symbols.count();
+        for (0..count) |i| {
+            const idx: SymbolIndex = @intCast(i);
+            if (self.symbols.getTypeState(idx) == .pending) {
+                self.symbols.resolve(idx, .unresolved);
+            }
+        }
     }
 };
