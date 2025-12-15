@@ -47,7 +47,7 @@ pub const SemanticContext = struct {
             .tokens = tokens,
             .src = src,
             .symbols = try SymbolTable.init(allocator),
-            .errors = ErrorList.init(allocator),
+            .errors = try ErrorList.init(allocator),
         };
     }
 
@@ -110,12 +110,11 @@ pub const SemanticContext = struct {
                 type_state = .resolved;
             } else {
                 // unknown type name: record error, leave as pending
-
-                // try self.errors.add(.{
-                //     .kind = .unknown_type,
-                //     .start = type_token.start,
-                //     .end = type_token.start + type_token.len,
-                // });
+                try self.errors.add(.{
+                    .kind = .unknown_type,
+                    .start = type_token.start,
+                    .end = type_token.start + type_token.len,
+                });
             }
         }
 
@@ -131,11 +130,11 @@ pub const SemanticContext = struct {
 
         if (result == null) {
             // duplicate symbol
-            // try self.errors.add(.{
-            //     .kind = .duplicate_symbol,
-            //     .start = name_token.start,
-            //     .end = name_token.start + name_token.len,
-            // });
+            try self.errors.add(.{
+                .kind = .duplicate_symbol,
+                .start = name_token.start,
+                .end = name_token.start + name_token.len,
+            });
         }
     }
 
