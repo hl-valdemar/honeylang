@@ -58,7 +58,10 @@ pub const SemanticContext = struct {
         // 2. infer types from anchors
         try self.inferTypes();
 
-        // 3. finalize (pending → unresolved)
+        // 3. check type compatibility
+        try self.checkTypes();
+
+        // 4. finalize (pending → unresolved)
         self.finalizeTypes();
 
         return .{
@@ -303,6 +306,10 @@ pub const SemanticContext = struct {
             },
             else => {},
         }
+    }
+
+    fn checkTypes(self: *SemanticContext) !void{
+        _ = self;
     }
 
     fn finalizeTypes(self: *SemanticContext) void {
