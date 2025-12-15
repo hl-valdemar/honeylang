@@ -10,7 +10,7 @@ const SymbolTable = @import("symbols.zig").SymbolTable;
 const SymbolIndex = @import("symbols.zig").SymbolIndex;
 const TypeState = @import("types.zig").TypeState;
 const TypeId = @import("types.zig").TypeId;
-const ErrorList = @import("errors.zig").ErrorList;
+const ErrorList = @import("error.zig").ErrorList;
 
 pub const SemanticResult = struct {
     symbols: SymbolTable,
@@ -147,8 +147,8 @@ pub const SemanticContext = struct {
         const name_token = self.tokens.items[name_ident.token_idx];
         const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
 
-        // Functions always have a resolved type (the function type itself)
-        // For now, we just mark it as resolved with a placeholder
+        // functions always have a resolved type (the function type itself)
+        // for now, we just mark it as resolved with a placeholder
         // TODO: proper function type representation
 
         const result = try self.symbols.register(

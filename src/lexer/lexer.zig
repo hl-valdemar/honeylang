@@ -86,6 +86,10 @@ const Lexer = struct {
                     self.advance();
                     try tokens.append(allocator, self.makeToken(.right_curly, start, self.pos));
                 },
+                '*' => {
+                    self.advance();
+                    try tokens.append(allocator, self.makeToken(.star, start, self.pos));
+                },
                 ':' => {
                     self.advance();
                     if (self.peek() == ':') {

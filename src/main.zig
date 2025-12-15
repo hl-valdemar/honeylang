@@ -70,6 +70,15 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     std.debug.print("\n\n::[[ Semantic Analysis ]]::\n\n", .{});
     std.debug.print("Collected {d} symbols:\n\n", .{sem_result.symbols.count()});
     honey.symbol_printer.print(&sem_result.symbols, &src);
+
+    // 5. comptime expression evaluation
+    var comptime_arena = std.heap.ArenaAllocator.init(gpa);
+    defer comptime_arena.deinit();
+    const comptime_result = try honey.comptime_.evaluate(comptime_arena.allocator(), &ast, &tokens, &src, &sem_result.symbols);
+
+    // print generated symbol table
+    std.debug.print("\n\n::[[ Comptime Evaluation ]]::\n\n", .{});
+    honey.comptime_printer.print(&comptime_result, &sem_result.symbols, &src);
 }
 
 pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8) !void {

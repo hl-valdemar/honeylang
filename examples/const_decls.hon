@@ -2,3 +2,5 @@ DEBUG :: true
 
 X :: 42
 Y: f32 :: 0.4
+
+Z :: X * Y
