@@ -86,10 +86,6 @@ const Lexer = struct {
                     self.advance();
                     try tokens.append(allocator, self.makeToken(.right_curly, start, self.pos));
                 },
-                '*' => {
-                    self.advance();
-                    try tokens.append(allocator, self.makeToken(.star, start, self.pos));
-                },
                 ':' => {
                     self.advance();
                     if (self.peek() == ':') {
@@ -106,6 +102,31 @@ const Lexer = struct {
                         try tokens.append(allocator, self.makeToken(.plus_equal, start, self.pos));
                     } else {
                         try tokens.append(allocator, self.makeToken(.plus, start, self.pos));
+                    }
+                },
+                '-' => {
+                    self.advance();
+                    if (self.peek() == '=') {
+                        self.advance();
+                        try tokens.append(allocator, self.makeToken(.minus_equal, start, self.pos));
+                    } else {
+                        try tokens.append(allocator, self.makeToken(.minus, start, self.pos));
+                    }
+                },
+                '*' => {
+                    self.advance();
+                    if (self.peek() == '=') {
+                        try tokens.append(allocator, self.makeToken(.star_equal, start, self.pos));
+                    } else {
+                        try tokens.append(allocator, self.makeToken(.star, start, self.pos));
+                    }
+                },
+                '/' => {
+                    self.advance();
+                    if (self.peek() == '=') {
+                        try tokens.append(allocator, self.makeToken(.slash_equal, start, self.pos));
+                    } else {
+                        try tokens.append(allocator, self.makeToken(.slash_equal, start, self.pos));
                     }
                 },
                 '=' => {

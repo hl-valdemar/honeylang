@@ -226,11 +226,34 @@ pub const ComptimeContext = struct {
         const unary_op = self.ast.getUnaryOp(node_idx);
         const operand = try self.evaluateExpr(unary_op.operand, type_id) orelse return null;
 
-        // TODO: implement negation, logical not
-        _ = operand;
-        _ = unary_op.op;
+        const arena_alloc = self.result.arena.allocator();
 
-        return null; // TODO: implement
+        switch (unary_op.op) {
+            .not => {
+                // logical not: operand should be "true" or "false"
+                if (std.mem.eql(u8, operand, "true")) {
+                    return "false";
+                } else if (std.mem.eql(u8, operand, "false")) {
+                    return "true";
+                }
+                return null;
+            },
+            .negate => {
+                // parse, negate, and format back to string
+                if (type_id.isFloat()) {
+                    const val = std.fmt.parseFloat(f64, operand) catch return null;
+                    const result = -val;
+                    return std.fmt.allocPrint(arena_alloc, "{d}", .{result}) catch return error.OutOfMemory;
+                } else if (type_id.isSignedInteger()) {
+                    const val = std.fmt.parseInt(i64, operand, 10) catch return null;
+                    const result = -%val;
+                    return std.fmt.allocPrint(arena_alloc, "{d}", .{result}) catch return error.OutOfMemory;
+                } else {
+                    // cannot negate unsigned
+                    return null;
+                }
+            },
+        }
     }
 
     fn evaluateBinaryOp(self: *ComptimeContext, node_idx: NodeIndex, type_id: TypeId) EvalError!?[]const u8 {
@@ -239,12 +262,119 @@ pub const ComptimeContext = struct {
         const left = try self.evaluateExpr(binary_op.left, type_id) orelse return null;
         const right = try self.evaluateExpr(binary_op.right, type_id) orelse return null;
 
-        // TODO: use arbitrary precision arithmetic
-        // for now, placeholder that just concatenates for debugging
-        _ = left;
-        _ = right;
-        _ = binary_op.op;
+        const arena_alloc = self.result.arena.allocator();
 
-        return null; // TODO: implement
+        // handle logical operations
+        if (type_id == .bool) {
+            const left_bool = std.mem.eql(u8, left, "true");
+            const right_bool = std.mem.eql(u8, right, "true");
+
+            const result: bool = switch (binary_op.op) {
+                .and_ => left_bool and right_bool,
+                .or_ => left_bool or right_bool,
+                .equal => left_bool == right_bool,
+                .not_equal => left_bool != right_bool,
+                else => return null,
+            };
+
+            return if (result) "true" else "false";
+        }
+
+        // handle numeric operations
+        if (type_id.isFloat()) {
+            const left_val = std.fmt.parseFloat(f64, left) catch return null;
+            const right_val = std.fmt.parseFloat(f64, right) catch return null;
+
+            // check for comparison operations
+            const cmp_result: ?bool = switch (binary_op.op) {
+                .less => left_val < right_val,
+                .greater => left_val > right_val,
+                .less_equal => left_val <= right_val,
+                .greater_equal => left_val >= right_val,
+                .equal => left_val == right_val,
+                .not_equal => left_val != right_val,
+                else => null,
+            };
+
+            if (cmp_result) |cmp| {
+                return if (cmp) "true" else "false";
+            }
+
+            const result: f64 = switch (binary_op.op) {
+                .add => left_val + right_val,
+                .sub => left_val - right_val,
+                .mul => left_val * right_val,
+                .div => if (right_val == 0) return error.DivisionByZero else left_val / right_val,
+                else => return null,
+            };
+
+            // detect overflow to infinity or nan
+            if (std.math.isNan(result) or std.math.isInf(result)) {
+                return error.Overflow;
+            }
+
+            return std.fmt.allocPrint(arena_alloc, "{d}", .{result}) catch return error.OutOfMemory;
+        } else if (type_id.isInteger()) {
+            if (type_id.isSignedInteger()) {
+                const left_val = std.fmt.parseInt(i64, left, 10) catch return null;
+                const right_val = std.fmt.parseInt(i64, right, 10) catch return null;
+
+                // check for comparison operations
+                const cmp_result: ?bool = switch (binary_op.op) {
+                    .less => left_val < right_val,
+                    .greater => left_val > right_val,
+                    .less_equal => left_val <= right_val,
+                    .greater_equal => left_val >= right_val,
+                    .equal => left_val == right_val,
+                    .not_equal => left_val != right_val,
+                    else => null,
+                };
+
+                if (cmp_result) |cmp| {
+                    return if (cmp) "true" else "false";
+                }
+
+                const result: i64 = switch (binary_op.op) {
+                    .add => std.math.add(i64, left_val, right_val) catch return error.Overflow,
+                    .sub => std.math.sub(i64, left_val, right_val) catch return error.Overflow,
+                    .mul => std.math.mul(i64, left_val, right_val) catch return error.Overflow,
+                    .div => if (right_val == 0) return error.DivisionByZero else @divTrunc(left_val, right_val),
+                    else => return null,
+                };
+
+                return std.fmt.allocPrint(arena_alloc, "{d}", .{result}) catch return error.OutOfMemory;
+            } else {
+                // unsigned integers
+                const left_val = std.fmt.parseInt(u64, left, 10) catch return null;
+                const right_val = std.fmt.parseInt(u64, right, 10) catch return null;
+
+                // check for comparison operations
+                const cmp_result: ?bool = switch (binary_op.op) {
+                    .less => left_val < right_val,
+                    .greater => left_val > right_val,
+                    .less_equal => left_val <= right_val,
+                    .greater_equal => left_val >= right_val,
+                    .equal => left_val == right_val,
+                    .not_equal => left_val != right_val,
+                    else => null,
+                };
+
+                if (cmp_result) |cmp| {
+                    return if (cmp) "true" else "false";
+                }
+
+                const result: u64 = switch (binary_op.op) {
+                    .add => std.math.add(u64, left_val, right_val) catch return error.Overflow,
+                    .sub => std.math.sub(u64, left_val, right_val) catch return error.Overflow,
+                    .mul => std.math.mul(u64, left_val, right_val) catch return error.Overflow,
+                    .div => if (right_val == 0) return error.DivisionByZero else left_val / right_val,
+                    else => return null,
+                };
+
+                return std.fmt.allocPrint(arena_alloc, "{d}", .{result}) catch return error.OutOfMemory;
+            }
+        }
+
+        return null;
     }
 };

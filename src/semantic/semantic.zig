@@ -189,11 +189,121 @@ pub const SemanticContext = struct {
     }
 
     fn inferTypes(self: *SemanticContext) !void {
-        // TODO: Iterate until no changes
-        // - Find pending symbols
-        // - Walk their value expressions
-        // - If expression contains resolved type anchor, propagate
-        _ = self;
+        // iterate until no more types can be inferred
+        var changed = true;
+        while (changed) {
+            changed = false;
+
+            const count = self.symbols.count();
+            for (0..count) |i| {
+                const idx: SymbolIndex = @intCast(i);
+
+                // skip already resolved symbols
+                if (self.symbols.getTypeState(idx) == .resolved) continue;
+
+                const value_node = self.symbols.getValueNode(idx);
+                if (self.tryInferType(value_node)) |type_id| {
+                    self.symbols.resolve(idx, type_id);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    /// Attempt to infer the type of an expression node.
+    /// Returns null if type cannot be determined yet.
+    fn tryInferType(self: *SemanticContext, node_idx: NodeIndex) ?TypeId {
+        const kind = self.ast.getKind(node_idx);
+
+        return switch (kind) {
+            .literal => self.inferLiteralType(node_idx),
+            .identifier => self.inferIdentifierType(node_idx),
+            .binary_op => self.inferBinaryOpType(node_idx),
+            .unary_op => self.inferUnaryOpType(node_idx),
+            else => null,
+        };
+    }
+
+    fn inferLiteralType(self: *SemanticContext, node_idx: NodeIndex) ?TypeId {
+        const lit = self.ast.getLiteral(node_idx);
+        const token = self.tokens.items[lit.token_idx];
+
+        // boolean literals always have type bool
+        if (token.kind == .boolean) {
+            return .bool;
+        }
+
+        // numeric literals cannot be inferred without context
+        // (they need to be anchored by an explicitly typed value)
+        return null;
+    }
+
+    fn inferIdentifierType(self: *SemanticContext, node_idx: NodeIndex) ?TypeId {
+        const ident = self.ast.getIdentifier(node_idx);
+        const token = self.tokens.items[ident.token_idx];
+        const name = self.src.getSlice(token.start, token.start + token.len);
+
+        if (self.symbols.lookup(name)) |sym_idx| {
+            if (self.symbols.getTypeState(sym_idx) == .resolved) {
+                return self.symbols.getTypeId(sym_idx);
+            }
+        }
+
+        return null;
+    }
+
+    fn inferUnaryOpType(self: *SemanticContext, node_idx: NodeIndex) ?TypeId {
+        const unary_op = self.ast.getUnaryOp(node_idx);
+        return self.tryInferType(unary_op.operand);
+    }
+
+    fn inferBinaryOpType(self: *SemanticContext, node_idx: NodeIndex) ?TypeId {
+        const binary_op = self.ast.getBinaryOp(node_idx);
+
+        // try to get types from both operands
+        const left_type = self.tryInferType(binary_op.left);
+        const right_type = self.tryInferType(binary_op.right);
+
+        // find anchor type (first resolved type we find)
+        const anchor_type = left_type orelse right_type;
+
+        if (anchor_type) |t| {
+            // propagate type back to any pending operands
+            self.propagateType(binary_op.left, t);
+            self.propagateType(binary_op.right, t);
+            return t;
+        }
+
+        return null;
+    }
+
+    fn propagateType(self: *SemanticContext, node_idx: NodeIndex, type_id: TypeId) void {
+        const kind = self.ast.getKind(node_idx);
+
+        switch (kind) {
+            .identifier => {
+                // look up the symbol and resolve if pending
+                const ident = self.ast.getIdentifier(node_idx);
+                const token = self.tokens.items[ident.token_idx];
+                const name = self.src.getSlice(token.start, token.start + token.len);
+
+                if (self.symbols.lookup(name)) |sym_idx| {
+                    if (self.symbols.getTypeState(sym_idx) == .pending) {
+                        self.symbols.resolve(sym_idx, type_id);
+                    }
+                }
+            },
+            .unary_op => {
+                const unary_op = self.ast.getUnaryOp(node_idx);
+                self.propagateType(unary_op.operand, type_id);
+            },
+            .binary_op => {
+                const binary_op = self.ast.getBinaryOp(node_idx);
+                self.propagateType(binary_op.left, type_id);
+                self.propagateType(binary_op.right, type_id);
+            },
+            else => {},
+        }
     }
 
     fn finalizeTypes(self: *SemanticContext) void {

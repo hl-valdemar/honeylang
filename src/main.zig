@@ -78,6 +78,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
 
     // print generated symbol table
     std.debug.print("\n\n::[[ Comptime Evaluation ]]::\n\n", .{});
+    std.debug.print("Evaluated {d} expressions:\n\n", .{comptime_result.eval_literals.items.len});
     honey.comptime_printer.print(&comptime_result, &sem_result.symbols, &src);
 }
 

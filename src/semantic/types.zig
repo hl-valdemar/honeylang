@@ -35,7 +35,7 @@ pub const TypeId = enum(u8) {
         return self.isInteger() or self.isFloat();
     }
 
-    pub fn isSigned(self: TypeId) bool {
+    pub fn isSignedInteger(self: TypeId) bool {
         return switch (self) {
             .i8, .i16, .i32, .i64 => true,
             else => false,
