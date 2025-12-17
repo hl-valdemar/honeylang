@@ -32,7 +32,6 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     // 1. read source
     var source_arena = heap.ArenaAllocator.init(gpa);
     defer source_arena.deinit();
-
     const src = try honey.source.fromFile(source_arena.allocator(), file_path, 0);
 
     std.debug.print("\n::[[ Source Code ]]::\n\n", .{});
@@ -41,7 +40,6 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     // 2. scan source
     var token_arena = heap.ArenaAllocator.init(gpa);
     defer token_arena.deinit();
-
     const tokens = try honey.lexer.scan(token_arena.allocator(), &src);
 
     // print generated tokens
@@ -52,7 +50,6 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     // 3. parse tokens
     var ast_arena = std.heap.ArenaAllocator.init(gpa);
     defer ast_arena.deinit();
-
     const ast = try honey.parser.parse(ast_arena.allocator(), tokens);
 
     // print generated parse tree
@@ -63,13 +60,18 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     // 4. analyze parse tree
     var semantic_arena = std.heap.ArenaAllocator.init(gpa);
     defer semantic_arena.deinit();
-
     const sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &ast, &tokens, &src);
 
     // print generated symbol table
     std.debug.print("\n\n::[[ Semantic Analysis ]]::\n\n", .{});
     std.debug.print("Collected {d} symbols:\n\n", .{sem_result.symbols.count()});
     honey.symbol_printer.print(&sem_result.symbols, &src);
+
+    // print potential errors
+    if (sem_result.errors.hasErrors()) {
+        std.debug.print("\nReported {d} errors:\n\n", .{sem_result.errors.count()});
+        honey.semantic.error_printer.print(&sem_result.errors, &src);
+    }
 
     // 5. comptime expression evaluation
     var comptime_arena = std.heap.ArenaAllocator.init(gpa);
@@ -78,7 +80,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
 
     // print generated symbol table
     std.debug.print("\n\n::[[ Comptime Evaluation ]]::\n\n", .{});
-    std.debug.print("Evaluated {d} expressions:\n\n", .{comptime_result.eval_literals.items.len});
+    std.debug.print("Succesfully evaluated {d} expressions:\n\n", .{comptime_result.eval_literals.items.len});
     honey.comptime_printer.print(&comptime_result, &sem_result.symbols, &src);
 }
 
@@ -86,13 +88,32 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8) !void {
     // 1. read source
     var source_arena = heap.ArenaAllocator.init(gpa);
     defer source_arena.deinit();
-
     const src = try honey.source.fromFile(source_arena.allocator(), file_path, 0);
 
     // 2. scan source
     var token_arena = heap.ArenaAllocator.init(gpa);
     defer token_arena.deinit();
-
     const tokens = try honey.lexer.scan(token_arena.allocator(), &src);
-    _ = tokens;
+
+    // 3. parse tokens
+    var ast_arena = std.heap.ArenaAllocator.init(gpa);
+    defer ast_arena.deinit();
+    const ast = try honey.parser.parse(ast_arena.allocator(), tokens);
+
+    // 4. analyze parse tree
+    var semantic_arena = std.heap.ArenaAllocator.init(gpa);
+    defer semantic_arena.deinit();
+    const sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &ast, &tokens, &src);
+
+    // print potential errors
+    if (sem_result.errors.hasErrors()) {
+        std.debug.print("Honey compiled with errors:\n", .{});
+        honey.semantic.error_printer.print(&sem_result.errors, &src);
+    }
+
+    // 5. comptime expression evaluation
+    var comptime_arena = std.heap.ArenaAllocator.init(gpa);
+    defer comptime_arena.deinit();
+    const comptime_result = try honey.comptime_.evaluate(comptime_arena.allocator(), &ast, &tokens, &src, &sem_result.symbols);
+    _ = comptime_result;
 }

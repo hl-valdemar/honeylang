@@ -14,6 +14,8 @@ const TypeId = @import("types.zig").TypeId;
 const SemanticError = @import("error.zig").SemanticError;
 const ErrorList = @import("error.zig").ErrorList;
 
+pub const error_printer = @import("error_printer.zig");
+
 pub const TypeError = error{
     OutOfMemory,
 };
