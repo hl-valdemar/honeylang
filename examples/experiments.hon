@@ -1,7 +1,7 @@
 import "std/fs"
 import "lexer"
 
-# simply experimenting
+# just experimenting
 main :: func() void {
   src := fs.read_to_string("program.hon")
   tokens := lexer.scan(src)
