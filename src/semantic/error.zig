@@ -5,10 +5,21 @@ const SourceIndex = @import("../source/source.zig").SourceIndex;
 const SourceCode = @import("../source/source.zig").SourceCode;
 
 pub const SemanticErrorKind = enum {
+    // symbol errors
     unknown_type,
     duplicate_symbol,
     undefined_symbol,
+
+    // type checking errors
     type_mismatch,
+    invalid_operand_type,
+    cannot_negate_unsigned,
+    logical_op_requires_bool,
+    arithmetic_op_requires_numeric,
+    comparison_requires_compatible,
+    argument_count_mismatch,
+    argument_type_mismatch,
+    return_type_mismatch,
 };
 
 pub const SemanticError = struct {

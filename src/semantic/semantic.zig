@@ -3,6 +3,7 @@ const mem = std.mem;
 
 const Ast = @import("../parser/ast.zig").Ast;
 const NodeIndex = @import("../parser/ast.zig").NodeIndex;
+const BinaryOp = @import("../parser/ast.zig").BinaryOp;
 const TokenList = @import("../lexer/token.zig").TokenList;
 const SourceCode = @import("../source/source.zig").SourceCode;
 
@@ -10,7 +11,12 @@ const SymbolTable = @import("symbols.zig").SymbolTable;
 const SymbolIndex = @import("symbols.zig").SymbolIndex;
 const TypeState = @import("types.zig").TypeState;
 const TypeId = @import("types.zig").TypeId;
+const SemanticError = @import("error.zig").SemanticError;
 const ErrorList = @import("error.zig").ErrorList;
+
+pub const TypeError = error{
+    OutOfMemory,
+};
 
 pub const SemanticResult = struct {
     symbols: SymbolTable,
@@ -308,9 +314,212 @@ pub const SemanticContext = struct {
         }
     }
 
-    fn checkTypes(self: *SemanticContext) !void{
-        _ = self;
+    fn checkTypes(self: *SemanticContext) !void {
+        const program = self.ast.getProgram(self.ast.root);
+        const decls = self.ast.getExtra(program.declarations);
+
+        for (decls) |decl_idx| {
+            try self.checkDeclaration(decl_idx);
+        }
     }
+
+    fn checkDeclaration(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const kind = self.ast.getKind(node_idx);
+
+        switch (kind) {
+            .const_decl => try self.checkConstDecl(node_idx),
+            // .func_decl => try self.checkFuncDecl(node_idx),
+            // .var_decl => try self.checkVarDecl(node_idx),
+            else => {}, // ignore
+        }
+    }
+
+    fn checkConstDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const decl = self.ast.getConstDecl(node_idx);
+
+        // get the declared type from the symbol table
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        const sym_idx = self.symbols.lookup(name) orelse return;
+        const declared_type = self.symbols.getTypeId(sym_idx);
+
+        // check the value expression, passing the expected type for context
+        _ = try self.checkExpression(decl.value, declared_type);
+    }
+
+    /// Check an expression and return its inferred type.
+    /// Returns null if type cannot be determined.
+    fn checkExpression(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) TypeError!?TypeId {
+        const kind = self.ast.getKind(node_idx);
+
+        return switch (kind) {
+            .literal => try self.checkLiteral(node_idx, context_type),
+            .identifier => try self.checkIdentifier(node_idx),
+            .unary_op => try self.checkUnaryOp(node_idx, context_type),
+            .binary_op => try self.checkBinaryOp(node_idx, context_type),
+            // .call_expr => try self.checkCallExpression(node_idx, context_type),
+            else => null,
+        };
+    }
+
+    fn checkLiteral(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
+        const lit = self.ast.getLiteral(node_idx);
+        const token = self.tokens.items[lit.token_idx];
+
+        if (token.kind == .boolean) {
+            return .bool;
+        }
+
+        // for numeric literals, use context type if available
+        if (context_type.isNumeric()) {
+            return context_type;
+        }
+
+        // no context, type remains unresolved
+        return null;
+    }
+
+    fn checkIdentifier(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
+        const ident = self.ast.getIdentifier(node_idx);
+        const token = self.tokens.items[ident.token_idx];
+        const name = self.src.getSlice(token.start, token.start + token.len);
+
+        if (self.symbols.lookup(name)) |sym_idx| {
+            return self.symbols.getTypeId(sym_idx);
+        }
+
+        // undefined symbol
+        try self.errors.add(.{
+            .kind = .undefined_symbol,
+            .start = token.start,
+            .end = token.start + token.len,
+        });
+
+        return null;
+    }
+
+    fn checkUnaryOp(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
+        const unary_op = self.ast.getUnaryOp(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+
+        const operand_type = try self.checkExpression(unary_op.operand, context_type);
+
+        switch (unary_op.op) {
+            .not => {
+                // logical not requires bool
+                if (operand_type) |t| {
+                    if (t != .bool and t != .unresolved) {
+                        try self.errors.add(.{
+                            .kind = .logical_op_requires_bool,
+                            .start = loc.start,
+                            .end = loc.end,
+                        });
+                    }
+                }
+
+                return .bool;
+            },
+            .negate => {
+                // negation requires numeric type
+                if (operand_type) |t| {
+                    if (!t.isNumeric() and t != .unresolved) {
+                        try self.errors.add(.{
+                            .kind = .arithmetic_op_requires_numeric,
+                            .start = loc.start,
+                            .end = loc.end,
+                        });
+                    }
+
+                    // cannot negate unsigned integers
+                    if (t.isInteger() and !t.isSignedInteger()) {
+                        try self.errors.add(.{
+                            .kind = .cannot_negate_unsigned,
+                            .start = loc.start,
+                            .end = loc.end,
+                        });
+                    }
+                }
+
+                return operand_type;
+            },
+        }
+    }
+
+    fn checkBinaryOp(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
+        const binary_op = self.ast.getBinaryOp(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+
+        // check operands
+        const left_type = try self.checkExpression(binary_op.left, context_type);
+        const right_type = try self.checkExpression(binary_op.right, context_type);
+
+        // determine operand type (first available)
+        const operand_type = left_type orelse right_type orelse context_type;
+
+        // validate operand/operator compatibility
+        if (binary_op.isArithmetic()) {
+            // arithmetic ops require numeric types
+            if (!operand_type.isNumeric() and operand_type != .unresolved) {
+                try self.errors.add(.{
+                    .kind = .arithmetic_op_requires_numeric,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+
+            // verify both operands have compatible types
+            if (left_type != null and right_type != null) {
+                if (!typesCompatible(left_type.?, right_type.?)) {
+                    try self.errors.add(.{
+                        .kind = .type_mismatch,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
+            }
+
+            return operand_type;
+        } else if (binary_op.isComparison()) {
+            // comparison ops require compatible types
+            if (left_type != null and right_type != null) {
+                if (!typesCompatible(left_type.?, right_type.?)) {
+                    try self.errors.add(.{
+                        .kind = .type_mismatch,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
+            }
+
+            // comparison always returns bool
+            return .bool;
+        } else if (binary_op.isLogical()) {
+            // logical ops require boolean operands
+            if (left_type != null and left_type.? != .bool and left_type.? != .unresolved) {
+                try self.errors.add(.{
+                    .kind = .logical_op_requires_bool,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+            if (right_type != null and right_type.? != .bool and right_type.? != .unresolved) {
+                try self.errors.add(.{
+                    .kind = .logical_op_requires_bool,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+
+            // logical ops always return bool
+            return .bool;
+        }
+
+        return null;
+    }
+
+    // fn checkCallExpression(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {}
 
     fn finalizeTypes(self: *SemanticContext) void {
         // any symbol still pending → unresolved (will trap at runtime)
@@ -321,5 +530,21 @@ pub const SemanticContext = struct {
                 self.symbols.resolve(idx, .unresolved);
             }
         }
+    }
+
+    fn typesCompatible(left: TypeId, right: TypeId) bool {
+        // unresolved types are compatible with everything (errors caught at runtime)
+        if (left == .unresolved or right == .unresolved) {
+            return true;
+        }
+
+        // same type is always compatible
+        if (left == right) {
+            return true;
+        }
+
+        // for now, require exact type
+        // NOTE: promotion rules become relevant when implementing pointers (i.e., promotion to const)
+        return false;
     }
 };

@@ -93,6 +93,27 @@ pub const BinaryOp = struct {
         and_,
         or_,
     };
+
+    pub fn isArithmetic(self: *const BinaryOp) bool {
+        return switch (self.op) {
+            .add, .sub, .mul, .div => true,
+            else => false,
+        };
+    }
+
+    pub fn isComparison(self: *const BinaryOp) bool {
+        return switch (self.op) {
+            .equal, .not_equal, .less, .greater, .less_equal, .greater_equal => true,
+            else => false,
+        };
+    }
+
+    pub fn isLogical(self: *const BinaryOp) bool {
+        return switch (self.op) {
+            .and_, .or_ => true,
+            else => false,
+        };
+    }
 };
 
 pub const UnaryOp = struct {
