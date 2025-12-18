@@ -93,23 +93,43 @@ pub const Parser = struct {
     }
 
     fn parseDeclaration(self: *Parser) !NodeIndex {
-        // look ahead to determine declaration type
         const token = self.peek() orelse return error.UnexpectedEof;
 
+        // mutable runtime var
+        if (token.kind == .mut) {
+            return try self.parseVarDecl();
+        }
+
+        // otherwise, disambiguate
         if (token.kind == .identifier) {
             const next = self.peekOffset(1) orelse return error.UnexpectedEof;
 
-            if (next.kind == .colon) {
-                // must be a const declaration
-                return try self.parseConstDecl();
-            } else if (next.kind == .double_colon) {
-                // check if it's a function or a const
-                const after_colon = self.peekOffset(2) orelse return error.UnexpectedEof;
-
-                if (after_colon.kind == .func) {
+            if (next.kind == .double_colon) {
+                // `identifier :: ...` => const or func decl
+                const after = self.peekOffset(2) orelse return error.UnexpectedEof;
+                if (after.kind == .func) {
                     return try self.parseFuncDecl();
                 } else {
                     return try self.parseConstDecl();
+                }
+            } else if (next.kind == .colon) {
+                // `identifier : ...` => need to disambiguate
+                const after = self.peekOffset(2) orelse return error.UnexpectedEof;
+
+                if (after.kind == .equal) {
+                    // `identifier := ...` => runtime var (inferred type)
+                    return try self.parseVarDecl();
+                } else if (after.kind == .identifier) {
+                    // `identifier : type ...` => check what follows type
+                    const type_ = self.peekOffset(3) orelse return error.UnexpectedEof;
+
+                    if (type_.kind == .double_colon) {
+                        // `identifier : type :: ...` => typed const decl
+                        return try self.parseConstDecl();
+                    } else if (type_.kind == .equal) {
+                        // `identifier : type = ...` => typed runtime var
+                        return try self.parseVarDecl();
+                    }
                 }
             }
         }
@@ -169,14 +189,7 @@ pub const Parser = struct {
 
         const end_pos = self.previousEnd();
 
-        return try self.ast.addFuncDecl(
-            name,
-            params,
-            return_type,
-            body,
-            start_pos,
-            end_pos,
-        );
+        return try self.ast.addFuncDecl(name, params, return_type, body, start_pos, end_pos);
     }
 
     fn parseParameters(self: *Parser) ParseError!ast.Range {
@@ -317,14 +330,7 @@ pub const Parser = struct {
 
         const end_pos = self.previousEnd();
 
-        return try self.ast.addVarDecl(
-            name,
-            type_node,
-            value,
-            is_mutable,
-            start_pos,
-            end_pos,
-        );
+        return try self.ast.addVarDecl(name, type_node, value, is_mutable, start_pos, end_pos);
     }
 
     fn parseAssignment(self: *Parser) ParseError!NodeIndex {
@@ -361,13 +367,7 @@ pub const Parser = struct {
                 self.ast.getLocation(target).end,
             );
 
-            const binary_op = try self.ast.addBinaryOp(
-                op,
-                target_ref,
-                rhs,
-                start_pos,
-                self.currentStart(),
-            );
+            const binary_op = try self.ast.addBinaryOp(op, target_ref, rhs, start_pos, self.currentStart());
 
             const end_pos = self.previousEnd();
 
@@ -396,13 +396,7 @@ pub const Parser = struct {
             const right = try self.parseLogicalAnd();
             const end_pos = self.previousEnd();
 
-            left = try self.ast.addBinaryOp(
-                .or_,
-                left,
-                right,
-                start_pos,
-                end_pos,
-            );
+            left = try self.ast.addBinaryOp(.or_, left, right, start_pos, end_pos);
         }
 
         return left;
@@ -416,13 +410,7 @@ pub const Parser = struct {
             const right = try self.parseComparative();
             const end_pos = self.previousEnd();
 
-            left = try self.ast.addBinaryOp(
-                .and_,
-                left,
-                right,
-                start_pos,
-                end_pos,
-            );
+            left = try self.ast.addBinaryOp(.and_, left, right, start_pos, end_pos);
         }
 
         return left;
@@ -448,13 +436,7 @@ pub const Parser = struct {
                 const right = try self.parseAdditive();
                 const end_pos = self.previousEnd();
 
-                left = try self.ast.addBinaryOp(
-                    binary_op,
-                    left,
-                    right,
-                    start_pos,
-                    end_pos,
-                );
+                left = try self.ast.addBinaryOp(binary_op, left, right, start_pos, end_pos);
             }
         }
 
@@ -478,13 +460,7 @@ pub const Parser = struct {
                 const right = try self.parseMultiplicative();
                 const end_pos = self.previousEnd();
 
-                left = try self.ast.addBinaryOp(
-                    binary_op,
-                    left,
-                    right,
-                    start_pos,
-                    end_pos,
-                );
+                left = try self.ast.addBinaryOp(binary_op, left, right, start_pos, end_pos);
             } else {
                 break;
             }
@@ -510,13 +486,7 @@ pub const Parser = struct {
                 const right = try self.parseUnary();
                 const end_pos = self.previousEnd();
 
-                left = try self.ast.addBinaryOp(
-                    binary_op,
-                    left,
-                    right,
-                    start_pos,
-                    end_pos,
-                );
+                left = try self.ast.addBinaryOp(binary_op, left, right, start_pos, end_pos);
             } else {
                 break;
             }

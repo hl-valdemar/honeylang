@@ -17,14 +17,16 @@ pub fn print(symbols: *const SymbolTable, src: *const SourceCode) void {
     }
 
     // print header
-    std.debug.print("{s:<4} {s:<16} {s:<10} {s:<12} {s:<8}\n", .{
+    std.debug.print("{s:<4} {s:<16} {s:<12} {s:<12} {s:<12} {s:<12}\n", .{
         "idx",
         "name",
         "kind",
         "type",
+        "mutable",
         "value",
     });
-    std.debug.print("{s:-<4} {s:-<16} {s:-<10} {s:-<12} {s:-<8}\n", .{
+    std.debug.print("{s:-<4} {s:-<16} {s:-<12} {s:-<12} {s:-<12} {s:-<12}\n", .{
+        "",
         "",
         "",
         "",
@@ -43,10 +45,12 @@ fn printSymbol(symbols: *const SymbolTable, src: *const SourceCode, idx: SymbolI
     const name = symbols.getName(idx, src);
     const kind = symbols.getKind(idx);
     const type_state = symbols.getTypeState(idx);
+    const is_mutable = symbols.isMutable(idx);
     const value_node = symbols.getValueNode(idx);
 
     const kind_str = switch (kind) {
         .constant => "const",
+        .variable => "var",
         .function => "func",
     };
 
@@ -55,11 +59,12 @@ fn printSymbol(symbols: *const SymbolTable, src: *const SourceCode, idx: SymbolI
         .resolved => @tagName(symbols.getTypeId(idx)),
     };
 
-    std.debug.print("{d:<4} {s:<16} {s:<10} {s:<12} node({d})\n", .{
+    std.debug.print("{d:<4} {s:<16} {s:<12} {s:<12} {any:<12} node({d})\n", .{
         idx,
         name,
         kind_str,
         type_str,
+        is_mutable,
         value_node,
     });
 }

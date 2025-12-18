@@ -92,6 +92,7 @@ pub const SemanticContext = struct {
 
         switch (kind) {
             .const_decl => try self.collectConstDecl(node_idx),
+            .var_decl => try self.collectVarDecl(node_idx),
             .func_decl => {},
             .err => {}, // skip parse errors
             else => {}, // ignore
@@ -137,6 +138,59 @@ pub const SemanticContext = struct {
             type_state,
             type_id,
             decl.value,
+            false, // immutable
+        );
+
+        if (result == null) {
+            // duplicate symbol
+            try self.errors.add(.{
+                .kind = .duplicate_symbol,
+                .start = name_token.start,
+                .end = name_token.start + name_token.len,
+            });
+        }
+    }
+
+    fn collectVarDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const decl = self.ast.getVarDecl(node_idx);
+
+        // get name
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        // determine initial type state
+        var type_state = TypeState.pending;
+        var type_id = TypeId.unresolved;
+
+        if (decl.type_id) |type_idx| {
+            // handle explicit type annotation
+            const type_ident = self.ast.getIdentifier(type_idx);
+            const type_token = self.tokens.items[type_ident.token_idx];
+            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
+
+            if (resolveTypeName(type_name)) |tid| {
+                type_id = tid;
+                type_state = .resolved;
+            } else {
+                // unknown type name: record error, leave as pending
+                try self.errors.add(.{
+                    .kind = .unknown_type,
+                    .start = type_token.start,
+                    .end = type_token.start + type_token.len,
+                });
+            }
+        }
+
+        // register symbol
+        const result = try self.symbols.register(
+            name,
+            name_token.start,
+            .variable,
+            type_state,
+            type_id,
+            decl.value,
+            decl.is_mutable,
         );
 
         if (result == null) {
@@ -168,6 +222,7 @@ pub const SemanticContext = struct {
             .resolved,
             .void, // placeholder - functions need proper type representation
             node_idx,
+            false, // mutability doesn't apply to functions
         );
 
         if (result == null) {

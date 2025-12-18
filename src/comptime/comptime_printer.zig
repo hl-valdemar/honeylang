@@ -68,6 +68,7 @@ fn printSymbol(
 
     const kind_str = switch (kind) {
         .constant => "const",
+        .variable => "var",
         .function => "func",
     };
 
