@@ -348,17 +348,29 @@ pub const SemanticContext = struct {
         const sym_idx = self.symbols.lookup(name) orelse return;
         const declared_type = self.symbols.getTypeId(sym_idx);
 
-        // check the value expression, passing the expected type for context
-        const expr_type = try self.checkExpression(decl.value, declared_type);
+        // infer type of value expression (no context)
+        const expr_type = try self.checkExpression(decl.value, .unresolved);
 
         // verify that the expression type matches the declared type
-        if (expr_type != null and declared_type != .unresolved) {
-            if (!typesCompatible(declared_type, expr_type.?)) {
-                try self.errors.add(.{
-                    .kind = .type_mismatch,
-                    .start = loc.start,
-                    .end = loc.end,
-                });
+        if (declared_type != .unresolved) {
+            if (expr_type) |et| {
+                if (!typesCompatible(declared_type, et)) {
+                    try self.errors.add(.{
+                        .kind = .type_mismatch,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
+            } else {
+                // expression type is unresolved (e.g., literals without anchors)
+                // check if the expression structure is compatible with declared type
+                if (!self.isExprCompatibleWithType(decl.value, declared_type)) {
+                    try self.errors.add(.{
+                        .kind = .type_mismatch,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
             }
         }
     }
@@ -371,8 +383,8 @@ pub const SemanticContext = struct {
         return switch (kind) {
             .literal => try self.checkLiteral(node_idx, context_type),
             .identifier => try self.checkIdentifier(node_idx),
-            .unary_op => try self.checkUnaryOp(node_idx, context_type),
-            .binary_op => try self.checkBinaryOp(node_idx, context_type),
+            .unary_op => try self.checkUnaryOp(node_idx),
+            .binary_op => try self.checkBinaryOp(node_idx),
             // .call_expr => try self.checkCallExpression(node_idx, context_type),
             else => null,
         };
@@ -414,15 +426,15 @@ pub const SemanticContext = struct {
         return null;
     }
 
-    fn checkUnaryOp(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
+    fn checkUnaryOp(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
         const unary_op = self.ast.getUnaryOp(node_idx);
         const loc = self.ast.getLocation(node_idx);
-
-        const operand_type = try self.checkExpression(unary_op.operand, context_type);
 
         switch (unary_op.op) {
             .not => {
                 // logical not requires bool
+                const operand_type = try self.checkExpression(unary_op.operand, .bool);
+
                 if (operand_type) |t| {
                     if (t != .bool and t != .unresolved) {
                         try self.errors.add(.{
@@ -436,67 +448,84 @@ pub const SemanticContext = struct {
                 return .bool;
             },
             .negate => {
+                // infer type of operand without context
+                const operand_type = try self.checkExpression(unary_op.operand, .unresolved);
+
                 // negation requires numeric type
                 if (operand_type) |t| {
-                    if (!t.isNumeric() and t != .unresolved) {
+                    if (t == .unresolved) {
+                        // operand is unresolved, negation is valid
+                        // BUT can't determine result type yet
+                        return null;
+                    }
+
+                    if (!t.isNumeric()) {
                         try self.errors.add(.{
                             .kind = .arithmetic_op_requires_numeric,
                             .start = loc.start,
                             .end = loc.end,
                         });
+                        return null;
                     }
 
-                    // cannot negate unsigned integers
+                    // can only negate signed types and floats
                     if (t.isInteger() and !t.isSignedInteger()) {
                         try self.errors.add(.{
                             .kind = .cannot_negate_unsigned,
                             .start = loc.start,
                             .end = loc.end,
                         });
+                        return null;
                     }
+
+                    return t;
                 }
 
-                return operand_type;
+                // operand type unknown (bare literal), result must be signed
+                return null;
             },
         }
     }
 
-    fn checkBinaryOp(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
+    fn checkBinaryOp(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
         const binary_op = self.ast.getBinaryOp(node_idx);
         const loc = self.ast.getLocation(node_idx);
 
-        // check operands
-        const left_type = try self.checkExpression(binary_op.left, context_type);
-        const right_type = try self.checkExpression(binary_op.right, context_type);
-
-        // determine operand type (first available)
-        const operand_type = left_type orelse right_type orelse context_type;
-
-        // validate operand/operator compatibility
         if (binary_op.isArithmetic()) {
-            // arithmetic ops require numeric types
-            if (!operand_type.isNumeric() and operand_type != .unresolved) {
-                try self.errors.add(.{
-                    .kind = .arithmetic_op_requires_numeric,
-                    .start = loc.start,
-                    .end = loc.end,
-                });
-            }
+            // infer operand types (no context)
+            const left_type = try self.checkExpression(binary_op.left, .unresolved);
+            const right_type = try self.checkExpression(binary_op.right, .unresolved);
 
-            // verify both operands have compatible types
-            if (left_type != null and right_type != null) {
-                if (!typesCompatible(left_type.?, right_type.?)) {
+            const operand_type = left_type orelse right_type;
+
+            if (operand_type) |t| {
+                if (!t.isNumeric() and t != .unresolved) {
                     try self.errors.add(.{
-                        .kind = .type_mismatch,
+                        .kind = .arithmetic_op_requires_numeric,
                         .start = loc.start,
                         .end = loc.end,
                     });
                 }
+                if (left_type != null and right_type != null) {
+                    if (!typesCompatible(left_type.?, right_type.?)) {
+                        try self.errors.add(.{
+                            .kind = .type_mismatch,
+                            .start = loc.start,
+                            .end = loc.end,
+                        });
+                    }
+                }
+                return t;
             }
 
-            return operand_type;
+            // both operands unresolved (e.g. literals), result is numeric but unknown
+            return null;
         } else if (binary_op.isComparison()) {
-            // comparison ops require compatible types
+            // infer operand types (no context)
+            const left_type = try self.checkExpression(binary_op.left, .unresolved);
+            const right_type = try self.checkExpression(binary_op.right, .unresolved);
+
+            // if both sides have resolved types, they must match
             if (left_type != null and right_type != null) {
                 if (!typesCompatible(left_type.?, right_type.?)) {
                     try self.errors.add(.{
@@ -507,18 +536,21 @@ pub const SemanticContext = struct {
                 }
             }
 
-            // comparison always returns bool
+            // comparisons always produce bool
             return .bool;
         } else if (binary_op.isLogical()) {
-            // logical ops require boolean operands
-            if (left_type != null and left_type.? != .bool and left_type.? != .unresolved) {
-                try self.errors.add(.{
-                    .kind = .logical_op_requires_bool,
-                    .start = loc.start,
-                    .end = loc.end,
-                });
-            }
-            if (right_type != null and right_type.? != .bool and right_type.? != .unresolved) {
+            // infer operand types (no context)
+            const left_type = try self.checkExpression(binary_op.left, .unresolved);
+            const right_type = try self.checkExpression(binary_op.right, .unresolved);
+
+            // validate right operand.
+            // must be explicitly bool, unresolved (runtime check), or structurally compatible (literal true/false)
+            const left_ok = if (left_type) |t|
+                (t == .bool or t == .unresolved)
+            else
+                self.isExprCompatibleWithType(binary_op.left, .bool);
+
+            if (!left_ok) {
                 try self.errors.add(.{
                     .kind = .logical_op_requires_bool,
                     .start = loc.start,
@@ -526,7 +558,21 @@ pub const SemanticContext = struct {
                 });
             }
 
-            // logical ops always return bool
+            // validate right operand
+            const right_ok = if (right_type) |t|
+                (t == .bool or t == .unresolved)
+            else
+                self.isExprCompatibleWithType(binary_op.right, .bool);
+
+            if (!right_ok) {
+                try self.errors.add(.{
+                    .kind = .logical_op_requires_bool,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+
+            // logical ops always produce bool
             return .bool;
         }
 
@@ -560,5 +606,41 @@ pub const SemanticContext = struct {
         // for now, require exact type
         // NOTE: promotion rules become relevant when implementing pointers (i.e., promotion to const)
         return false;
+    }
+
+    /// Check if an unresolved expression can become the target type.
+    /// This handles structural constraints like "negation requires signed".
+    fn isExprCompatibleWithType(self: *SemanticContext, node_idx: NodeIndex, target_type: TypeId) bool {
+        const kind = self.ast.getKind(node_idx);
+
+        return switch (kind) {
+            .literal => {
+                const lit = self.ast.getLiteral(node_idx);
+                const token = self.tokens.items[lit.token_idx];
+                if (token.kind == .boolean) {
+                    return target_type == .bool;
+                }
+                // numeric literals can become any numeric type
+                return target_type.isNumeric();
+            },
+            .unary_op => {
+                const unary_op = self.ast.getUnaryOp(node_idx);
+                return switch (unary_op.op) {
+                    .not => target_type == .bool,
+                    .negate => target_type.isSignedInteger() or target_type.isFloat(),
+                };
+            },
+            .binary_op => {
+                const binary_op = self.ast.getBinaryOp(node_idx);
+                if (binary_op.isArithmetic()) {
+                    return target_type.isNumeric();
+                } else {
+                    // in case of comparison and logical ops
+                    return target_type == .bool;
+                }
+            },
+            .identifier => true, // already resolved via symbol table
+            else => true,
+        };
     }
 };

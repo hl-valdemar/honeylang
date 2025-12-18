@@ -1,0 +1,12 @@
+main :: func() void {
+    # error: implicit casting is not allowed
+    # spec: "honeylang does not support implicit type casting"
+    x: i32 = 10
+    y: u32 = x
+
+    # error: type mismatch (string literal to integer)
+    #z: i32 = "hello"
+
+    # error: type mismatch (integer literal to boolean)
+    flag: bool = 1
+}

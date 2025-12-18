@@ -1,4 +1,4 @@
-pub const TypeId = enum(u8) {
+pub const TypeId = enum {
     // type could not be determined - will trap at runtime
     unresolved,
 

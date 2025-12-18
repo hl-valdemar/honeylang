@@ -83,12 +83,14 @@ fn writeError(
 const ErrorCode = enum {
     e001,
     e002,
+    e003,
 };
 
 fn kindToCode(kind: ErrorKind) ErrorCode {
     return switch (kind) {
         .cannot_negate_unsigned => .e001,
         .arithmetic_op_requires_numeric => .e002,
+        .type_mismatch => .e003,
         else => unreachable,
     };
 }
@@ -97,6 +99,7 @@ fn fmtErrorKind(kind: ErrorKind) []const u8 {
     return switch (kind) {
         .cannot_negate_unsigned => "cannot negate unsigned integer",
         .arithmetic_op_requires_numeric => "arithmetic operation requires numeric type",
+        .type_mismatch => "",
         else => "<[:unimplemented:]>",
     };
 }
@@ -112,6 +115,6 @@ fn kindToHelperMsg(kind: ErrorKind) []const u8 {
     return switch (kind) {
         .cannot_negate_unsigned => "negation requires signed type",
         .arithmetic_op_requires_numeric => "operands must be numeric",
-        else => "",
+        else => "<[:unimplemented:]>",
     };
 }
