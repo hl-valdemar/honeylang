@@ -70,7 +70,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     // print potential errors
     if (sem_result.errors.hasErrors()) {
         std.debug.print("\nReported {d} errors:\n\n", .{sem_result.errors.count()});
-        honey.semantic.error_printer.print(&sem_result.errors, &src);
+        honey.semantic.error_printer.print(&sem_result.errors, &src, file_path);
     }
 
     // 5. comptime expression evaluation

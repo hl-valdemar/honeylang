@@ -5,45 +5,79 @@ const ErrorKind = @import("error.zig").SemanticErrorKind;
 const SourceCode = @import("../source/source.zig").SourceCode;
 const SourceIndex = @import("../source/source.zig").SourceIndex;
 
-pub fn print(error_list: *const ErrorList, src: *const SourceCode) void {
+/// Print errors to stderr with default buffer.
+pub fn print(error_list: *const ErrorList, src: *const SourceCode, file_path: []const u8) void {
+    var stderr_buffer: [4096]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+    const stderr = &stderr_writer.interface;
+
+    write(error_list, src, file_path, stderr) catch {
+        // fallback to unbuffered write on error
+        std.fs.File.stderr().writeAll("error: failed to write diagnostic\n") catch {};
+    };
+
+    stderr.flush() catch {};
+}
+
+/// Write errors to any std.Io.Writer.
+pub fn write(
+    error_list: *const ErrorList,
+    src: *const SourceCode,
+    file_path: []const u8,
+    writer: *std.Io.Writer,
+) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
     for (error_list.errors.items) |err| {
-        var context_start: SourceIndex = 0;
-        var context_end: SourceIndex = 0;
-
-        var line: SourceIndex = 1;
-        for (0..err.start) |i| {
-            if (src.get(@intCast(i)) == '\n') {
-                line += 1;
-                context_start = @intCast(i + 1);
-            }
-        }
-
-        for (err.end..err.end + 3) |i| {
-            if (src.get(@intCast(i)) == '\n') {
-                context_end = @intCast(i);
-                break;
-            }
-        }
-
-        context_end = @min(context_end, err.end + 3);
-
-        const num_pointers = err.end - err.start;
-        var pointers: [20]u8 = [_]u8{0} ** 20;
-        for (0..num_pointers) |i| {
-            pointers[i] = '^';
-        }
-
-        const context_width = err.end - context_start;
-        var indent: [50]u8 = [_]u8{0} ** 50;
-        for (0..context_width - num_pointers) |i| {
-            indent[i] = ' ';
-        }
-
-        std.debug.print("error[{s}]: {s}\n", .{ fmtErrorCode(kindToCode(err.kind)), fmtErrorKind(err.kind) });
-        std.debug.print("   |\n", .{});
-        std.debug.print(" {d} | {s}\n", .{ line, src.getSlice(context_start, context_end) });
-        std.debug.print("   | {s}{s} {s}\n", .{ indent, pointers, kindToHelperMsg(err.kind) });
+        try writeError(err, src, file_path, alloc, writer);
     }
+}
+
+fn writeError(
+    err: @import("error.zig").SemanticError,
+    src: *const SourceCode,
+    file_path: []const u8,
+    alloc: std.mem.Allocator,
+    writer: *std.Io.Writer,
+) !void {
+    var context_start: SourceIndex = 0;
+
+    // compute line and column
+    var line: SourceIndex = 1;
+    var col: SourceIndex = 0;
+    for (0..err.start) |i| {
+        col += 1;
+        if (src.get(@intCast(i)) == '\n') {
+            col = 0;
+            line += 1;
+            context_start = @intCast(i + 1);
+        }
+    }
+
+    // scan to end of line (or EOF)
+    var context_end: SourceIndex = err.end;
+    while (context_end < src.buffer.len) : (context_end += 1) {
+        if (src.get(context_end) == '\n') break;
+    }
+
+    // generate pointers
+    const num_pointers = err.end - err.start;
+    const pointers = try alloc.alloc(u8, num_pointers);
+    @memset(pointers, '^');
+
+    // generate indent
+    const indent_width = err.start - context_start;
+    const indent = try alloc.alloc(u8, indent_width);
+    @memset(indent, ' ');
+
+    // write diagnostic
+    try writer.print("error{any}: {s}\n", .{ kindToCode(err.kind), fmtErrorKind(err.kind) });
+    try writer.print("  --> {s}:{d}:{d}\n", .{ file_path, line, col });
+    try writer.print("   |\n", .{});
+    try writer.print(" {d} | {s}\n", .{ line, src.getSlice(context_start, context_end) });
+    try writer.print("   | {s}{s} {s}\n\n", .{ indent, pointers, kindToHelperMsg(err.kind) });
 }
 
 const ErrorCode = enum {
@@ -56,13 +90,6 @@ fn kindToCode(kind: ErrorKind) ErrorCode {
         .cannot_negate_unsigned => .e001,
         .arithmetic_op_requires_numeric => .e002,
         else => unreachable,
-    };
-}
-
-fn codeToKind(err_code: ErrorCode) ErrorKind {
-    return switch (err_code) {
-        .e001 => .cannot_negate_unsigned,
-        .e002 => .arithmetic_op_requires_numeric,
     };
 }
 
@@ -84,6 +111,7 @@ fn fmtErrorCode(err_code: ErrorCode) []const u8 {
 fn kindToHelperMsg(kind: ErrorKind) []const u8 {
     return switch (kind) {
         .cannot_negate_unsigned => "negation requires signed type",
-        else => "<[:unimplemented:]>",
+        .arithmetic_op_requires_numeric => "operands must be numeric",
+        else => "",
     };
 }

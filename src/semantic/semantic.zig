@@ -338,6 +338,7 @@ pub const SemanticContext = struct {
 
     fn checkConstDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
         const decl = self.ast.getConstDecl(node_idx);
+        const loc = self.ast.getLocation(node_idx);
 
         // get the declared type from the symbol table
         const name_ident = self.ast.getIdentifier(decl.name);
@@ -348,7 +349,18 @@ pub const SemanticContext = struct {
         const declared_type = self.symbols.getTypeId(sym_idx);
 
         // check the value expression, passing the expected type for context
-        _ = try self.checkExpression(decl.value, declared_type);
+        const expr_type = try self.checkExpression(decl.value, declared_type);
+
+        // verify that the expression type matches the declared type
+        if (expr_type != null and declared_type != .unresolved) {
+            if (!typesCompatible(declared_type, expr_type.?)) {
+                try self.errors.add(.{
+                    .kind = .type_mismatch,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+        }
     }
 
     /// Check an expression and return its inferred type.
