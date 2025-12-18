@@ -71,10 +71,14 @@ pub const Parser = struct {
                 });
 
                 // emit an error node
+                var end = self.currentStart();
+                if (self.peek()) |tok| {
+                    end = tok.start + tok.len;
+                }
                 const err_node = try self.ast.addError(
                     errorToMessage(err),
                     self.currentStart(),
-                    self.currentStart(),
+                    end,
                 );
                 try decls.append(self.allocator, err_node);
 

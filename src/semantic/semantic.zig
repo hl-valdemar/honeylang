@@ -330,8 +330,8 @@ pub const SemanticContext = struct {
 
         switch (kind) {
             .const_decl => try self.checkConstDecl(node_idx),
-            // .func_decl => try self.checkFuncDecl(node_idx),
-            // .var_decl => try self.checkVarDecl(node_idx),
+            .func_decl => try self.checkFuncDecl(node_idx),
+            .var_decl => try self.checkVarDecl(node_idx),
             else => {}, // ignore
         }
     }
@@ -374,6 +374,59 @@ pub const SemanticContext = struct {
             }
         }
     }
+
+    fn checkFuncDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const decl = self.ast.getFuncDecl(node_idx);
+
+        // get expected return type
+        var expected_return_type = TypeId.void;
+        if (decl.return_type) |ret_type_idx| {
+            const ret_ident = self.ast.getIdentifier(ret_type_idx);
+            const ret_token = self.tokens.items[ret_ident.token_idx];
+            const ret_name = self.src.getSlice(ret_token.start, ret_token.start + ret_token.len);
+
+            if (resolveTypeName(ret_name)) |tid| {
+                expected_return_type = tid;
+            }
+        }
+
+        // check the function body
+        try self.checkBlock();
+    }
+
+    fn checkVarDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const decl = self.ast.getVarDecl(node_idx);
+
+        // get declared type if explicit
+        var expected_type = TypeId.unresolved;
+
+        if (decl.type_id) |type_idx| {
+            const type_ident = self.ast.getIdentifier(type_idx);
+            const type_token = self.tokens.items[type_ident.token_idx];
+            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
+
+            if (resolveTypeName(type_name)) |tid| {
+                expected_type = tid;
+            }
+        }
+
+        // check value expression
+        const value_type = try self.checkExpression(decl.value, .unresolved);
+
+        // if we have both explicit type and inferred type, verify compatibility
+        if (expected_type != .unresolved and value_type != null and value_type.? != .unresolved) {
+            if (!typesCompatible(expected_type, value_type.?)) {
+                const loc = self.ast.getLocation(node_idx);
+                try self.errors.add(.{
+                    .kind = .type_mismatch,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+        }
+    }
+
+    fn checkBlock(_: *SemanticContext) !void {}
 
     /// Check an expression and return its inferred type.
     /// Returns null if type cannot be determined.
