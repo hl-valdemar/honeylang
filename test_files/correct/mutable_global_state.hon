@@ -10,6 +10,6 @@ main :: func() void {
   do_something()
 
   if did_something {
-    print("something was done!")
+    #print("something was done!")
   }
 }
