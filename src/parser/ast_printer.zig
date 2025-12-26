@@ -220,13 +220,9 @@ fn printNode(
             printIdentifierValue(ast, tokens, src, decl.name);
             std.debug.print("\n", .{});
 
-            if (decl.return_type) |ret_type| {
-                std.debug.print("{s}├─ return: ", .{child_prefix});
-                printIdentifierValue(ast, tokens, src, ret_type);
-                std.debug.print("\n", .{});
-            } else {
-                std.debug.print("{s}├─ return: void\n", .{child_prefix});
-            }
+            std.debug.print("{s}├─ return: ", .{child_prefix});
+            printIdentifierValue(ast, tokens, src, decl.return_type);
+            std.debug.print("\n", .{});
 
             // print parameters
             const params = ast.getExtra(decl.params);

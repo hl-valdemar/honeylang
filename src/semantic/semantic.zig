@@ -451,14 +451,12 @@ pub const SemanticContext = struct {
 
         // get expected return type
         var expected_return_type = TypeId.void;
-        if (decl.return_type) |ret_type_idx| {
-            const ret_ident = self.ast.getIdentifier(ret_type_idx);
-            const ret_token = self.tokens.items[ret_ident.token_idx];
-            const ret_name = self.src.getSlice(ret_token.start, ret_token.start + ret_token.len);
+        const ret_ident = self.ast.getIdentifier(decl.return_type);
+        const ret_token = self.tokens.items[ret_ident.token_idx];
+        const ret_name = self.src.getSlice(ret_token.start, ret_token.start + ret_token.len);
 
-            if (resolveTypeName(ret_name)) |tid| {
-                expected_return_type = tid;
-            }
+        if (resolveTypeName(ret_name)) |tid| {
+            expected_return_type = tid;
         }
 
         // store for return statement check
@@ -707,7 +705,7 @@ pub const SemanticContext = struct {
             .identifier => try self.checkIdentifier(node_idx),
             .unary_op => try self.checkUnaryOp(node_idx),
             .binary_op => try self.checkBinaryOp(node_idx),
-            // .call_expr => try self.checkCallExpression(node_idx, context_type),
+            .call_expr => try self.checkCallExpression(node_idx),
             else => null,
         };
     }
@@ -907,7 +905,88 @@ pub const SemanticContext = struct {
         return null;
     }
 
-    // fn checkCallExpression(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {}
+    fn checkCallExpression(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
+        const call = self.ast.getCallExpr(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+
+        // get function name
+        const func_ident = self.ast.getIdentifier(call.func);
+        const func_token = self.tokens.items[func_ident.token_idx];
+        const func_name = self.src.getSlice(func_token.start, func_token.start + func_token.len);
+
+        // look up function symbol
+        const sym_idx = self.symbols.lookup(func_name) orelse {
+            try self.errors.add(.{
+                .kind = .undefined_symbol,
+                .start = loc.start,
+                .end = loc.end,
+            });
+            return null;
+        };
+
+        // verify it's a function
+        if (self.symbols.getKind(sym_idx) != .function) {
+            try self.errors.add(.{
+                .kind = .not_callable,
+                .start = loc.start,
+                .end = loc.end,
+            });
+            return null;
+        }
+
+        // get func declaration from ast
+        const func_decl_idx = self.symbols.getValueNode(sym_idx);
+        const func_decl = self.ast.getFuncDecl(func_decl_idx);
+
+        // get parameter info / (name, type) pairs
+        const params = self.ast.getExtra(func_decl.params);
+        const param_count = params.len / 2;
+
+        // get args
+        const args = self.ast.getExtra(call.args);
+
+        // check args count
+        if (args.len != param_count) {
+            try self.errors.add(.{
+                .kind = .argument_count_mismatch,
+                .start = loc.start,
+                .end = loc.end,
+            });
+            // still check types for arguments we have
+        }
+
+        // check each arg type
+        const check_count = @min(args.len, param_count);
+        for (0..check_count) |i| {
+            const arg_idx = args[i];
+            const param_type_idx = params[i * 2 + 1]; // type is second in pair
+
+            // get expected param type
+            const type_ident = self.ast.getIdentifier(param_type_idx);
+            const type_token = self.tokens.items[type_ident.token_idx];
+            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
+            const expected_type = resolveTypeName(type_name) orelse .unresolved;
+
+            // check argument type (with expected type for context)
+            const arg_type = try self.checkExpression(arg_idx, expected_type);
+            if (arg_type) |at| {
+                if (!typesCompatible(expected_type, at)) {
+                    const arg_loc = self.ast.getLocation(arg_idx);
+                    try self.errors.add(.{
+                        .kind = .argument_type_mismatch,
+                        .start = arg_loc.start,
+                        .end = arg_loc.end,
+                    });
+                }
+            }
+        }
+
+        // return function's ret type
+        const ret_ident = self.ast.getIdentifier(func_decl.return_type);
+        const ret_token = self.tokens.items[ret_ident.token_idx];
+        const ret_name = self.src.getSlice(ret_token.start, ret_token.start + ret_token.len);
+        return resolveTypeName(ret_name) orelse .unresolved;
+    }
 
     fn finalizeTypes(self: *SemanticContext) void {
         // any symbol still pending → unresolved (will trap at runtime)

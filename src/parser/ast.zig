@@ -59,7 +59,7 @@ pub const ConstDecl = struct {
 pub const FuncDecl = struct {
     name: NodeIndex,
     params: Range,
-    return_type: ?NodeIndex,
+    return_type: NodeIndex,
     body: NodeIndex,
 };
 
@@ -323,7 +323,7 @@ pub const Ast = struct {
         self: *Ast,
         name: NodeIndex,
         params: Range,
-        return_type: ?NodeIndex,
+        return_type: NodeIndex,
         body: NodeIndex,
         start: SourceIndex,
         end: SourceIndex,

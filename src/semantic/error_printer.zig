@@ -84,6 +84,11 @@ const error_info = std.EnumArray(ErrorKind, ErrorInfo).init(.{
         .message = "condition must be boolean",
         .help = "expected bool expression",
     },
+    .not_callable = .{
+        .code = "E015",
+        .message = "expression is not callable",
+        .help = "only functions can be called",
+    },
 });
 
 fn getInfo(kind: ErrorKind) ErrorInfo {

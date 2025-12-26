@@ -22,6 +22,7 @@ pub const SemanticErrorKind = enum {
     return_type_mismatch,
     assignment_to_immutable,
     condition_not_bool,
+    not_callable,
 };
 
 pub const SemanticError = struct {
