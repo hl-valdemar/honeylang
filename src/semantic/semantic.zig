@@ -9,21 +9,14 @@ const SourceCode = @import("../source/source.zig").SourceCode;
 
 const SymbolTable = @import("symbols.zig").SymbolTable;
 const SymbolIndex = @import("symbols.zig").SymbolIndex;
+const Scope = @import("symbols.zig").Scope;
+const LocalSymbol = @import("symbols.zig").LocalSymbol;
 const TypeState = @import("types.zig").TypeState;
 const TypeId = @import("types.zig").TypeId;
 const SemanticError = @import("error.zig").SemanticError;
 const ErrorList = @import("error.zig").ErrorList;
 
 pub const error_printer = @import("error_printer.zig");
-
-pub const TypeError = error{
-    OutOfMemory,
-};
-
-pub const SemanticResult = struct {
-    symbols: SymbolTable,
-    errors: ErrorList,
-};
 
 pub fn analyze(
     allocator: mem.Allocator,
@@ -35,13 +28,27 @@ pub fn analyze(
     return ctx.analyze();
 }
 
+pub const TypeError = error{
+    OutOfMemory,
+};
+
+pub const SemanticResult = struct {
+    symbols: SymbolTable,
+    errors: ErrorList,
+};
+
 pub const SemanticContext = struct {
     allocator: mem.Allocator,
+
     ast: *const Ast,
     tokens: *const TokenList,
     src: *const SourceCode,
+
     symbols: SymbolTable,
+    scopes: std.ArrayList(Scope),
     errors: ErrorList,
+
+    current_ret_type: TypeId = .void,
 
     pub fn init(
         allocator: mem.Allocator,
@@ -55,6 +62,7 @@ pub const SemanticContext = struct {
             .tokens = tokens,
             .src = src,
             .symbols = try SymbolTable.init(allocator),
+            .scopes = try std.ArrayList(Scope).initCapacity(allocator, 4),
             .errors = try ErrorList.init(allocator),
         };
     }
@@ -71,6 +79,12 @@ pub const SemanticContext = struct {
 
         // 4. finalize (pending → unresolved)
         self.finalizeTypes();
+
+        // cleanup
+        for (self.scopes.items) |*scope| {
+            scope.deinit();
+        }
+        self.scopes.deinit(self.allocator);
 
         return .{
             .symbols = self.symbols,
@@ -386,7 +400,9 @@ pub const SemanticContext = struct {
         switch (kind) {
             .const_decl => try self.checkConstDecl(node_idx),
             .func_decl => try self.checkFuncDecl(node_idx),
-            .var_decl => try self.checkVarDecl(node_idx),
+            .var_decl => {
+                _ = try self.checkVarDecl(node_idx);
+            },
             else => {}, // ignore
         }
     }
@@ -445,11 +461,43 @@ pub const SemanticContext = struct {
             }
         }
 
-        // check the function body
-        try self.checkBlock();
+        // store for return statement check
+        const previous_ret_type = self.current_ret_type;
+        self.current_ret_type = expected_return_type;
+        defer self.current_ret_type = previous_ret_type;
+
+        // push scope for func body
+        try self.pushScope();
+        defer self.popScope();
+
+        // register params as locals
+        const params = self.ast.getExtra(decl.params);
+        var i: usize = 0;
+        while (i < params.len) : (i += 2) {
+            const param_name_idx = params[i];
+            const param_type_idx = params[i + 1];
+
+            // get param name
+            const param_ident = self.ast.getIdentifier(param_name_idx);
+            const param_token = self.tokens.items[param_ident.token_idx];
+            const param_name = self.src.getSlice(param_token.start, param_token.start + param_token.len);
+
+            // get param type
+            const type_ident = self.ast.getIdentifier(param_type_idx);
+            const type_token = self.tokens.items[type_ident.token_idx];
+            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
+
+            const param_type = resolveTypeName(type_name) orelse .unresolved;
+
+            // params are immutable
+            try self.declareLocal(param_name, param_type, false);
+        }
+
+        // check function body
+        try self.checkBlock(decl.body);
     }
 
-    fn checkVarDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
+    fn checkVarDecl(self: *SemanticContext, node_idx: NodeIndex) !TypeId {
         const decl = self.ast.getVarDecl(node_idx);
 
         // get declared type if explicit
@@ -479,9 +527,175 @@ pub const SemanticContext = struct {
                 });
             }
         }
+
+        // return best known type
+        if (expected_type != .unresolved) return expected_type;
+        if (value_type) |vt| return vt;
+        return .unresolved;
     }
 
-    fn checkBlock(_: *SemanticContext) !void {}
+    fn checkBlock(self: *SemanticContext, node_idx: NodeIndex) TypeError!void {
+        const block = self.ast.getBlock(node_idx);
+
+        const statements = self.ast.getExtra(block.statements);
+        for (statements) |stmt_idx| {
+            try self.checkStatement(stmt_idx);
+        }
+
+        const deferred = self.ast.getExtra(block.deferred);
+        for (deferred) |stmt_idx| {
+            try self.checkStatement(stmt_idx);
+        }
+    }
+
+    fn checkStatement(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const kind = self.ast.getKind(node_idx);
+
+        switch (kind) {
+            .var_decl => {
+                _ = try self.checkLocalVarDecl(node_idx);
+            },
+            .assignment => try self.checkAssignment(node_idx),
+            .return_stmt => try self.checkReturn(node_idx),
+            .if_stmt => try self.checkIfStmt(node_idx),
+            .call_expr => {
+                // expression statement, just check the expression
+                _ = try self.checkExpression(node_idx, .unresolved);
+            },
+            .block => {
+                // nested block, push a new scope
+                try self.pushScope();
+                defer self.popScope();
+                try self.checkBlock(node_idx);
+            },
+            else => {},
+        }
+    }
+
+    fn checkLocalVarDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const decl = self.ast.getVarDecl(node_idx);
+        const type_id = try self.checkVarDecl(node_idx);
+
+        // get name
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        // register in local scope
+        try self.declareLocal(name, type_id, decl.is_mutable);
+    }
+
+    fn checkAssignment(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const assign = self.ast.getAssignment(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+
+        // get target name
+        const target_ident = self.ast.getIdentifier(assign.target);
+        const target_token = self.tokens.items[target_ident.token_idx];
+        const target_name = self.src.getSlice(target_token.start, target_token.start + target_token.len);
+
+        // look up target / check locals first, then globals
+        var target_type = TypeId.unresolved;
+        var is_mutable = false;
+
+        if (self.lookupLocal(target_name)) |local| {
+            target_type = local.type_id;
+            is_mutable = local.is_mutable;
+        } else if (self.symbols.lookup(target_name)) |sym_idx| {
+            target_type = self.symbols.getTypeId(sym_idx);
+            is_mutable = self.symbols.isMutable(sym_idx);
+        } else {
+            try self.errors.add(.{
+                .kind = .undefined_symbol,
+                .start = loc.start,
+                .end = loc.end,
+            });
+            return;
+        }
+
+        // check mutability
+        if (!is_mutable) {
+            try self.errors.add(.{
+                .kind = .assignment_to_immutable,
+                .start = loc.start,
+                .end = loc.end,
+            });
+        }
+
+        // check value type
+        const value_type = try self.checkExpression(assign.value, target_type);
+        if (value_type) |vt| {
+            if (!typesCompatible(target_type, vt)) {
+                try self.errors.add(.{
+                    .kind = .type_mismatch,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+        }
+    }
+
+    fn checkReturn(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const ret = self.ast.getReturn(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+
+        const expr_type = try self.checkExpression(ret.expr, self.current_ret_type);
+
+        if (expr_type) |et| {
+            if (!typesCompatible(self.current_ret_type, et)) {
+                try self.errors.add(.{
+                    .kind = .return_type_mismatch,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+        }
+    }
+
+    fn checkIfStmt(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const if_stmt = self.ast.getIf(node_idx);
+
+        // check main guard is boolean
+        try self.checkGuardIsBool(if_stmt.if_guard);
+
+        // check main block (new scope)
+        try self.pushScope();
+        try self.checkBlock(if_stmt.if_block);
+        self.popScope();
+
+        // check else-if branches
+        for (0..if_stmt.elseIfCount()) |i| {
+            const pair = if_stmt.getElseIf(self.ast, i) orelse continue;
+
+            try self.checkGuardIsBool(pair.guard);
+
+            try self.pushScope();
+            try self.checkBlock(pair.block);
+            self.popScope();
+        }
+
+        // check else block
+        if (if_stmt.else_block) |else_blk| {
+            try self.pushScope();
+            try self.checkBlock(else_blk);
+            self.popScope();
+        }
+    }
+
+    fn checkGuardIsBool(self: *SemanticContext, guard_idx: NodeIndex) !void {
+        const guard_type = try self.checkExpression(guard_idx, .bool);
+        const loc = self.ast.getLocation(guard_idx);
+
+        if (guard_type) |gt| {
+            if (gt != .bool and gt != .unresolved) {
+                try self.errors.add(.{
+                    .kind = .condition_not_bool,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+        }
+    }
 
     /// Check an expression and return its inferred type.
     /// Returns null if type cannot be determined.
@@ -520,6 +734,12 @@ pub const SemanticContext = struct {
         const token = self.tokens.items[ident.token_idx];
         const name = self.src.getSlice(token.start, token.start + token.len);
 
+        // 1. check locals
+        if (self.lookupLocal(name)) |local| {
+            return local.type_id;
+        }
+
+        // 2. check globals
         if (self.symbols.lookup(name)) |sym_idx| {
             return self.symbols.getTypeId(sym_idx);
         }
@@ -750,5 +970,35 @@ pub const SemanticContext = struct {
             .identifier => true, // already resolved via symbol table
             else => true,
         };
+    }
+
+    fn pushScope(self: *SemanticContext) !void {
+        try self.scopes.append(self.allocator, Scope.init(self.allocator));
+    }
+
+    fn popScope(self: *SemanticContext) void {
+        var scope = self.scopes.pop();
+        if (scope != null) scope.?.deinit();
+    }
+
+    fn declareLocal(self: *SemanticContext, name: []const u8, type_id: TypeId, is_mutable: bool) !void {
+        if (self.scopes.items.len == 0) return; // no scope active
+        var current = &self.scopes.items[self.scopes.items.len - 1];
+        try current.locals.put(name, .{
+            .type_id = type_id,
+            .is_mutable = is_mutable,
+        });
+    }
+
+    fn lookupLocal(self: *SemanticContext, name: []const u8) ?LocalSymbol {
+        // search from innermost to outermost
+        var i = self.scopes.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.scopes.items[i].locals.get(name)) |sym| {
+                return sym;
+            }
+        }
+        return null;
     }
 };

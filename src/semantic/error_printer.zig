@@ -5,116 +5,185 @@ const ErrorKind = @import("error.zig").SemanticErrorKind;
 const SourceCode = @import("../source/source.zig").SourceCode;
 const SourceIndex = @import("../source/source.zig").SourceIndex;
 
-/// Print errors to stderr with default buffer.
+const ErrorInfo = struct {
+    code: []const u8,
+    message: []const u8,
+    help: []const u8,
+};
+
+/// Single source of truth for all error metadata.
+/// Compile-time checked to ensure all error kinds are covered.
+const error_info = std.EnumArray(ErrorKind, ErrorInfo).init(.{
+    .unknown_type = .{
+        .code = "E001",
+        .message = "unknown type",
+        .help = "type not found",
+    },
+    .duplicate_symbol = .{
+        .code = "E002",
+        .message = "duplicate symbol",
+        .help = "symbol already defined",
+    },
+    .undefined_symbol = .{
+        .code = "E003",
+        .message = "undefined symbol",
+        .help = "symbol not found in scope",
+    },
+    .type_mismatch = .{
+        .code = "E004",
+        .message = "type mismatch",
+        .help = "types are not compatible",
+    },
+    .invalid_operand_type = .{
+        .code = "E005",
+        .message = "invalid operand type",
+        .help = "operand has wrong type",
+    },
+    .cannot_negate_unsigned = .{
+        .code = "E006",
+        .message = "cannot negate unsigned integer",
+        .help = "negation requires signed type",
+    },
+    .logical_op_requires_bool = .{
+        .code = "E007",
+        .message = "logical operation requires boolean operands",
+        .help = "operands must be bool",
+    },
+    .arithmetic_op_requires_numeric = .{
+        .code = "E008",
+        .message = "arithmetic operation requires numeric operands",
+        .help = "operands must be numeric",
+    },
+    .comparison_requires_compatible = .{
+        .code = "E009",
+        .message = "comparison requires compatible types",
+        .help = "operands must have the same type",
+    },
+    .argument_count_mismatch = .{
+        .code = "E010",
+        .message = "argument count mismatch",
+        .help = "wrong number of arguments",
+    },
+    .argument_type_mismatch = .{
+        .code = "E011",
+        .message = "argument type mismatch",
+        .help = "argument has wrong type",
+    },
+    .return_type_mismatch = .{
+        .code = "E012",
+        .message = "return type mismatch",
+        .help = "returned value doesn't match function signature",
+    },
+    .assignment_to_immutable = .{
+        .code = "E013",
+        .message = "cannot assign to immutable variable",
+        .help = "use 'mut' to make variable mutable",
+    },
+    .condition_not_bool = .{
+        .code = "E014",
+        .message = "condition must be boolean",
+        .help = "expected bool expression",
+    },
+});
+
+fn getInfo(kind: ErrorKind) ErrorInfo {
+    return error_info.get(kind);
+}
+
+/// Print errors to stderr.
 pub fn print(error_list: *const ErrorList, src: *const SourceCode, file_path: []const u8) void {
     var stderr_buffer: [4096]u8 = undefined;
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
-    const stderr = &stderr_writer.interface;
-
-    write(error_list, src, file_path, stderr) catch {
-        // fallback to unbuffered write on error
-        std.fs.File.stderr().writeAll("error: failed to write diagnostic\n") catch {};
-    };
-
-    stderr.flush() catch {};
-}
-
-/// Write errors to any std.Io.Writer.
-pub fn write(
-    error_list: *const ErrorList,
-    src: *const SourceCode,
-    file_path: []const u8,
-    writer: *std.Io.Writer,
-) !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const writer = &stderr_writer.interface;
 
     for (error_list.errors.items) |err| {
-        try writeError(err, src, file_path, alloc, writer);
+        writeError(err, src, file_path, writer) catch {
+            std.fs.File.stderr().writeAll("error: failed to write diagnostic\n") catch {};
+        };
     }
+
+    writer.flush() catch {};
 }
 
 fn writeError(
     err: @import("error.zig").SemanticError,
     src: *const SourceCode,
     file_path: []const u8,
-    alloc: std.mem.Allocator,
-    writer: *std.Io.Writer,
+    writer: *std.io.Writer,
 ) !void {
-    var context_start: SourceIndex = 0;
+    const info = getInfo(err.kind);
 
     // compute line and column
-    var line: SourceIndex = 1;
-    var col: SourceIndex = 0;
+    var line: u32 = 1;
+    var col: u32 = 1;
+    var line_start: SourceIndex = 0;
+
     for (0..err.start) |i| {
-        col += 1;
-        if (src.get(@intCast(i)) == '\n') {
-            col = 0;
-            line += 1;
-            context_start = @intCast(i + 1);
+        if (src.get(@intCast(i))) |c| {
+            if (c == '\n') {
+                line += 1;
+                col = 1;
+                line_start = @intCast(i + 1);
+            } else {
+                col += 1;
+            }
         }
     }
 
-    // scan to end of line (or EOF)
-    var context_end: SourceIndex = err.end;
-    while (context_end < src.buffer.len) : (context_end += 1) {
-        if (src.get(context_end) == '\n') break;
+    // find end of line
+    var line_end: SourceIndex = err.end;
+    while (line_end < src.buffer.len) : (line_end += 1) {
+        if (src.get(line_end)) |c| {
+            if (c == '\n') break;
+        }
     }
 
-    // generate pointers
-    const num_pointers = err.end - err.start;
-    const pointers = try alloc.alloc(u8, num_pointers);
-    @memset(pointers, '^');
+    // compute line number width for consistent gutter
+    const line_width = digitCount(line);
 
-    // generate indent
-    const indent_width = err.start - context_start;
-    const indent = try alloc.alloc(u8, indent_width);
-    @memset(indent, ' ');
-
-    // write diagnostic
-    try writer.print("error{any}: {s}\n", .{ kindToCode(err.kind), fmtErrorKind(err.kind) });
+    // print diagnostic
+    try writer.print("error[{s}]: {s}\n", .{ info.code, info.message });
     try writer.print("  --> {s}:{d}:{d}\n", .{ file_path, line, col });
-    try writer.print("   |\n", .{});
-    try writer.print(" {d} | {s}\n", .{ line, src.getSlice(context_start, context_end) });
-    try writer.print("   | {s}{s} {s}\n\n", .{ indent, pointers, kindToHelperMsg(err.kind) });
+
+    // empty gutter line
+    try printGutter(writer, line_width, null);
+    try writer.print("\n", .{});
+
+    // source line with line number
+    try printGutter(writer, line_width, line);
+    try writer.print(" {s}\n", .{src.getSlice(line_start, line_end)});
+
+    // pointer line
+    try printGutter(writer, line_width, null);
+
+    const indent = err.start - line_start;
+    const pointer_len = if (err.end > err.start) err.end - err.start else 1;
+
+    try writer.writeByte(' ');
+    for (0..indent) |_| try writer.writeByte(' ');
+    for (0..pointer_len) |_| try writer.writeByte('^');
+    try writer.print(" {s}\n\n", .{info.help});
 }
 
-const ErrorCode = enum {
-    e001,
-    e002,
-    e003,
-};
-
-fn kindToCode(kind: ErrorKind) ErrorCode {
-    return switch (kind) {
-        .cannot_negate_unsigned => .e001,
-        .arithmetic_op_requires_numeric => .e002,
-        .type_mismatch => .e003,
-        else => unreachable,
-    };
+fn printGutter(writer: *std.io.Writer, width: u32, line_num: ?u32) !void {
+    if (line_num) |num| {
+        // right-align the line number
+        const num_width = digitCount(num);
+        for (0..(width - num_width)) |_| try writer.writeByte(' ');
+        try writer.print("{d} |", .{num});
+    } else {
+        // empty gutter
+        for (0..width) |_| try writer.writeByte(' ');
+        try writer.print(" |", .{});
+    }
 }
 
-fn fmtErrorKind(kind: ErrorKind) []const u8 {
-    return switch (kind) {
-        .cannot_negate_unsigned => "cannot negate unsigned integer",
-        .arithmetic_op_requires_numeric => "arithmetic operation requires numeric type",
-        .type_mismatch => "",
-        else => "<[:unimplemented:]>",
-    };
-}
-
-fn fmtErrorCode(err_code: ErrorCode) []const u8 {
-    return switch (err_code) {
-        .e001 => "E001",
-        .e002 => "E002",
-    };
-}
-
-fn kindToHelperMsg(kind: ErrorKind) []const u8 {
-    return switch (kind) {
-        .cannot_negate_unsigned => "negation requires signed type",
-        .arithmetic_op_requires_numeric => "operands must be numeric",
-        else => "<[:unimplemented:]>",
-    };
+fn digitCount(n: u32) u32 {
+    if (n == 0) return 1;
+    var count: u32 = 0;
+    var num = n;
+    while (num > 0) : (num /= 10) {
+        count += 1;
+    }
+    return count;
 }

@@ -20,6 +20,8 @@ pub const SemanticErrorKind = enum {
     argument_count_mismatch,
     argument_type_mismatch,
     return_type_mismatch,
+    assignment_to_immutable,
+    condition_not_bool,
 };
 
 pub const SemanticError = struct {

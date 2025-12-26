@@ -9,6 +9,23 @@ const NodeIndex = @import("../parser/ast.zig").NodeIndex;
 const SourceCode = @import("../source/source.zig").SourceCode;
 const SourceIndex = @import("../source/source.zig").SourceIndex;
 
+pub const LocalSymbol = struct {
+    type_id: TypeId,
+    is_mutable: bool,
+};
+
+pub const Scope = struct {
+    locals: std.StringHashMap(LocalSymbol),
+
+    pub fn init(allocator: mem.Allocator) Scope {
+        return .{ .locals = std.StringHashMap(LocalSymbol).init(allocator) };
+    }
+
+    pub fn deinit(self: *Scope) void {
+        self.locals.deinit();
+    }
+};
+
 pub const SymbolIndex = u32;
 
 pub const SymbolKind = enum(u8) {
