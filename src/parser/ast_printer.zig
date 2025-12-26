@@ -382,10 +382,19 @@ fn printNode(
             var i: NodeIndex = 0;
             for (if_.else_if_blocks) |block| {
                 if (block) |blk| {
-                    const blk_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
+                    std.debug.print("{s}├─ else if:\n", .{child_prefix});
+
+                    const blk_prefix = if (if_.else_block == null) p: {
+                        break :p std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
+                    } else p: {
+                        break :p std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+                    };
+                    std.debug.print("{s}├─ guard:\n", .{blk_prefix});
+
                     const guard = if_.else_if_guards[i] orelse unreachable;
-                    printNode(ast, tokens, src, guard, blk_prefix, false);
-                    printNode(ast, tokens, src, blk, blk_prefix, false);
+                    const blk_child_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{blk_prefix}) catch unreachable;
+                    printNode(ast, tokens, src, guard, blk_child_prefix, false);
+                    printNode(ast, tokens, src, blk, blk_prefix, true);
                 }
                 i += 1;
             }

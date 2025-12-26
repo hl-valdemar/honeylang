@@ -4,6 +4,7 @@ const mem = std.mem;
 const Token = @import("../lexer/token.zig").Token;
 const TokenKind = @import("../lexer/token.zig").Kind;
 const TokenList = @import("../lexer/token.zig").TokenList;
+const TokenIndex = @import("../lexer/token.zig").TokenIndex;
 
 const ast = @import("ast.zig");
 const Ast = @import("ast.zig").Ast;
@@ -30,7 +31,7 @@ pub const Parser = struct {
     allocator: mem.Allocator,
     errors: std.ArrayList(ParseErrorInfo),
     tokens: []const Token,
-    pos: u32,
+    pos: TokenIndex,
     ast: Ast,
 
     pub fn init(allocator: mem.Allocator, tokens: TokenList) !Parser {
@@ -410,16 +411,13 @@ pub const Parser = struct {
 
         var i: NodeIndex = 0;
         while (self.check(.else_)) : (i += 1) {
-            const next = self.peek();
-
             // check for 'else if'
-            if (next != null and next.?.kind != .if_ or i > 10) {
+            if (!self.checkOffset(.if_, 1) or i > 10) {
                 break;
             }
 
             // consume 'else if'
-            self.advance();
-            self.advance();
+            self.advanceN(2);
 
             // expect boolean expression
             const guard = if (self.check(.left_paren)) guard_blk: {
@@ -622,14 +620,14 @@ pub const Parser = struct {
         try self.expect(.identifier);
 
         const end_pos = self.previousEnd();
-        const token_idx: u32 = @intCast(self.pos - 1);
+        const token_idx: TokenIndex = @intCast(self.pos - 1);
 
         return try self.ast.addIdentifier(token_idx, start_pos, end_pos);
     }
 
     fn parseLiteral(self: *Parser) ParseError!NodeIndex {
         const start_pos = self.currentStart();
-        const token_idx: u32 = @intCast(self.pos);
+        const token_idx: TokenIndex = @intCast(self.pos);
 
         self.advance();
 
@@ -670,7 +668,7 @@ pub const Parser = struct {
         return null;
     }
 
-    fn peekOffset(self: *const Parser, offset: u32) ?Token {
+    fn peekOffset(self: *const Parser, offset: TokenIndex) ?Token {
         const idx = self.pos + offset;
         if (idx < self.tokens.len) {
             return self.tokens[idx];
@@ -680,6 +678,11 @@ pub const Parser = struct {
 
     fn check(self: *const Parser, kind: TokenKind) bool {
         const token = self.peek() orelse return false;
+        return token.kind == kind;
+    }
+
+    fn checkOffset(self: *const Parser, kind: TokenKind, offset: TokenIndex) bool {
+        const token = self.peekOffset(offset) orelse return false;
         return token.kind == kind;
     }
 
@@ -700,6 +703,10 @@ pub const Parser = struct {
 
     fn advance(self: *Parser) void {
         self.pos += 1;
+    }
+
+    fn advanceN(self: *Parser, n: TokenIndex) void {
+        self.pos += n;
     }
 
     /// Return the start position of the current token (before consuming).

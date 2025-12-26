@@ -11,6 +11,8 @@ pub const Token = struct {
 
 pub const TokenList = std.ArrayList(Token);
 
+pub const TokenIndex = u32;
+
 pub const Kind = enum {
     // literals
     identifier,
