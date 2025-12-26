@@ -276,6 +276,7 @@ pub const Parser = struct {
                     break :blk try self.parseExpression();
                 }
             },
+            .if_ => try self.parseIfStmt(),
             else => try self.parseExpression(),
         };
     }
@@ -384,7 +385,82 @@ pub const Parser = struct {
         return try self.ast.addAssignment(target, value, start_pos, end_pos);
     }
 
+    fn parseIfStmt(self: *Parser) ParseError!NodeIndex {
+        const start_pos = self.currentStart();
+
+        // expect 'if'
+        try self.expect(.if_);
+
+        // expect boolean expression
+        const if_guard = if (self.check(.left_paren)) blk: {
+            self.advance(); // consume left
+            const if_guard = try self.parseBooleanExpr();
+            try self.expect(.right_paren); // consume right
+            break :blk if_guard;
+        } else blk: {
+            break :blk try self.parseBooleanExpr();
+        };
+
+        // expect if block
+        const if_block = try self.parseBlock();
+
+        // parse 'else if's
+        var else_if_guards: [10]?NodeIndex = [_]?NodeIndex{ null, null, null, null, null, null, null, null, null, null };
+        var else_if_blocks: [10]?NodeIndex = [_]?NodeIndex{ null, null, null, null, null, null, null, null, null, null };
+
+        var i: NodeIndex = 0;
+        while (self.check(.else_)) : (i += 1) {
+            const next = self.peek();
+
+            // check for 'else if'
+            if (next != null and next.?.kind != .if_ or i > 10) {
+                break;
+            }
+
+            // consume 'else if'
+            self.advance();
+            self.advance();
+
+            // expect boolean expression
+            const guard = if (self.check(.left_paren)) guard_blk: {
+                self.advance(); // consume left
+                const guard = try self.parseBooleanExpr();
+                try self.expect(.right_paren); // consume right
+                break :guard_blk guard;
+            } else guard_blk: {
+                break :guard_blk try self.parseBooleanExpr();
+            };
+            else_if_guards[i] = guard;
+            else_if_blocks[i] = try self.parseBlock();
+        }
+
+        // parse else block
+        const else_block: ?NodeIndex = if (self.check(.else_)) blk: {
+            self.advance();
+            break :blk try self.parseBlock();
+        } else blk: {
+            break :blk null;
+        };
+
+        const end_pos = self.previousEnd();
+
+        return try self.ast.addIf(
+            if_guard,
+            if_block,
+            else_if_guards,
+            else_if_blocks,
+            else_block,
+            start_pos,
+            end_pos,
+        );
+    }
+
     fn parseExpression(self: *Parser) ParseError!NodeIndex {
+        // TODO: also parse call expressions
+        return try self.parseLogicalOr();
+    }
+
+    fn parseBooleanExpr(self: *Parser) ParseError!NodeIndex {
         return try self.parseLogicalOr();
     }
 

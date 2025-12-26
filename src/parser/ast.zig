@@ -25,6 +25,7 @@ pub const NodeKind = enum {
     block,
     return_stmt,
     defer_stmt,
+    if_stmt,
     assignment,
 
     // parse error
@@ -152,6 +153,14 @@ pub const Defer = struct {
     stmt: NodeIndex,
 };
 
+pub const If = struct {
+    if_guard: NodeIndex,
+    if_block: NodeIndex,
+    else_if_guards: [10]?NodeIndex = [_]?NodeIndex{null} ** 10, // FIXME: preferrably limitless
+    else_if_blocks: [10]?NodeIndex = [_]?NodeIndex{null} ** 10, // FIXME: preferrably limitless
+    else_block: ?NodeIndex,
+};
+
 pub const Assignment = struct {
     target: NodeIndex,
     value: NodeIndex,
@@ -183,6 +192,7 @@ pub const Ast = struct {
     blocks: std.ArrayList(Block),
     returns: std.ArrayList(Return),
     defers: std.ArrayList(Defer),
+    ifs: std.ArrayList(If),
     assignments: std.ArrayList(Assignment),
     errors: std.ArrayList(Error),
 
@@ -213,6 +223,7 @@ pub const Ast = struct {
             .blocks = try std.ArrayList(Block).initCapacity(allocator, capacity),
             .returns = try std.ArrayList(Return).initCapacity(allocator, capacity),
             .defers = try std.ArrayList(Defer).initCapacity(allocator, capacity),
+            .ifs = try std.ArrayList(If).initCapacity(allocator, capacity),
             .assignments = try std.ArrayList(Assignment).initCapacity(allocator, capacity),
             .errors = try std.ArrayList(Error).initCapacity(allocator, capacity),
 
@@ -238,6 +249,7 @@ pub const Ast = struct {
         self.blocks.deinit(self.allocator);
         self.returns.deinit(self.allocator);
         self.defers.deinit(self.allocator);
+        self.ifs.deinit(self.allocator);
         self.assignments.deinit(self.allocator);
         self.errors.deinit(self.allocator);
 
@@ -500,6 +512,34 @@ pub const Ast = struct {
         return node_idx;
     }
 
+    pub fn addIf(
+        self: *Ast,
+        if_guard: NodeIndex,
+        if_block: NodeIndex,
+        else_if_guards: ?[10]?NodeIndex,
+        else_if_blocks: ?[10]?NodeIndex,
+        else_block: ?NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.ifs.items.len);
+
+        try self.kinds.append(self.allocator, .if_stmt);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.ifs.append(self.allocator, .{
+            .if_guard = if_guard,
+            .if_block = if_block,
+            .else_if_guards = else_if_guards orelse [10]?NodeIndex{ null, null, null, null, null, null, null, null, null, null },
+            .else_if_blocks = else_if_blocks orelse [10]?NodeIndex{ null, null, null, null, null, null, null, null, null, null },
+            .else_block = else_block,
+        });
+
+        return node_idx;
+    }
+
     pub fn addAssignment(
         self: *Ast,
         target: NodeIndex,
@@ -621,6 +661,12 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .defer_stmt);
         const data_idx = self.data_indices.items[idx];
         return self.defers.items[data_idx];
+    }
+
+    pub fn getIf(self: *const Ast, idx: NodeIndex) If {
+        std.debug.assert(self.kinds.items[idx] == .if_stmt);
+        const data_idx = self.data_indices.items[idx];
+        return self.ifs.items[data_idx];
     }
 
     pub fn getAssignment(self: *const Ast, idx: NodeIndex) Assignment {

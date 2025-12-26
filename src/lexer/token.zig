@@ -47,6 +47,8 @@ pub const Kind = enum {
     greater_equal,
 
     // logical
+    if_,
+    else_,
     not,
     and_,
     or_,

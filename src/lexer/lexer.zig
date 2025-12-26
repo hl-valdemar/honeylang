@@ -19,6 +19,8 @@ const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     .{ "return", .return_ },
 
     // logic-related
+    .{ "if", .if_ },
+    .{ "else", .else_ },
     .{ "not", .not },
     .{ "and", .and_ },
     .{ "or", .or_ },
@@ -86,13 +88,22 @@ const Lexer = struct {
                     self.advance();
                     try tokens.append(allocator, self.makeToken(.right_curly, start, self.pos));
                 },
-                ':' => {
+                '<' => {
                     self.advance();
-                    if (self.peek() == ':') {
+                    if (self.peek() == '=') {
                         self.advance();
-                        try tokens.append(allocator, self.makeToken(.double_colon, start, self.pos));
+                        try tokens.append(allocator, self.makeToken(.less_equal, start, self.pos));
                     } else {
-                        try tokens.append(allocator, self.makeToken(.colon, start, self.pos));
+                        try tokens.append(allocator, self.makeToken(.less, start, self.pos));
+                    }
+                },
+                '>' => {
+                    self.advance();
+                    if (self.peek() == '=') {
+                        self.advance();
+                        try tokens.append(allocator, self.makeToken(.greater_equal, start, self.pos));
+                    } else {
+                        try tokens.append(allocator, self.makeToken(.greater, start, self.pos));
                     }
                 },
                 '+' => {
@@ -136,6 +147,15 @@ const Lexer = struct {
                         try tokens.append(allocator, self.makeToken(.double_equal, start, self.pos));
                     } else {
                         try tokens.append(allocator, self.makeToken(.equal, start, self.pos));
+                    }
+                },
+                ':' => {
+                    self.advance();
+                    if (self.peek() == ':') {
+                        self.advance();
+                        try tokens.append(allocator, self.makeToken(.double_colon, start, self.pos));
+                    } else {
+                        try tokens.append(allocator, self.makeToken(.colon, start, self.pos));
                     }
                 },
                 else => return error.UnexpectedCharacter,

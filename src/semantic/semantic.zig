@@ -93,7 +93,7 @@ pub const SemanticContext = struct {
         switch (kind) {
             .const_decl => try self.collectConstDecl(node_idx),
             .var_decl => try self.collectVarDecl(node_idx),
-            .func_decl => {},
+            .func_decl => try self.collectFuncDecl(node_idx),
             .err => {}, // skip parse errors
             else => {}, // ignore
         }

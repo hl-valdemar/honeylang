@@ -122,6 +122,7 @@ fn getNodeInfo(
         },
         .return_stmt => "return",
         .defer_stmt => "defer",
+        .if_stmt => "if",
         .assignment => blk: {
             const assign = ast.getAssignment(idx);
             const name = getIdentifierName(ast, tokens, src, assign.target);
@@ -207,7 +208,7 @@ fn printNode(
             }
 
             std.debug.print("{s}└─ value:\n", .{child_prefix});
-            const value_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}   ", .{child_prefix}) catch unreachable;
+            const value_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
             printNode(ast, tokens, src, decl.value, value_prefix, true);
         },
 
@@ -255,7 +256,7 @@ fn printNode(
             }
 
             std.debug.print("{s}└─ body:\n", .{child_prefix});
-            const body_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}   ", .{child_prefix}) catch unreachable;
+            const body_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
             printNode(ast, tokens, src, decl.body, body_prefix, true);
         },
 
@@ -278,7 +279,7 @@ fn printNode(
             std.debug.print("{s}├─ mutable: {}\n", .{ child_prefix, decl.is_mutable });
 
             std.debug.print("{s}└─ value:\n", .{child_prefix});
-            const value_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}   ", .{child_prefix}) catch unreachable;
+            const value_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
             printNode(ast, tokens, src, decl.value, value_prefix, true);
         },
 
@@ -338,7 +339,7 @@ fn printNode(
 
             std.debug.print("{s}├─ statements: {d}\n", .{ child_prefix, stmts.len });
             if (stmts.len > 0) {
-                const stmt_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│  ", .{child_prefix}) catch unreachable;
+                const stmt_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
                 for (stmts, 0..) |stmt, i| {
                     const is_last_stmt = (i == stmts.len - 1);
                     printNode(ast, tokens, src, stmt, stmt_prefix, is_last_stmt);
@@ -369,6 +370,33 @@ fn printNode(
             printNode(ast, tokens, src, def.stmt, child_prefix, true);
         },
 
+        .if_stmt => {
+            const if_ = ast.getIf(idx);
+            std.debug.print("if:\n", .{});
+
+            std.debug.print("{s}├─ guard:\n", .{child_prefix});
+            const if_guard_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+            printNode(ast, tokens, src, if_.if_guard, if_guard_prefix, true);
+            printNode(ast, tokens, src, if_.if_block, child_prefix, if_.else_block == null);
+
+            var i: NodeIndex = 0;
+            for (if_.else_if_blocks) |block| {
+                if (block) |blk| {
+                    const blk_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
+                    const guard = if_.else_if_guards[i] orelse unreachable;
+                    printNode(ast, tokens, src, guard, blk_prefix, false);
+                    printNode(ast, tokens, src, blk, blk_prefix, false);
+                }
+                i += 1;
+            }
+
+            if (if_.else_block) |blk| {
+                const else_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
+                std.debug.print("{s}└─ else:\n", .{child_prefix});
+                printNode(ast, tokens, src, blk, else_prefix, true);
+            }
+        },
+
         .assignment => {
             std.debug.print("assignment:\n", .{});
             const assign = ast.getAssignment(idx);
@@ -378,7 +406,7 @@ fn printNode(
             std.debug.print("\n", .{});
 
             std.debug.print("{s}└─ value:\n", .{child_prefix});
-            const value_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}   ", .{child_prefix}) catch unreachable;
+            const value_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
             printNode(ast, tokens, src, assign.value, value_prefix, true);
         },
 
