@@ -156,9 +156,30 @@ pub const Defer = struct {
 pub const If = struct {
     if_guard: NodeIndex,
     if_block: NodeIndex,
-    else_if_guards: [10]?NodeIndex = [_]?NodeIndex{null} ** 10, // FIXME: preferrably limitless
-    else_if_blocks: [10]?NodeIndex = [_]?NodeIndex{null} ** 10, // FIXME: preferrably limitless
+    else_ifs: Range, // interleaved (guard, block) pairs in extra_data
     else_block: ?NodeIndex,
+
+    /// Returns the number of else-if branches
+    pub fn elseIfCount(self: *const If) usize {
+        return self.else_ifs.len / 2;
+    }
+
+    /// A (guard, block) pair for an else-if branch
+    pub const ElseIfPair = struct {
+        guard: NodeIndex,
+        block: NodeIndex,
+    };
+
+    /// Get a specific else-if pair by index.
+    pub fn getElseIf(self: *const If, ast: *const Ast, idx: usize) ?ElseIfPair {
+        if (idx >= self.elseIfCount()) return null;
+        const data = ast.getExtra(self.else_ifs);
+        const base = idx * 2;
+        return .{
+            .guard = data[base],
+            .block = data[base + 1],
+        };
+    }
 };
 
 pub const Assignment = struct {
@@ -516,8 +537,7 @@ pub const Ast = struct {
         self: *Ast,
         if_guard: NodeIndex,
         if_block: NodeIndex,
-        else_if_guards: ?[10]?NodeIndex,
-        else_if_blocks: ?[10]?NodeIndex,
+        else_ifs: Range,
         else_block: ?NodeIndex,
         start: SourceIndex,
         end: SourceIndex,
@@ -532,8 +552,7 @@ pub const Ast = struct {
         try self.ifs.append(self.allocator, .{
             .if_guard = if_guard,
             .if_block = if_block,
-            .else_if_guards = else_if_guards orelse [10]?NodeIndex{ null, null, null, null, null, null, null, null, null, null },
-            .else_if_blocks = else_if_blocks orelse [10]?NodeIndex{ null, null, null, null, null, null, null, null, null, null },
+            .else_ifs = else_ifs,
             .else_block = else_block,
         });
 

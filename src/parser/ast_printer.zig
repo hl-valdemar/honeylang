@@ -377,31 +377,37 @@ fn printNode(
             std.debug.print("{s}├─ guard:\n", .{child_prefix});
             const if_guard_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
             printNode(ast, tokens, src, if_.if_guard, if_guard_prefix, true);
-            printNode(ast, tokens, src, if_.if_block, child_prefix, if_.else_block == null);
 
-            var i: NodeIndex = 0;
-            for (if_.else_if_blocks) |block| {
-                if (block) |blk| {
+            const has_else_ifs = if_.elseIfCount() > 0;
+            const has_else = if_.else_block != null;
+
+            printNode(ast, tokens, src, if_.if_block, child_prefix, !has_else_ifs and !has_else);
+
+            for (0..if_.elseIfCount()) |i| {
+                const pair = if_.getElseIf(ast, i) orelse unreachable;
+                const is_last_else_if = i == if_.elseIfCount() - 1;
+                const is_last_inner = is_last_else_if and !has_else;
+
+                if (is_last_inner) {
+                    std.debug.print("{s}└─ else if:\n", .{child_prefix});
+                } else {
                     std.debug.print("{s}├─ else if:\n", .{child_prefix});
-
-                    const blk_prefix = if (if_.else_block == null) p: {
-                        break :p std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
-                    } else p: {
-                        break :p std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
-                    };
-                    std.debug.print("{s}├─ guard:\n", .{blk_prefix});
-
-                    const guard = if_.else_if_guards[i] orelse unreachable;
-                    const blk_child_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{blk_prefix}) catch unreachable;
-                    printNode(ast, tokens, src, guard, blk_child_prefix, false);
-                    printNode(ast, tokens, src, blk, blk_prefix, true);
                 }
-                i += 1;
+
+                const blk_prefix = if (is_last_inner)
+                    std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable
+                else
+                    std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+
+                std.debug.print("{s}├─ guard:\n", .{blk_prefix});
+                const blk_child_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{blk_prefix}) catch unreachable;
+                printNode(ast, tokens, src, pair.guard, blk_child_prefix, true);
+                printNode(ast, tokens, src, pair.block, blk_prefix, true);
             }
 
             if (if_.else_block) |blk| {
-                const else_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
                 std.debug.print("{s}└─ else:\n", .{child_prefix});
+                const else_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
                 printNode(ast, tokens, src, blk, else_prefix, true);
             }
         },

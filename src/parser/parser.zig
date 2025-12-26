@@ -405,9 +405,9 @@ pub const Parser = struct {
         // expect if block
         const if_block = try self.parseBlock();
 
-        // parse 'else if's
-        var else_if_guards: [10]?NodeIndex = [_]?NodeIndex{ null, null, null, null, null, null, null, null, null, null };
-        var else_if_blocks: [10]?NodeIndex = [_]?NodeIndex{ null, null, null, null, null, null, null, null, null, null };
+        // parse 'else if's / collect interleaved (guard, block) pairs
+        var else_ifs = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
+        defer else_ifs.deinit(self.allocator);
 
         var i: NodeIndex = 0;
         while (self.check(.else_)) : (i += 1) {
@@ -428,9 +428,16 @@ pub const Parser = struct {
             } else guard_blk: {
                 break :guard_blk try self.parseBooleanExpr();
             };
-            else_if_guards[i] = guard;
-            else_if_blocks[i] = try self.parseBlock();
+
+            const block = try self.parseBlock();
+
+            // store as interleaved pair
+            try else_ifs.append(self.allocator, guard);
+            try else_ifs.append(self.allocator, block);
         }
+
+        // convert to range
+        const else_ifs_range = try self.ast.addExtra(else_ifs.items);
 
         // parse else block
         const else_block: ?NodeIndex = if (self.check(.else_)) blk: {
@@ -445,8 +452,7 @@ pub const Parser = struct {
         return try self.ast.addIf(
             if_guard,
             if_block,
-            else_if_guards,
-            else_if_blocks,
+            else_ifs_range,
             else_block,
             start_pos,
             end_pos,
