@@ -6,6 +6,8 @@ const builtin = @import("builtin");
 const honey = @import("honeylang");
 
 pub fn main() !void {
+    honey.style.init();
+
     var gpa = heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
 
@@ -29,12 +31,14 @@ pub fn main() !void {
 }
 
 pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
+    const s = honey.style;
+
     // 1. read source
     var source_arena = heap.ArenaAllocator.init(gpa);
     defer source_arena.deinit();
     const src = try honey.source.fromFile(source_arena.allocator(), file_path, 0);
 
-    std.debug.print("\n::[[ Source Code ]]::\n\n", .{});
+    std.debug.print("\n{s}::[[ Source Code ]]::{s}\n\n", .{s.magenta(), s.reset()});
     std.debug.print("{s}\n", .{src.buffer});
 
     // 2. scan source
@@ -43,7 +47,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     const tokens = try honey.lexer.scan(token_arena.allocator(), &src);
 
     // print generated tokens
-    std.debug.print("\n::[[ Scanning ]]::\n\n", .{});
+    std.debug.print("\n{s}::[[ Scanning ]]::{s}\n\n", .{s.magenta(), s.reset()});
     std.debug.print("Generated {d} tokens:\n\n", .{tokens.items.len});
     honey.token_printer.print(&tokens, &src);
 
@@ -53,7 +57,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     const ast = try honey.parser.parse(ast_arena.allocator(), tokens);
 
     // print generated parse tree
-    std.debug.print("\n\n::[[ Parsing ]]::\n\n", .{});
+    std.debug.print("\n\n{s}::[[ Parsing ]]::{s}\n\n", .{s.magenta(), s.reset()});
     std.debug.print("Parsed {} nodes:\n\n", .{ast.nodeCount()});
     honey.ast_printer.print(&ast, &tokens, &src);
 
@@ -63,7 +67,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     const sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &ast, &tokens, &src);
 
     // print generated symbol table
-    std.debug.print("\n\n::[[ Semantic Analysis ]]::\n\n", .{});
+    std.debug.print("\n\n{s}::[[ Semantic Analysis ]]::{s}\n\n", .{s.magenta(), s.reset()});
     std.debug.print("Collected {d} symbols:\n\n", .{sem_result.symbols.count()});
     honey.symbol_printer.print(&sem_result.symbols, &src);
 
@@ -79,7 +83,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     const comptime_result = try honey.comptime_.evaluate(comptime_arena.allocator(), &ast, &tokens, &src, &sem_result.symbols);
 
     // print generated symbol table
-    std.debug.print("\n\n::[[ Comptime Evaluation ]]::\n\n", .{});
+    std.debug.print("\n\n{s}::[[ Comptime Evaluation ]]::{s}\n\n", .{s.magenta(), s.reset()});
     std.debug.print("Succesfully evaluated {d} expressions:\n\n", .{comptime_result.eval_literals.items.len});
     honey.comptime_printer.print(&comptime_result, &sem_result.symbols, &src);
 }
