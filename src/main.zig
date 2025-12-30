@@ -101,6 +101,8 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
 }
 
 pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8) !void {
+    const ansi = honey.ansi;
+
     // 1. read source
     var source_arena = heap.ArenaAllocator.init(gpa);
     defer source_arena.deinit();
@@ -109,27 +111,39 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8) !void {
     // 2. scan source
     var token_arena = heap.ArenaAllocator.init(gpa);
     defer token_arena.deinit();
-    const tokens = try honey.lexer.scan(token_arena.allocator(), &src);
+    const lexer_result = try honey.lexer.scan(token_arena.allocator(), &src);
+
+    // print lexer errors if any
+    if (lexer_result.errors.hasErrors()) {
+        std.debug.print("\n{s}Reported {d} lexer errors:{s}\n\n", .{ ansi.red(), lexer_result.errors.count(), ansi.reset() });
+        honey.lexer.error_printer.print(&lexer_result.errors, &src, file_path);
+    }
 
     // 3. parse tokens
     var ast_arena = std.heap.ArenaAllocator.init(gpa);
     defer ast_arena.deinit();
-    const ast = try honey.parser.parse(ast_arena.allocator(), tokens);
+    const parse_result = try honey.parser.parse(ast_arena.allocator(), lexer_result.tokens);
+
+    // print parse errors if any
+    if (parse_result.errors.hasErrors()) {
+        std.debug.print("\n{s}Reported {d} parse errors:{s}\n\n", .{ ansi.red(), parse_result.errors.count(), ansi.reset() });
+        honey.parser.error_printer.print(&parse_result.errors, &src, file_path);
+    }
 
     // 4. analyze parse tree
     var semantic_arena = std.heap.ArenaAllocator.init(gpa);
     defer semantic_arena.deinit();
-    const sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &ast, &tokens, &src);
+    const sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &parse_result.ast, &lexer_result.tokens, &src);
 
-    // print potential errors
+    // print semantic errors if any
     if (sem_result.errors.hasErrors()) {
-        std.debug.print("Honey compiled with errors:\n", .{});
-        honey.semantic.error_printer.print(&sem_result.errors, &src);
+        std.debug.print("\n{s}Reported {d} errors:{s}\n\n", .{ ansi.red(), sem_result.errors.count(), ansi.reset() });
+        honey.semantic.error_printer.print(&sem_result.errors, &src, file_path);
     }
 
     // 5. comptime expression evaluation
     var comptime_arena = std.heap.ArenaAllocator.init(gpa);
     defer comptime_arena.deinit();
-    const comptime_result = try honey.comptime_.evaluate(comptime_arena.allocator(), &ast, &tokens, &src, &sem_result.symbols);
+    const comptime_result = try honey.comptime_.evaluate(comptime_arena.allocator(), &parse_result.ast, &lexer_result.tokens, &src, &sem_result.symbols);
     _ = comptime_result;
 }
