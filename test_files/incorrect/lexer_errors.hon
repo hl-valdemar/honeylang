@@ -1,0 +1,16 @@
+# Comprehensive lexer error test
+# Multiple error types in one file
+
+# L001: unexpected characters
+a :: 10 @ 20
+b :: 5 $ 3
+c :: 1 ~ 2
+
+# L004: multiple decimal points
+pi :: 3.14.159
+version :: 1.2.3
+
+# More unexpected characters
+weird :: 42 ^ 2   # ^ not valid (use xor keyword)
+back :: `hello`   # backticks not supported yet
+

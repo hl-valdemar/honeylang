@@ -11,10 +11,21 @@ const Ast = @import("ast.zig").Ast;
 const NodeIndex = @import("ast.zig").NodeIndex;
 const SourceIndex = @import("../source/source.zig").SourceIndex;
 
-pub fn parse(allocator: mem.Allocator, tokens: TokenList) !Ast {
+const parse_error = @import("error.zig");
+const ParseErrorKind = parse_error.ParseErrorKind;
+const ErrorList = parse_error.ErrorList;
+
+pub const error_printer = @import("error_printer.zig");
+
+pub fn parse(allocator: mem.Allocator, tokens: TokenList) !ParseResult {
     var parser = try Parser.init(allocator, tokens);
     return parser.parse();
 }
+
+pub const ParseResult = struct {
+    ast: Ast,
+    errors: ErrorList,
+};
 
 pub const ParseError = error{
     UnexpectedEof,
@@ -22,14 +33,9 @@ pub const ParseError = error{
     OutOfMemory,
 };
 
-pub const ParseErrorInfo = struct {
-    message: []const u8,
-    pos: SourceIndex,
-};
-
 pub const Parser = struct {
     allocator: mem.Allocator,
-    errors: std.ArrayList(ParseErrorInfo),
+    errors: ErrorList,
     tokens: []const Token,
     pos: TokenIndex,
     ast: Ast,
@@ -37,7 +43,7 @@ pub const Parser = struct {
     pub fn init(allocator: mem.Allocator, tokens: TokenList) !Parser {
         return .{
             .allocator = allocator,
-            .errors = try std.ArrayList(ParseErrorInfo).initCapacity(allocator, 1),
+            .errors = try ErrorList.init(allocator),
             .tokens = tokens.items,
             .pos = 0,
             .ast = try Ast.init(allocator),
@@ -46,9 +52,10 @@ pub const Parser = struct {
 
     pub fn deinit(self: *Parser) void {
         self.ast.deinit();
+        self.errors.deinit();
     }
 
-    pub fn parse(self: *Parser) ParseError!Ast {
+    pub fn parse(self: *Parser) ParseError!ParseResult {
         const start_pos = self.currentStart();
         const decls = try self.parseDecls();
         const end_pos = self.previousEnd();
@@ -56,7 +63,10 @@ pub const Parser = struct {
         const root = try self.ast.addProgram(decls, start_pos, end_pos);
         self.ast.root = root;
 
-        return self.ast;
+        return .{
+            .ast = self.ast,
+            .errors = self.errors,
+        };
     }
 
     fn parseDecls(self: *Parser) ParseError!ast.Range {
@@ -64,21 +74,25 @@ pub const Parser = struct {
         defer decls.deinit(self.allocator);
 
         while (!self.check(.eof)) {
-            const decl = self.parseDeclaration() catch |err| {
-                // record the error
-                try self.errors.append(self.allocator, .{
-                    .message = errorToMessage(err),
-                    .pos = self.currentStart(),
-                });
-
-                // emit an error node
-                var end = self.currentStart();
+            const decl = self.parseDeclaration() catch {
+                // parsing functions already added detailed errors.
+                // just create an error node and synchronize.
+                const start = self.currentStart();
+                var end = start;
                 if (self.peek()) |tok| {
                     end = tok.start + tok.len;
                 }
+
+                // get the actual error kind from the last recorded error
+                const error_kind = if (self.errors.errors.items.len > 0)
+                    self.errors.errors.items[self.errors.errors.items.len - 1].kind
+                else
+                    ParseErrorKind.unexpected_token;
+
+                // emit an error node (no additional error message)
                 const err_node = try self.ast.addError(
-                    errorToMessage(err),
-                    self.currentStart(),
+                    @tagName(error_kind),
+                    start,
                     end,
                 );
                 try decls.append(self.allocator, err_node);
@@ -94,7 +108,10 @@ pub const Parser = struct {
     }
 
     fn parseDeclaration(self: *Parser) !NodeIndex {
-        const token = self.peek() orelse return error.UnexpectedEof;
+        const token = self.peek() orelse {
+            try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+            return error.UnexpectedEof;
+        };
 
         // mutable runtime var
         if (token.kind == .mut) {
@@ -103,11 +120,17 @@ pub const Parser = struct {
 
         // otherwise, disambiguate
         if (token.kind == .identifier) {
-            const next = self.peekOffset(1) orelse return error.UnexpectedEof;
+            const next = self.peekOffset(1) orelse {
+                try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+                return error.UnexpectedEof;
+            };
 
             if (next.kind == .double_colon) {
                 // `identifier :: ...` => const or func decl
-                const after = self.peekOffset(2) orelse return error.UnexpectedEof;
+                const after = self.peekOffset(2) orelse {
+                    try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+                    return error.UnexpectedEof;
+                };
                 if (after.kind == .func) {
                     return try self.parseFuncDecl();
                 } else {
@@ -115,14 +138,20 @@ pub const Parser = struct {
                 }
             } else if (next.kind == .colon) {
                 // `identifier : ...` => need to disambiguate
-                const after = self.peekOffset(2) orelse return error.UnexpectedEof;
+                const after = self.peekOffset(2) orelse {
+                    try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+                    return error.UnexpectedEof;
+                };
 
                 if (after.kind == .equal) {
                     // `identifier := ...` => runtime var (inferred type)
                     return try self.parseVarDecl();
                 } else if (after.kind == .identifier) {
                     // `identifier : type ...` => check what follows type
-                    const type_ = self.peekOffset(3) orelse return error.UnexpectedEof;
+                    const type_ = self.peekOffset(3) orelse {
+                        try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+                        return error.UnexpectedEof;
+                    };
 
                     if (type_.kind == .double_colon) {
                         // `identifier : type :: ...` => typed const decl
@@ -135,6 +164,7 @@ pub const Parser = struct {
             }
         }
 
+        try self.addErrorWithFound(.expected_declaration, token.kind, token.start, token.start + token.len);
         return error.UnexpectedToken;
     }
 
@@ -151,7 +181,7 @@ pub const Parser = struct {
             null;
 
         // expect ::
-        try self.expect(.double_colon);
+        try self.expectToken(.double_colon, .expected_double_colon);
 
         // parse value expression
         const value = try self.parseExpression();
@@ -168,19 +198,19 @@ pub const Parser = struct {
         const name = try self.parseIdentifier();
 
         // expect ::
-        try self.expect(.double_colon);
+        try self.expectToken(.double_colon, .expected_double_colon);
 
         // expect 'func'
-        try self.expect(.func);
+        try self.expectToken(.func, .unexpected_token);
 
         // expect (
-        try self.expect(.left_paren);
+        try self.expectToken(.left_paren, .expected_left_paren);
 
         // parse parameters
         const params = try self.parseParameters();
 
         // expect )
-        try self.expect(.right_paren);
+        try self.expectToken(.right_paren, .expected_right_paren);
 
         // parse return type
         const return_type = try self.parseIdentifier();
@@ -203,7 +233,7 @@ pub const Parser = struct {
             try params.append(self.allocator, param_name);
 
             // expect :
-            try self.expect(.colon);
+            try self.expectToken(.colon, .expected_colon);
 
             // parse parameter type (identifier)
             const param_type = try self.parseIdentifier();
@@ -223,7 +253,7 @@ pub const Parser = struct {
     fn parseBlock(self: *Parser) ParseError!NodeIndex {
         const start_pos = self.currentStart();
 
-        try self.expect(.left_curly);
+        try self.expectToken(.left_curly, .expected_left_curly);
 
         var statements = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 2);
         defer statements.deinit(self.allocator);
@@ -232,7 +262,29 @@ pub const Parser = struct {
         defer deferred.deinit(self.allocator);
 
         while (!self.check(.right_curly) and !self.check(.eof)) {
-            const stmt = try self.parseStatement();
+            const stmt = self.parseStatement() catch {
+                // parsing functions already added detailed errors.
+                // just create an error node and synchronize.
+                const err_start = self.currentStart();
+                var err_end = err_start;
+                if (self.peek()) |tok| {
+                    err_end = tok.start + tok.len;
+                }
+
+                // get the actual error kind from the last recorded error
+                const error_kind = if (self.errors.errors.items.len > 0)
+                    self.errors.errors.items[self.errors.errors.items.len - 1].kind
+                else
+                    ParseErrorKind.unexpected_token;
+
+                // emit an error node (no additional error message)
+                const err_node = try self.ast.addError(@tagName(error_kind), err_start, err_end);
+                try statements.append(self.allocator, err_node);
+
+                // skip to next statement
+                self.synchronizeStatement();
+                continue;
+            };
 
             // check if it's a defer statement
             const kind = self.ast.getKind(stmt);
@@ -243,7 +295,11 @@ pub const Parser = struct {
             }
         }
 
-        try self.expect(.right_curly);
+        if (self.check(.eof) and !self.check(.right_curly)) {
+            try self.addError(.unclosed_brace, start_pos, self.currentStart());
+        }
+
+        try self.expectToken(.right_curly, .expected_right_curly);
 
         const stmt_range = try self.ast.addExtra(statements.items);
         const defer_range = try self.ast.addExtra(deferred.items);
@@ -254,7 +310,10 @@ pub const Parser = struct {
     }
 
     fn parseStatement(self: *Parser) ParseError!NodeIndex {
-        const token = self.peek() orelse return error.UnexpectedEof;
+        const token = self.peek() orelse {
+            try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+            return error.UnexpectedEof;
+        };
 
         return switch (token.kind) {
             .return_ => try self.parseReturn(),
@@ -262,7 +321,10 @@ pub const Parser = struct {
             .mut => try self.parseVarDecl(),
             .identifier => blk: {
                 // could be var decl or assignment
-                const next = self.peekOffset(1) orelse return error.UnexpectedEof;
+                const next = self.peekOffset(1) orelse {
+                    try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+                    return error.UnexpectedEof;
+                };
                 if (next.kind == .colon) {
                     break :blk try self.parseVarDecl();
                 } else if (next.kind == .equal or
@@ -285,7 +347,7 @@ pub const Parser = struct {
     fn parseReturn(self: *Parser) ParseError!NodeIndex {
         const start_pos = self.currentStart();
 
-        try self.expect(.return_);
+        try self.expectToken(.return_, .unexpected_token);
 
         const expr = try self.parseExpression();
 
@@ -297,7 +359,7 @@ pub const Parser = struct {
     fn parseDefer(self: *Parser) ParseError!NodeIndex {
         const start_pos = self.currentStart();
 
-        try self.expect(.defer_);
+        try self.expectToken(.defer_, .unexpected_token);
 
         const stmt = try self.parseStatement();
 
@@ -316,7 +378,7 @@ pub const Parser = struct {
         const name = try self.parseIdentifier();
 
         // expect :
-        try self.expect(.colon);
+        try self.expectToken(.colon, .expected_colon);
 
         // optional type
         const type_node = if (self.check(.identifier))
@@ -325,7 +387,7 @@ pub const Parser = struct {
             null;
 
         // expect =
-        try self.expect(.equal);
+        try self.expectToken(.equal, .expected_equal);
 
         // parse value
         const value = try self.parseExpression();
@@ -341,7 +403,10 @@ pub const Parser = struct {
         const target = try self.parseIdentifier();
 
         // check what kind of assignment
-        const token = self.peek() orelse return error.UnexpectedEof;
+        const token = self.peek() orelse {
+            try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+            return error.UnexpectedEof;
+        };
 
         // handle compound assignment by desugaring to binary op + assignment
         if (token.kind == .plus_equal or
@@ -377,7 +442,7 @@ pub const Parser = struct {
         }
 
         // regular assignment
-        try self.expect(.equal);
+        try self.expectToken(.equal, .expected_equal);
 
         const value = try self.parseExpression();
 
@@ -390,13 +455,13 @@ pub const Parser = struct {
         const start_pos = self.currentStart();
 
         // expect 'if'
-        try self.expect(.if_);
+        try self.expectToken(.if_, .unexpected_token);
 
         // expect boolean expression
         const if_guard = if (self.check(.left_paren)) blk: {
             self.advance(); // consume left
             const if_guard = try self.parseBooleanExpr();
-            try self.expect(.right_paren); // consume right
+            try self.expectToken(.right_paren, .expected_right_paren);
             break :blk if_guard;
         } else blk: {
             break :blk try self.parseBooleanExpr();
@@ -423,7 +488,7 @@ pub const Parser = struct {
             const guard = if (self.check(.left_paren)) guard_blk: {
                 self.advance(); // consume left
                 const guard = try self.parseBooleanExpr();
-                try self.expect(.right_paren); // consume right
+                try self.expectToken(.right_paren, .expected_right_paren);
                 break :guard_blk guard;
             } else guard_blk: {
                 break :guard_blk try self.parseBooleanExpr();
@@ -576,7 +641,10 @@ pub const Parser = struct {
     }
 
     fn parseUnary(self: *Parser) ParseError!NodeIndex {
-        const token = self.peek() orelse return error.UnexpectedEof;
+        const token = self.peek() orelse {
+            try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+            return error.UnexpectedEof;
+        };
 
         const op: ?ast.UnaryOp.Op = switch (token.kind) {
             .minus => .negate,
@@ -597,7 +665,10 @@ pub const Parser = struct {
     }
 
     fn parsePrimary(self: *Parser) ParseError!NodeIndex {
-        const token = self.peek() orelse return error.UnexpectedEof;
+        const token = self.peek() orelse {
+            try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+            return error.UnexpectedEof;
+        };
 
         return switch (token.kind) {
             .identifier => blk: {
@@ -611,19 +682,36 @@ pub const Parser = struct {
             },
             .number, .boolean => try self.parseLiteral(),
             .left_paren => blk: {
+                const paren_start = self.currentStart();
                 self.advance();
                 const expr = try self.parseExpression();
-                try self.expect(.right_paren);
+                if (!self.check(.right_paren)) {
+                    try self.addError(.unclosed_paren, paren_start, self.currentStart());
+                }
+                try self.expectToken(.right_paren, .expected_right_paren);
                 break :blk expr;
             },
-            else => error.UnexpectedToken,
+            else => {
+                try self.addErrorWithFound(.expected_expression, token.kind, token.start, token.start + token.len);
+                return error.UnexpectedToken;
+            },
         };
     }
 
     fn parseIdentifier(self: *Parser) ParseError!NodeIndex {
         const start_pos = self.currentStart();
 
-        try self.expect(.identifier);
+        const token = self.peek() orelse {
+            try self.addError(.unexpected_eof, start_pos, start_pos);
+            return error.UnexpectedEof;
+        };
+
+        if (token.kind != .identifier) {
+            try self.addErrorWithFound(.expected_identifier, token.kind, token.start, token.start + token.len);
+            return error.UnexpectedToken;
+        }
+
+        self.advance();
 
         const end_pos = self.previousEnd();
         const token_idx: TokenIndex = @intCast(self.pos - 1);
@@ -647,19 +735,24 @@ pub const Parser = struct {
 
         const func = try self.parseIdentifier();
 
-        try self.expect(.left_paren);
+        const paren_start = self.currentStart();
+        try self.expectToken(.left_paren, .expected_left_paren);
 
         var args = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 1);
         defer args.deinit(self.allocator);
 
-        while (!self.check(.right_paren)) {
+        while (!self.check(.right_paren) and !self.check(.eof)) {
             const arg = try self.parseExpression();
             try args.append(self.allocator, arg);
 
             if (!self.match(.comma)) break;
         }
 
-        try self.expect(.right_paren);
+        if (self.check(.eof)) {
+            try self.addError(.unclosed_paren, paren_start, self.currentStart());
+        }
+
+        try self.expectToken(.right_paren, .expected_right_paren);
 
         const args_range = try self.ast.addExtra(args.items);
         const end_pos = self.previousEnd();
@@ -700,11 +793,26 @@ pub const Parser = struct {
         return false;
     }
 
-    fn expect(self: *Parser, kind: TokenKind) ParseError!void {
-        if (!self.check(kind)) {
-            return error.UnexpectedToken;
+    fn expectToken(self: *Parser, kind: TokenKind, error_kind: ParseErrorKind) ParseError!void {
+        if (self.check(kind)) {
+            self.advance();
+            return;
         }
-        self.advance();
+
+        const token = self.peek();
+        if (token) |tok| {
+            try self.errors.addExpected(
+                error_kind,
+                kind,
+                tok.kind,
+                tok.start,
+                tok.start + tok.len,
+            );
+        } else {
+            try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+        }
+
+        return error.UnexpectedToken;
     }
 
     fn advance(self: *Parser) void {
@@ -738,15 +846,59 @@ pub const Parser = struct {
     }
 
     fn synchronize(self: *Parser) void {
+        // always advance at least once to ensure progress.
+        // this prevents infinite loops when we're already at what looks like
+        // a declaration boundary but parsing failed (e.g., "CONST : 42").
+        if (self.peek()) |token| {
+            if (token.kind != .eof) {
+                self.advance();
+            }
+        }
+
         // skip tokens until we find what looks like a new declaration:
-        // identifier followed by :: or :
+        // identifier followed by ::, :, or :=
         while (self.peek()) |token| {
             if (token.kind == .eof) return;
 
             if (token.kind == .identifier) {
                 if (self.peekOffset(1)) |next| {
-                    if (next.kind == .double_colon or next.kind == .colon) {
+                    if (next.kind == .double_colon or next.kind == .colon or next.kind == .colon_equal) {
                         return; // found declaration boundary
+                    }
+                }
+            }
+
+            // also stop at 'mut' which starts a var decl
+            if (token.kind == .mut) return;
+
+            self.advance();
+        }
+    }
+
+    fn synchronizeStatement(self: *Parser) void {
+        // skip tokens until we find what looks like a new statement
+        while (self.peek()) |token| {
+            if (token.kind == .eof) return;
+            if (token.kind == .right_curly) return;
+
+            // statement starters
+            if (token.kind == .return_ or
+                token.kind == .defer_ or
+                token.kind == .if_ or
+                token.kind == .mut)
+            {
+                return;
+            }
+
+            // identifier could start assignment or var decl
+            if (token.kind == .identifier) {
+                if (self.peekOffset(1)) |next| {
+                    if (next.kind == .colon or
+                        next.kind == .equal or
+                        next.kind == .plus_equal or
+                        next.kind == .minus_equal)
+                    {
+                        return;
                     }
                 }
             }
@@ -754,12 +906,17 @@ pub const Parser = struct {
             self.advance();
         }
     }
-};
 
-fn errorToMessage(err: ParseError) []const u8 {
-    return switch (err) {
-        error.UnexpectedEof => "unexpected end of file",
-        error.UnexpectedToken => "unexpected token",
-        error.OutOfMemory => "out of memory",
-    };
-}
+    fn addError(self: *Parser, kind: ParseErrorKind, start: SourceIndex, end: SourceIndex) !void {
+        try self.errors.addSimple(kind, start, end);
+    }
+
+    fn addErrorWithFound(self: *Parser, kind: ParseErrorKind, found: TokenKind, start: SourceIndex, end: SourceIndex) !void {
+        try self.errors.add(.{
+            .kind = kind,
+            .start = start,
+            .end = end,
+            .found = found,
+        });
+    }
+};

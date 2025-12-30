@@ -1,7 +1,8 @@
 const std = @import("std");
 
 const ErrorList = @import("error.zig").ErrorList;
-const ErrorKind = @import("error.zig").SemanticErrorKind;
+const LexerError = @import("error.zig").LexerError;
+const LexerErrorKind = @import("error.zig").LexerErrorKind;
 const SourceCode = @import("../source/source.zig").SourceCode;
 const SourceIndex = @import("../source/source.zig").SourceIndex;
 
@@ -13,89 +14,49 @@ const ErrorInfo = struct {
 
 /// Single source of truth for all error metadata.
 /// Compile-time checked to ensure all error kinds are covered.
-const error_info = std.EnumArray(ErrorKind, ErrorInfo).init(.{
-    .unknown_type = .{
-        .code = "S001",
-        .message = "unknown type",
-        .help = "type not found",
+const error_info = std.EnumArray(LexerErrorKind, ErrorInfo).init(.{
+    .unexpected_character = .{
+        .code = "L001",
+        .message = "unexpected character",
+        .help = "this character is not recognized",
     },
-    .duplicate_symbol = .{
-        .code = "S002",
-        .message = "duplicate symbol",
-        .help = "symbol already defined",
+    .invalid_character = .{
+        .code = "L002",
+        .message = "invalid character",
+        .help = "this character is not valid in this context",
     },
-    .undefined_symbol = .{
-        .code = "S003",
-        .message = "undefined symbol",
-        .help = "symbol not found in scope",
+    .invalid_number_literal = .{
+        .code = "L003",
+        .message = "invalid number literal",
+        .help = "number format is not valid",
     },
-    .type_mismatch = .{
-        .code = "S004",
-        .message = "type mismatch",
-        .help = "types are not compatible",
+    .multiple_decimal_points = .{
+        .code = "L004",
+        .message = "multiple decimal points in number",
+        .help = "a number can only have one decimal point",
     },
-    .invalid_operand_type = .{
-        .code = "S005",
-        .message = "invalid operand type",
-        .help = "operand has wrong type",
+    .unterminated_string = .{
+        .code = "L005",
+        .message = "unterminated string literal",
+        .help = "string was never closed with a matching quote",
     },
-    .cannot_negate_unsigned = .{
-        .code = "S006",
-        .message = "cannot negate unsigned integer",
-        .help = "negation requires signed type",
+    .invalid_escape_sequence = .{
+        .code = "L006",
+        .message = "invalid escape sequence",
+        .help = "this escape sequence is not recognized",
     },
-    .logical_op_requires_bool = .{
-        .code = "S007",
-        .message = "logical operation requires boolean operands",
-        .help = "operands must be bool",
-    },
-    .arithmetic_op_requires_numeric = .{
-        .code = "S008",
-        .message = "arithmetic operation requires numeric operands",
-        .help = "operands must be numeric",
-    },
-    .comparison_requires_compatible = .{
-        .code = "S009",
-        .message = "comparison requires compatible types",
-        .help = "operands must have the same type",
-    },
-    .argument_count_mismatch = .{
-        .code = "S010",
-        .message = "argument count mismatch",
-        .help = "wrong number of arguments",
-    },
-    .argument_type_mismatch = .{
-        .code = "S011",
-        .message = "argument type mismatch",
-        .help = "argument has wrong type",
-    },
-    .return_type_mismatch = .{
-        .code = "S012",
-        .message = "return type mismatch",
-        .help = "returned value doesn't match function signature",
-    },
-    .assignment_to_immutable = .{
-        .code = "S013",
-        .message = "cannot assign to immutable variable",
-        .help = "use 'mut' to make variable mutable",
-    },
-    .condition_not_bool = .{
-        .code = "S014",
-        .message = "condition must be boolean",
-        .help = "expected bool expression",
-    },
-    .not_callable = .{
-        .code = "S015",
-        .message = "expression is not callable",
-        .help = "only functions can be called",
+    .unexpected_eof = .{
+        .code = "L007",
+        .message = "unexpected end of file",
+        .help = "the file ended unexpectedly",
     },
 });
 
-fn getInfo(kind: ErrorKind) ErrorInfo {
+fn getInfo(kind: LexerErrorKind) ErrorInfo {
     return error_info.get(kind);
 }
 
-/// Print errors to stderr.
+/// Print errors to stderr with source context.
 pub fn print(error_list: *const ErrorList, src: *const SourceCode, file_path: []const u8) void {
     var stderr_buffer: [4096]u8 = undefined;
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
@@ -111,7 +72,7 @@ pub fn print(error_list: *const ErrorList, src: *const SourceCode, file_path: []
 }
 
 fn writeError(
-    err: @import("error.zig").SemanticError,
+    err: LexerError,
     src: *const SourceCode,
     file_path: []const u8,
     writer: *std.io.Writer,
@@ -154,8 +115,18 @@ fn writeError(
     // compute line number width for consistent gutter
     const line_width = digitCount(line);
 
-    // print diagnostic
-    try writer.print("error[{s}]: {s}\n", .{ info.code, info.message });
+    // build message with character info if available
+    var msg_buf: [128]u8 = undefined;
+    const message = if (err.character) |ch|
+        if (std.ascii.isPrint(ch))
+            std.fmt.bufPrint(&msg_buf, "{s} '{c}' (0x{X:0>2})", .{ info.message, ch, ch }) catch info.message
+        else
+            std.fmt.bufPrint(&msg_buf, "{s} (0x{X:0>2})", .{ info.message, ch }) catch info.message
+    else
+        info.message;
+
+    // print diagnostic header
+    try writer.print("error[{s}]: {s}\n", .{ info.code, message });
     try writer.print("  --> {s}:{d}:{d}\n", .{ file_path, line, col });
 
     // empty gutter line

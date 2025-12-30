@@ -29,6 +29,7 @@ pub const Kind = enum {
     colon,
     double_colon,
     equal,
+    colon_equal,
     plus_equal,
     minus_equal,
     star_equal,
@@ -64,5 +65,6 @@ pub const Kind = enum {
 
     // other
     comma,
+    at,
     eof,
 };

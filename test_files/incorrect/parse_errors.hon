@@ -1,0 +1,100 @@
+# Parse Error Test File
+# Each section tests a specific parse error kind
+
+# -----------------------------------------------------------------------------
+# P005: expected_identifier
+# -----------------------------------------------------------------------------
+
+# error: expected identifier after 'mut'
+mut := 42
+
+# error: expected identifier for function name
+:: func() void {}
+
+# -----------------------------------------------------------------------------
+# P006: expected_declaration  
+# -----------------------------------------------------------------------------
+
+# error: bare expression at top level
+42 + 10
+
+# error: keyword without proper declaration syntax
+return 5
+
+# -----------------------------------------------------------------------------
+# P008: expected_expression
+# -----------------------------------------------------------------------------
+
+# error: missing expression after ::
+EMPTY ::
+
+# error: missing expression after =
+x := 
+
+# -----------------------------------------------------------------------------
+# P012: expected_colon
+# -----------------------------------------------------------------------------
+
+# error: missing colon in variable declaration
+y = 42
+
+# -----------------------------------------------------------------------------
+# P013: expected_double_colon
+# -----------------------------------------------------------------------------
+
+# error: single colon instead of double for const
+CONST : 42
+
+# -----------------------------------------------------------------------------
+# P015: expected_left_paren
+# -----------------------------------------------------------------------------
+
+# error: missing ( after func
+broken_func :: func ) void {}
+
+# -----------------------------------------------------------------------------
+# P016: expected_right_paren / P004: unclosed_paren
+# -----------------------------------------------------------------------------
+
+# error: missing ) in function params
+unclosed :: func(a: i32 void {}
+
+# error: missing ) in call expression
+call_test :: func() i32 {
+    return add(1, 2
+}
+
+# -----------------------------------------------------------------------------
+# P017: expected_left_curly
+# -----------------------------------------------------------------------------
+
+# error: missing { for function body
+no_body :: func() void
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# P018: expected_right_curly / P003: unclosed_brace
+# -----------------------------------------------------------------------------
+
+# error: missing } to close function
+unclosed_func :: func() void {
+    x := 10
+
+# -----------------------------------------------------------------------------
+# P002: unexpected_token
+# -----------------------------------------------------------------------------
+
+# error: unexpected token in expression
+weird :: 1 + + 2
+
+# error: random tokens
+@@@ 
+
+# -----------------------------------------------------------------------------
+# P014: expected_equal
+# -----------------------------------------------------------------------------
+
+# error: missing = in variable declaration
+missing_eq : i32 42
+
