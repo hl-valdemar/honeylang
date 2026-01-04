@@ -83,6 +83,9 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     std.debug.print("Collected {d} symbols:\n\n", .{sem_result.symbols.count()});
     honey.symbol_printer.print(&sem_result.symbols, &src);
 
+    std.debug.print("\nGenerated type registry:\n\n", .{});
+    honey.type_printer.print(&sem_result.types);
+
     // print semantic errors if any
     if (sem_result.errors.hasErrors()) {
         std.debug.print("\n{s}Reported {d} errors:{s}\n\n", .{ ansi.red(), sem_result.errors.count(), ansi.reset() });

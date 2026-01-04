@@ -188,9 +188,6 @@ const Lexer = struct {
                     if (self.peek() == ':') {
                         self.advance();
                         try tokens.append(self.allocator, self.makeToken(.double_colon, start, self.pos));
-                    } else if (self.peek() == '=') {
-                        self.advance();
-                        try tokens.append(self.allocator, self.makeToken(.colon_equal, start, self.pos));
                     } else {
                         try tokens.append(self.allocator, self.makeToken(.colon, start, self.pos));
                     }

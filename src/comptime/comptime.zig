@@ -127,7 +127,7 @@ pub const ComptimeContext = struct {
             if (self.symbols.getKind(idx) != .constant) continue;
 
             // skip unresolved types (they'll trap anyway)
-            if (self.symbols.getTypeId(idx) == .unresolved) continue;
+            if (self.symbols.getTypeId(idx).isUnresolved()) continue;
 
             self.evaluateSymbol(idx) catch |err| {
                 // record error but continue evaluating other symbols
@@ -265,7 +265,7 @@ pub const ComptimeContext = struct {
         const arena_alloc = self.result.arena.allocator();
 
         // handle logical operations
-        if (type_id == .bool) {
+        if (type_id.isBool()) {
             const left_bool = std.mem.eql(u8, left, "true");
             const right_bool = std.mem.eql(u8, right, "true");
 

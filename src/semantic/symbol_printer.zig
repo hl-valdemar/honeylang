@@ -56,7 +56,14 @@ fn printSymbol(symbols: *const SymbolTable, src: *const SourceCode, idx: SymbolI
 
     const type_str = switch (type_state) {
         .pending => "<pending>",
-        .resolved => @tagName(symbols.getTypeId(idx)),
+        .resolved => blk: {
+            const type_id = symbols.getTypeId(idx);
+            break :blk switch (type_id) {
+                .unresolved => "unresolved",
+                .primitive => |p| @tagName(p),
+                .function => "function",
+            };
+        },
     };
 
     std.debug.print("{d:<4} {s:<16} {s:<12} {s:<12} {any:<12} node({d})\n", .{

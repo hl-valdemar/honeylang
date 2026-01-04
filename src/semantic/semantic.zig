@@ -13,6 +13,8 @@ const Scope = @import("symbols.zig").Scope;
 const LocalSymbol = @import("symbols.zig").LocalSymbol;
 const TypeState = @import("types.zig").TypeState;
 const TypeId = @import("types.zig").TypeId;
+const PrimitiveType = @import("types.zig").PrimitiveType;
+const TypeRegistry = @import("types.zig").TypeRegistry;
 const SemanticError = @import("error.zig").SemanticError;
 const ErrorList = @import("error.zig").ErrorList;
 
@@ -34,6 +36,7 @@ pub const TypeError = error{
 
 pub const SemanticResult = struct {
     symbols: SymbolTable,
+    types: TypeRegistry,
     errors: ErrorList,
 };
 
@@ -45,10 +48,11 @@ pub const SemanticContext = struct {
     src: *const SourceCode,
 
     symbols: SymbolTable,
+    types: TypeRegistry,
     scopes: std.ArrayList(Scope),
     errors: ErrorList,
 
-    current_ret_type: TypeId = .void,
+    current_ret_type: TypeId = TypeId.void,
 
     pub fn init(
         allocator: mem.Allocator,
@@ -62,6 +66,7 @@ pub const SemanticContext = struct {
             .tokens = tokens,
             .src = src,
             .symbols = try SymbolTable.init(allocator),
+            .types = try TypeRegistry.init(allocator),
             .scopes = try std.ArrayList(Scope).initCapacity(allocator, 4),
             .errors = try ErrorList.init(allocator),
         };
@@ -86,8 +91,10 @@ pub const SemanticContext = struct {
         }
         self.scopes.deinit(self.allocator);
 
+        // don't deinit returned data
         return .{
             .symbols = self.symbols,
+            .types = self.types,
             .errors = self.errors,
         };
     }
@@ -123,7 +130,7 @@ pub const SemanticContext = struct {
 
         // determine initial type state
         var type_state = TypeState.pending;
-        var type_id = TypeId.unresolved;
+        var type_id: TypeId = .unresolved;
 
         if (decl.type_id) |type_idx| {
             // handle explicit type annotation
@@ -131,7 +138,7 @@ pub const SemanticContext = struct {
             const type_token = self.tokens.items[type_ident.token_idx];
             const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
 
-            if (resolveTypeName(type_name)) |tid| {
+            if (resolvePrimitiveTypeName(type_name)) |tid| {
                 type_id = tid;
                 type_state = .resolved;
             } else {
@@ -175,7 +182,7 @@ pub const SemanticContext = struct {
 
         // determine initial type state
         var type_state = TypeState.pending;
-        var type_id = TypeId.unresolved;
+        var type_id: TypeId = .unresolved;
 
         if (decl.type_id) |type_idx| {
             // handle explicit type annotation
@@ -183,7 +190,7 @@ pub const SemanticContext = struct {
             const type_token = self.tokens.items[type_ident.token_idx];
             const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
 
-            if (resolveTypeName(type_name)) |tid| {
+            if (resolvePrimitiveTypeName(type_name)) |tid| {
                 type_id = tid;
                 type_state = .resolved;
             } else {
@@ -225,16 +232,40 @@ pub const SemanticContext = struct {
         const name_token = self.tokens.items[name_ident.token_idx];
         const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
 
-        // functions always have a resolved type (the function type itself)
-        // for now, we just mark it as resolved with a placeholder
-        // TODO: proper function type representation
+        // get return type
+        const ret_ident = self.ast.getIdentifier(decl.return_type);
+        const ret_token = self.tokens.items[ret_ident.token_idx];
+        const ret_name = self.src.getSlice(ret_token.start, ret_token.start + ret_token.len);
+        const return_type = resolvePrimitiveTypeName(ret_name) orelse .unresolved;
 
+        // collect parameter types
+        const params = self.ast.getExtra(decl.params);
+        const param_count = params.len / 2;
+
+        var param_types = try std.ArrayList(TypeId).initCapacity(self.allocator, param_count);
+        defer param_types.deinit(self.allocator);
+
+        var i: usize = 0;
+        while (i < params.len) : (i += 2) {
+            const param_type_idx = params[i + 1]; // type is second in pair
+            const type_ident = self.ast.getIdentifier(param_type_idx);
+            const type_token = self.tokens.items[type_ident.token_idx];
+            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
+
+            const param_type = resolvePrimitiveTypeName(type_name) orelse .unresolved;
+            try param_types.append(self.allocator, param_type);
+        }
+
+        // register function type
+        const func_type = try self.types.addFunctionType(param_types.items, return_type);
+
+        // register symbol
         const result = try self.symbols.register(
             name,
             name_token.start,
             .function,
             .resolved,
-            .void, // placeholder - functions need proper type representation
+            func_type,
             node_idx,
             false, // mutability doesn't apply to functions
         );
@@ -248,21 +279,21 @@ pub const SemanticContext = struct {
         }
     }
 
-    fn resolveTypeName(name: []const u8) ?TypeId {
+    fn resolvePrimitiveTypeName(name: []const u8) ?TypeId {
         const type_map = std.StaticStringMap(TypeId).initComptime(.{
-            .{ "void", .void },
-            .{ "bool", .bool },
-            .{ "u8", .u8 },
-            .{ "u16", .u16 },
-            .{ "u32", .u32 },
-            .{ "u64", .u64 },
-            .{ "i8", .i8 },
-            .{ "i16", .i16 },
-            .{ "i32", .i32 },
-            .{ "i64", .i64 },
-            .{ "f16", .f16 },
-            .{ "f32", .f32 },
-            .{ "f64", .f64 },
+            .{ "void", TypeId.void },
+            .{ "bool", TypeId.bool },
+            .{ "u8", TypeId.u8 },
+            .{ "u16", TypeId.u16 },
+            .{ "u32", TypeId.u32 },
+            .{ "u64", TypeId.u64 },
+            .{ "i8", TypeId.i8 },
+            .{ "i16", TypeId.i16 },
+            .{ "i32", TypeId.i32 },
+            .{ "i64", TypeId.i64 },
+            .{ "f16", TypeId.f16 },
+            .{ "f32", TypeId.f32 },
+            .{ "f64", TypeId.f64 },
         });
         return type_map.get(name);
     }
@@ -309,7 +340,7 @@ pub const SemanticContext = struct {
 
         // boolean literals always have type bool
         if (token.kind == .boolean) {
-            return .bool;
+            return TypeId.bool;
         }
 
         // numeric literals cannot be inferred without context
@@ -423,7 +454,7 @@ pub const SemanticContext = struct {
         const expr_type = try self.checkExpression(decl.value, .unresolved);
 
         // verify that the expression type matches the declared type
-        if (declared_type != .unresolved) {
+        if (!declared_type.isUnresolved()) {
             if (expr_type) |et| {
                 if (!typesCompatible(declared_type, et)) {
                     try self.errors.add(.{
@@ -449,15 +480,16 @@ pub const SemanticContext = struct {
     fn checkFuncDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
         const decl = self.ast.getFuncDecl(node_idx);
 
-        // get expected return type
-        var expected_return_type = TypeId.void;
-        const ret_ident = self.ast.getIdentifier(decl.return_type);
-        const ret_token = self.tokens.items[ret_ident.token_idx];
-        const ret_name = self.src.getSlice(ret_token.start, ret_token.start + ret_token.len);
+        // get function's type from symtable
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
 
-        if (resolveTypeName(ret_name)) |tid| {
-            expected_return_type = tid;
-        }
+        const sym_idx = self.symbols.lookup(name) orelse return;
+        const func_type_id = self.symbols.getTypeId(sym_idx);
+
+        // get return type from function type
+        const expected_return_type = self.types.getReturnType(func_type_id) orelse TypeId.void;
 
         // store for return statement check
         const previous_ret_type = self.current_ret_type;
@@ -470,22 +502,23 @@ pub const SemanticContext = struct {
 
         // register params as locals
         const params = self.ast.getExtra(decl.params);
+        const param_types = self.types.getParamTypes(func_type_id) orelse &[_]TypeId{};
+
         var i: usize = 0;
-        while (i < params.len) : (i += 2) {
+        var param_idx: usize = 0;
+        while (i < params.len) : ({
+            i += 2;
+            param_idx += 1;
+        }) {
             const param_name_idx = params[i];
-            const param_type_idx = params[i + 1];
 
             // get param name
             const param_ident = self.ast.getIdentifier(param_name_idx);
             const param_token = self.tokens.items[param_ident.token_idx];
             const param_name = self.src.getSlice(param_token.start, param_token.start + param_token.len);
 
-            // get param type
-            const type_ident = self.ast.getIdentifier(param_type_idx);
-            const type_token = self.tokens.items[type_ident.token_idx];
-            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
-
-            const param_type = resolveTypeName(type_name) orelse .unresolved;
+            // get param type from function signature
+            const param_type: TypeId = if (param_idx < param_types.len) param_types[param_idx] else .unresolved;
 
             // params are immutable
             try self.declareLocal(param_name, param_type, false);
@@ -499,14 +532,14 @@ pub const SemanticContext = struct {
         const decl = self.ast.getVarDecl(node_idx);
 
         // get declared type if explicit
-        var expected_type = TypeId.unresolved;
+        var expected_type: TypeId = .unresolved;
 
         if (decl.type_id) |type_idx| {
             const type_ident = self.ast.getIdentifier(type_idx);
             const type_token = self.tokens.items[type_ident.token_idx];
             const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
 
-            if (resolveTypeName(type_name)) |tid| {
+            if (resolvePrimitiveTypeName(type_name)) |tid| {
                 expected_type = tid;
             }
         }
@@ -515,7 +548,7 @@ pub const SemanticContext = struct {
         const value_type = try self.checkExpression(decl.value, .unresolved);
 
         // if we have both explicit type and inferred type, verify compatibility
-        if (expected_type != .unresolved and value_type != null and value_type.? != .unresolved) {
+        if (!expected_type.isUnresolved() and value_type != null and !value_type.?.isUnresolved()) {
             if (!typesCompatible(expected_type, value_type.?)) {
                 const loc = self.ast.getLocation(node_idx);
                 try self.errors.add(.{
@@ -527,7 +560,7 @@ pub const SemanticContext = struct {
         }
 
         // return best known type
-        if (expected_type != .unresolved) return expected_type;
+        if (!expected_type.isUnresolved()) return expected_type;
         if (value_type) |vt| return vt;
         return .unresolved;
     }
@@ -593,7 +626,7 @@ pub const SemanticContext = struct {
         const target_name = self.src.getSlice(target_token.start, target_token.start + target_token.len);
 
         // look up target / check locals first, then globals
-        var target_type = TypeId.unresolved;
+        var target_type: TypeId = .unresolved;
         var is_mutable = false;
 
         if (self.lookupLocal(target_name)) |local| {
@@ -681,11 +714,11 @@ pub const SemanticContext = struct {
     }
 
     fn checkGuardIsBool(self: *SemanticContext, guard_idx: NodeIndex) !void {
-        const guard_type = try self.checkExpression(guard_idx, .bool);
+        const guard_type = try self.checkExpression(guard_idx, TypeId.bool);
         const loc = self.ast.getLocation(guard_idx);
 
         if (guard_type) |gt| {
-            if (gt != .bool and gt != .unresolved) {
+            if (!gt.isBool() and !gt.isUnresolved()) {
                 try self.errors.add(.{
                     .kind = .condition_not_bool,
                     .start = loc.start,
@@ -715,7 +748,7 @@ pub const SemanticContext = struct {
         const token = self.tokens.items[lit.token_idx];
 
         if (token.kind == .boolean) {
-            return .bool;
+            return TypeId.bool;
         }
 
         // for numeric literals, use context type if available
@@ -759,10 +792,10 @@ pub const SemanticContext = struct {
         switch (unary_op.op) {
             .not => {
                 // logical not requires bool
-                const operand_type = try self.checkExpression(unary_op.operand, .bool);
+                const operand_type = try self.checkExpression(unary_op.operand, TypeId.bool);
 
                 if (operand_type) |t| {
-                    if (t != .bool and t != .unresolved) {
+                    if (!t.isBool() and !t.isUnresolved()) {
                         try self.errors.add(.{
                             .kind = .logical_op_requires_bool,
                             .start = loc.start,
@@ -771,7 +804,7 @@ pub const SemanticContext = struct {
                     }
                 }
 
-                return .bool;
+                return TypeId.bool;
             },
             .negate => {
                 // infer type of operand without context
@@ -779,7 +812,7 @@ pub const SemanticContext = struct {
 
                 // negation requires numeric type
                 if (operand_type) |t| {
-                    if (t == .unresolved) {
+                    if (t.isUnresolved()) {
                         // operand is unresolved, negation is valid
                         // BUT can't determine result type yet
                         return null;
@@ -825,7 +858,7 @@ pub const SemanticContext = struct {
             const operand_type = left_type orelse right_type;
 
             if (operand_type) |t| {
-                if (!t.isNumeric() and t != .unresolved) {
+                if (!t.isNumeric() and !t.isUnresolved()) {
                     try self.errors.add(.{
                         .kind = .arithmetic_op_requires_numeric,
                         .start = loc.start,
@@ -863,18 +896,18 @@ pub const SemanticContext = struct {
             }
 
             // comparisons always produce bool
-            return .bool;
+            return TypeId.bool;
         } else if (binary_op.isLogical()) {
             // infer operand types (no context)
             const left_type = try self.checkExpression(binary_op.left, .unresolved);
             const right_type = try self.checkExpression(binary_op.right, .unresolved);
 
-            // validate right operand.
+            // validate left operand.
             // must be explicitly bool, unresolved (runtime check), or structurally compatible (literal true/false)
             const left_ok = if (left_type) |t|
-                (t == .bool or t == .unresolved)
+                (t.isBool() or t.isUnresolved())
             else
-                self.isExprCompatibleWithType(binary_op.left, .bool);
+                self.isExprCompatibleWithType(binary_op.left, TypeId.bool);
 
             if (!left_ok) {
                 try self.errors.add(.{
@@ -886,9 +919,9 @@ pub const SemanticContext = struct {
 
             // validate right operand
             const right_ok = if (right_type) |t|
-                (t == .bool or t == .unresolved)
+                (t.isBool() or t.isUnresolved())
             else
-                self.isExprCompatibleWithType(binary_op.right, .bool);
+                self.isExprCompatibleWithType(binary_op.right, TypeId.bool);
 
             if (!right_ok) {
                 try self.errors.add(.{
@@ -899,7 +932,7 @@ pub const SemanticContext = struct {
             }
 
             // logical ops always produce bool
-            return .bool;
+            return TypeId.bool;
         }
 
         return null;
@@ -934,19 +967,16 @@ pub const SemanticContext = struct {
             return null;
         }
 
-        // get func declaration from ast
-        const func_decl_idx = self.symbols.getValueNode(sym_idx);
-        const func_decl = self.ast.getFuncDecl(func_decl_idx);
-
-        // get parameter info / (name, type) pairs
-        const params = self.ast.getExtra(func_decl.params);
-        const param_count = params.len / 2;
+        // get function type from registry
+        const func_type_id = self.symbols.getTypeId(sym_idx);
+        const param_types = self.types.getParamTypes(func_type_id) orelse &[_]TypeId{};
+        const return_type = self.types.getReturnType(func_type_id) orelse TypeId.void;
 
         // get args
         const args = self.ast.getExtra(call.args);
 
         // check args count
-        if (args.len != param_count) {
+        if (args.len != param_types.len) {
             try self.errors.add(.{
                 .kind = .argument_count_mismatch,
                 .start = loc.start,
@@ -956,16 +986,10 @@ pub const SemanticContext = struct {
         }
 
         // check each arg type
-        const check_count = @min(args.len, param_count);
+        const check_count = @min(args.len, param_types.len);
         for (0..check_count) |i| {
             const arg_idx = args[i];
-            const param_type_idx = params[i * 2 + 1]; // type is second in pair
-
-            // get expected param type
-            const type_ident = self.ast.getIdentifier(param_type_idx);
-            const type_token = self.tokens.items[type_ident.token_idx];
-            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
-            const expected_type = resolveTypeName(type_name) orelse .unresolved;
+            const expected_type = param_types[i];
 
             // check argument type (with expected type for context)
             const arg_type = try self.checkExpression(arg_idx, expected_type);
@@ -981,11 +1005,7 @@ pub const SemanticContext = struct {
             }
         }
 
-        // return function's ret type
-        const ret_ident = self.ast.getIdentifier(func_decl.return_type);
-        const ret_token = self.tokens.items[ret_ident.token_idx];
-        const ret_name = self.src.getSlice(ret_token.start, ret_token.start + ret_token.len);
-        return resolveTypeName(ret_name) orelse .unresolved;
+        return return_type;
     }
 
     fn finalizeTypes(self: *SemanticContext) void {
@@ -1001,18 +1021,12 @@ pub const SemanticContext = struct {
 
     fn typesCompatible(left: TypeId, right: TypeId) bool {
         // unresolved types are compatible with everything (errors caught at runtime)
-        if (left == .unresolved or right == .unresolved) {
+        if (left.isUnresolved() or right.isUnresolved()) {
             return true;
         }
 
-        // same type is always compatible
-        if (left == right) {
-            return true;
-        }
-
-        // for now, require exact type
-        // NOTE: promotion rules become relevant when implementing pointers (i.e., promotion to const)
-        return false;
+        // use structural equality
+        return left.eql(right);
     }
 
     /// Check if an unresolved expression can become the target type.
@@ -1025,7 +1039,7 @@ pub const SemanticContext = struct {
                 const lit = self.ast.getLiteral(node_idx);
                 const token = self.tokens.items[lit.token_idx];
                 if (token.kind == .boolean) {
-                    return target_type == .bool;
+                    return target_type.isBool();
                 }
                 // numeric literals can become any numeric type
                 return target_type.isNumeric();
@@ -1033,7 +1047,7 @@ pub const SemanticContext = struct {
             .unary_op => {
                 const unary_op = self.ast.getUnaryOp(node_idx);
                 return switch (unary_op.op) {
-                    .not => target_type == .bool,
+                    .not => target_type.isBool(),
                     .negate => target_type.isSignedInteger() or target_type.isFloat(),
                 };
             },
@@ -1043,7 +1057,7 @@ pub const SemanticContext = struct {
                     return target_type.isNumeric();
                 } else {
                     // in case of comparison and logical ops
-                    return target_type == .bool;
+                    return target_type.isBool();
                 }
             },
             .identifier => true, // already resolved via symbol table

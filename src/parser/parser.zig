@@ -862,7 +862,7 @@ pub const Parser = struct {
 
             if (token.kind == .identifier) {
                 if (self.peekOffset(1)) |next| {
-                    if (next.kind == .double_colon or next.kind == .colon or next.kind == .colon_equal) {
+                    if (next.kind == .double_colon or next.kind == .colon) {
                         return; // found declaration boundary
                     }
                 }
