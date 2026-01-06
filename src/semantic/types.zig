@@ -1,6 +1,8 @@
 const std = @import("std");
 const mem = std.mem;
 
+const CallingConvention = @import("../parser/ast.zig").CallingConvention;
+
 pub const PrimitiveType = enum(u8) {
     void,
     bool,
@@ -126,6 +128,7 @@ pub const TypeId = union(enum) {
 pub const FunctionType = struct {
     param_types: []const TypeId,
     return_type: TypeId,
+    calling_conv: CallingConvention,
 };
 
 /// Type Registry (Storage for Composite Types)
@@ -153,8 +156,9 @@ pub const TypeRegistry = struct {
         self: *TypeRegistry,
         params: []const TypeId,
         ret: TypeId,
+        calling_conv: CallingConvention,
     ) !TypeId {
-        // Copy params into arena
+        // copy params into arena
         const arena_alloc = self.arena.allocator();
         const params_copy = try arena_alloc.dupe(TypeId, params);
 
@@ -162,6 +166,7 @@ pub const TypeRegistry = struct {
         try self.function_types.append(self.allocator, .{
             .param_types = params_copy,
             .return_type = ret,
+            .calling_conv = calling_conv,
         });
 
         return .{ .function = idx };

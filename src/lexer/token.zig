@@ -17,13 +17,18 @@ pub const Kind = enum {
     // literals
     identifier,
     number,
-    boolean,
+    @"bool",
 
     // keywords
     func,
     defer_,
     return_,
     mut,
+
+    // abi modifiers
+    abi_c,
+    abi_cobol,
+    abi_fortran,
 
     // assignment
     colon,

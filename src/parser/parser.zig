@@ -131,8 +131,20 @@ pub const Parser = struct {
                     try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
                     return error.UnexpectedEof;
                 };
+
                 if (after.kind == .func) {
                     return try self.parseFuncDecl();
+                } else if (after.kind == .abi_c) {
+                    // check if followed by func
+                    const after_abi = self.peekOffset(3) orelse {
+                        try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+                        return error.UnexpectedEof;
+                    };
+                    if (after_abi.kind == .func) {
+                        return try self.parseFuncDecl();
+                    } else {
+                        return try self.parseConstDecl();
+                    }
                 } else {
                     return try self.parseConstDecl();
                 }
@@ -200,6 +212,16 @@ pub const Parser = struct {
         // expect ::
         try self.expectToken(.double_colon, .expected_double_colon);
 
+        // parse optional calling convention
+        const calling_conv: ast.CallingConvention = if (self.match(.abi_c))
+            .c
+        else if (self.match(.abi_cobol))
+            .cobol
+        else if (self.match(.abi_fortran))
+            .fortran
+        else
+            .honey;
+
         // expect 'func'
         try self.expectToken(.func, .unexpected_token);
 
@@ -215,12 +237,15 @@ pub const Parser = struct {
         // parse return type
         const return_type = try self.parseIdentifier();
 
-        // parse body
-        const body = try self.parseBlock();
+        // parse body (optional for external functions)
+        const body: ?NodeIndex = if (self.check(.left_curly))
+            try self.parseBlock()
+        else
+            null;
 
         const end_pos = self.previousEnd();
 
-        return try self.ast.addFuncDecl(name, params, return_type, body, start_pos, end_pos);
+        return try self.ast.addFuncDecl(name, params, return_type, body, calling_conv, start_pos, end_pos);
     }
 
     fn parseParameters(self: *Parser) ParseError!ast.Range {
@@ -680,7 +705,7 @@ pub const Parser = struct {
                 }
                 break :blk try self.parseIdentifier();
             },
-            .number, .boolean => try self.parseLiteral(),
+            .number, .bool => try self.parseLiteral(),
             .left_paren => blk: {
                 const paren_start = self.currentStart();
                 self.advance();

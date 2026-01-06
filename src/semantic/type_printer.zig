@@ -3,6 +3,7 @@ const std = @import("std");
 const TypeId = @import("types.zig").TypeId;
 const TypeRegistry = @import("types.zig").TypeRegistry;
 const FunctionTypeIndex = @import("types.zig").FunctionTypeIndex;
+const CallingConvention = @import("../parser/ast.zig").CallingConvention;
 
 pub fn print(registry: *const TypeRegistry) void {
     const count = registry.functionTypeCount();
@@ -13,8 +14,8 @@ pub fn print(registry: *const TypeRegistry) void {
     }
 
     // print header
-    std.debug.print("{s:<5} {s:<8} {s}\n", .{ "idx", "params", "signature" });
-    std.debug.print("{s:-<5} {s:-<8} {s:-<32}\n", .{ "", "", "" });
+    std.debug.print("{s:<5} {s:<8} {s:<8} {s}\n", .{ "idx", "conv", "params", "signature" });
+    std.debug.print("{s:-<5} {s:-<8} {s:-<8} {s:-<32}\n", .{ "", "", "", "" });
 
     // print each function type
     for (registry.function_types.items, 0..) |ft, i| {
@@ -22,7 +23,15 @@ pub fn print(registry: *const TypeRegistry) void {
         var stream = std.io.fixedBufferStream(&buf);
         const writer = stream.writer();
 
-        writer.writeAll("func(") catch {};
+        // format calling convention prefix
+        const cc_str = switch (ft.calling_conv) {
+            .honey => "",
+            .c => "c ",
+            .fortran => "fortran ",
+            .cobol => "cobol ",
+        };
+
+        writer.print("{s}func(", .{cc_str}) catch {};
         for (ft.param_types, 0..) |param, j| {
             if (j > 0) writer.writeAll(", ") catch {};
             writer.writeAll(formatTypeId(param)) catch {};
@@ -30,7 +39,8 @@ pub fn print(registry: *const TypeRegistry) void {
         writer.writeAll(") ") catch {};
         writer.writeAll(formatTypeId(ft.return_type)) catch {};
 
-        std.debug.print("{d:<5} {d:<8} {s}\n", .{ i, ft.param_types.len, stream.getWritten() });
+        const conv_name = @tagName(ft.calling_conv);
+        std.debug.print("{d:<5} {s:<8} {d:<8} {s}\n", .{ i, conv_name, ft.param_types.len, stream.getWritten() });
     }
 }
 
@@ -44,6 +54,8 @@ pub fn printVerbose(registry: *const TypeRegistry) void {
 
     for (registry.function_types.items, 0..) |ft, i| {
         std.debug.print("function_type[{d}]:\n", .{i});
+
+        std.debug.print("  convention: {s}\n", .{@tagName(ft.calling_conv)});
 
         std.debug.print("  params ({d}):\n", .{ft.param_types.len});
         for (ft.param_types, 0..) |param, j| {

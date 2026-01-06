@@ -86,8 +86,17 @@ fn getNodeInfo(
         .func_decl => blk: {
             const decl = ast.getFuncDecl(idx);
             const name = getIdentifierName(ast, tokens, src, decl.name);
-            const param_count = decl.params.len / 2; // params stored as name, type pairs
-            break :blk std.fmt.bufPrint(&S.buf, "name: {s}, params: {d}", .{ name, param_count }) catch "?";
+            const param_count = decl.params.len / 2; // params stored as (name, type) pairs
+            const cc_str = if (decl.calling_conv == .c)
+                "c "
+            else if (decl.calling_conv == .cobol)
+                "cobol "
+            else if (decl.calling_conv == .fortran)
+                "fortran "
+            else
+                "";
+            const extern_str = if (decl.body == null) " (extern)" else "";
+            break :blk std.fmt.bufPrint(&S.buf, "{s}func {s}, params: {d}{s}", .{ cc_str, name, param_count, extern_str }) catch "?";
         },
         .var_decl => blk: {
             const decl = ast.getVarDecl(idx);
@@ -213,12 +222,22 @@ fn printNode(
         },
 
         .func_decl => {
-            std.debug.print("func_decl:\n", .{});
             const decl = ast.getFuncDecl(idx);
+            const cc_str = if (decl.calling_conv == .c)
+                "c "
+            else if (decl.calling_conv == .cobol)
+                "cobol "
+            else if (decl.calling_conv == .fortran)
+                "fortran "
+            else
+                "";
+            std.debug.print("{s}func_decl:\n", .{cc_str});
 
             std.debug.print("{s}├─ name: ", .{child_prefix});
             printIdentifierValue(ast, tokens, src, decl.name);
             std.debug.print("\n", .{});
+
+            std.debug.print("{s}├─ convention: {s}\n", .{ child_prefix, @tagName(decl.calling_conv) });
 
             std.debug.print("{s}├─ return: ", .{child_prefix});
             printIdentifierValue(ast, tokens, src, decl.return_type);
@@ -251,9 +270,13 @@ fn printNode(
                 }
             }
 
-            std.debug.print("{s}└─ body:\n", .{child_prefix});
-            const body_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
-            printNode(ast, tokens, src, decl.body, body_prefix, true);
+            if (decl.body) |body_idx| {
+                std.debug.print("{s}└─ body:\n", .{child_prefix});
+                const body_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
+                printNode(ast, tokens, src, body_idx, body_prefix, true);
+            } else {
+                std.debug.print("{s}└─ body: (external)\n", .{child_prefix});
+            }
         },
 
         .var_decl => {

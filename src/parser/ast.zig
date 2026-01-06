@@ -56,11 +56,21 @@ pub const ConstDecl = struct {
     value: NodeIndex,
 };
 
+/// Function calling convention for interop.
+/// Default is `honey`.
+pub const CallingConvention = enum {
+    honey, // default
+    c,
+    cobol,
+    fortran,
+};
+
 pub const FuncDecl = struct {
     name: NodeIndex,
     params: Range,
     return_type: NodeIndex,
-    body: NodeIndex,
+    body: ?NodeIndex, // null for external functions
+    calling_conv: CallingConvention,
 };
 
 pub const VarDecl = struct {
@@ -324,7 +334,8 @@ pub const Ast = struct {
         name: NodeIndex,
         params: Range,
         return_type: NodeIndex,
-        body: NodeIndex,
+        body: ?NodeIndex,
+        calling_conv: CallingConvention,
         start: SourceIndex,
         end: SourceIndex,
     ) !NodeIndex {
@@ -340,6 +351,7 @@ pub const Ast = struct {
             .params = params,
             .return_type = return_type,
             .body = body,
+            .calling_conv = calling_conv,
         });
 
         return node_idx;

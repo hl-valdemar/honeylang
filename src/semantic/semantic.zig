@@ -257,7 +257,11 @@ pub const SemanticContext = struct {
         }
 
         // register function type
-        const func_type = try self.types.addFunctionType(param_types.items, return_type);
+        const func_type = try self.types.addFunctionType(
+            param_types.items,
+            return_type,
+            decl.calling_conv,
+        );
 
         // register symbol
         const result = try self.symbols.register(
@@ -339,7 +343,7 @@ pub const SemanticContext = struct {
         const token = self.tokens.items[lit.token_idx];
 
         // boolean literals always have type bool
-        if (token.kind == .boolean) {
+        if (token.kind == .bool) {
             return TypeId.bool;
         }
 
@@ -480,6 +484,11 @@ pub const SemanticContext = struct {
     fn checkFuncDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
         const decl = self.ast.getFuncDecl(node_idx);
 
+        // external functions (no body) don't need body checking
+        if (decl.body == null) {
+            return;
+        }
+
         // get function's type from symtable
         const name_ident = self.ast.getIdentifier(decl.name);
         const name_token = self.tokens.items[name_ident.token_idx];
@@ -525,7 +534,7 @@ pub const SemanticContext = struct {
         }
 
         // check function body
-        try self.checkBlock(decl.body);
+        try self.checkBlock(decl.body.?);
     }
 
     fn checkVarDecl(self: *SemanticContext, node_idx: NodeIndex) !TypeId {
@@ -747,8 +756,8 @@ pub const SemanticContext = struct {
         const lit = self.ast.getLiteral(node_idx);
         const token = self.tokens.items[lit.token_idx];
 
-        if (token.kind == .boolean) {
-            return TypeId.bool;
+        if (token.kind == .bool) {
+            return .bool;
         }
 
         // for numeric literals, use context type if available
@@ -1038,7 +1047,7 @@ pub const SemanticContext = struct {
             .literal => {
                 const lit = self.ast.getLiteral(node_idx);
                 const token = self.tokens.items[lit.token_idx];
-                if (token.kind == .boolean) {
+                if (token.kind == .bool) {
                     return target_type.isBool();
                 }
                 // numeric literals can become any numeric type

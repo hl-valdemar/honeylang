@@ -1,0 +1,17 @@
+# External C functions (no body)
+puts :: c func(s: i32) i32
+strlen :: c func(s: i32) i32
+
+# Honey function with C calling convention
+my_callback :: c func(data: i32, len: i32) i32 {
+    return data + len
+}
+
+# Regular Honey function
+add :: func(a: i32, b: i32) i32 {
+    return a + b
+}
+
+main :: func() i32 {
+    return add(1, 2)
+}

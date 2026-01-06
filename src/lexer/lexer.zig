@@ -19,6 +19,11 @@ const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     // declaration-related
     .{ "func", .func },
 
+    // abi modifiers
+    .{ "c", .abi_c },
+    .{ "cobol", .abi_cobol },
+    .{ "fortran", .abi_fortran },
+
     // statement-related
     .{ "mut", .mut },
     .{ "defer", .defer_ },
@@ -31,8 +36,8 @@ const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     .{ "and", .and_ },
     .{ "or", .or_ },
     .{ "xor", .xor },
-    .{ "true", .boolean },
-    .{ "false", .boolean },
+    .{ "true", .bool },
+    .{ "false", .bool },
 });
 
 pub const LexerResult = struct {
