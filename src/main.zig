@@ -99,8 +99,20 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
 
     // print generated symbol table
     std.debug.print("\n\n{s}::[[ Comptime Evaluation ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
-    std.debug.print("Succesfully evaluated {d} expressions:\n\n", .{comptime_result.eval_literals.items.len});
+    std.debug.print("Evaluated {d} expressions:\n\n", .{comptime_result.eval_literals.items.len});
     honey.comptime_printer.print(&comptime_result, &sem_result.symbols, &src);
+
+    // 6. code emission
+    var codegen_arena = std.heap.ArenaAllocator.init(gpa);
+    defer codegen_arena.deinit();
+
+    const target = .arm64;
+    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target);
+
+    // print emitted code
+    std.debug.print("\n\n{s}::[[ Code Emission ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
+    std.debug.print("Emitted {s} assembly:\n\n", .{@tagName(target)});
+    std.debug.print("{s}", .{codegen_result.assembly});
 }
 
 pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8) !void {

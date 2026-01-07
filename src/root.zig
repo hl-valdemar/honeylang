@@ -3,6 +3,7 @@ pub const lexer = @import("lexer/lexer.zig");
 pub const parser = @import("parser/parser.zig");
 pub const semantic = @import("semantic/semantic.zig");
 pub const comptime_ = @import("comptime/comptime.zig");
+pub const codegen = @import("codegen/codegen.zig");
 
 pub const ansi = @import("utils/ansi.zig");
 pub const token_printer = @import("lexer/token_printer.zig");
