@@ -21,6 +21,8 @@ pub const Arm64Emitter = struct {
         return self.buffer.items;
     }
 
+    // DIRECTIVES
+
     pub fn emitDirective(self: *Arm64Emitter, directive: []const u8) !void {
         try self.buffer.appendSlice(self.allocator, directive);
         try self.buffer.append(self.allocator, '\n');
@@ -46,5 +48,12 @@ pub const Arm64Emitter = struct {
 
     pub fn emitNewline(self: *Arm64Emitter) !void {
         try self.buffer.append(self.allocator, '\n');
+    }
+
+    // INSTRUCTIONS
+
+    pub fn emitRet(self: *Arm64Emitter, indent: ?[]const u8) !void {
+        if (indent) |i| try self.buffer.appendSlice(self.allocator, i);
+        try self.buffer.appendSlice(self.allocator, "ret\n");
     }
 };

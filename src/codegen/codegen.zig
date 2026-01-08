@@ -1,10 +1,21 @@
 const std = @import("std");
 const mem = @import("std").mem;
 
+const Ast = @import("../parser/ast.zig").Ast;
+const NodeIndex = @import("../parser/ast.zig").NodeIndex;
+const TokenList = @import("../lexer/token.zig").TokenList;
+const SourceCode = @import("../source/source.zig").SourceCode;
+
 const Arm64Emitter = @import("arm64.zig").Arm64Emitter;
 
-pub fn generate(allocator: mem.Allocator, target: Target) !CodeGenResult {
-    var ctx = try CodeGenContext.init(allocator, target);
+pub fn generate(
+    allocator: mem.Allocator,
+    target: Target,
+    ast: *const Ast,
+    tokens: *const TokenList,
+    src: *const SourceCode,
+) !CodeGenResult {
+    var ctx = try CodeGenContext.init(allocator, target, ast, tokens, src);
     defer ctx.deinit();
     return try ctx.generate();
 }
@@ -43,6 +54,8 @@ pub const AsmEmitter = union(Target) {
         };
     }
 
+    // DIRECTIVES
+
     pub fn emitDirective(self: *AsmEmitter, directive: []const u8) !void {
         switch (self.*) {
             .arm64 => |*emitter| try emitter.emitDirective(directive),
@@ -72,16 +85,38 @@ pub const AsmEmitter = union(Target) {
             .arm64 => |*emitter| try emitter.emitNewline(),
         }
     }
+
+    // INSTRUCTIONS
+
+    pub fn emitRet(self: *AsmEmitter, indent: ?[]const u8) !void {
+        switch (self.*) {
+            .arm64 => |*emitter| try emitter.emitRet(indent),
+        }
+    }
 };
 
 pub const CodeGenContext = struct {
     allocator: mem.Allocator,
+    ast: *const Ast,
+    tokens: *const TokenList,
+    src: *const SourceCode,
     emitter: AsmEmitter,
+    indent: []const u8,
 
-    pub fn init(allocator: mem.Allocator, target: Target) !CodeGenContext {
+    pub fn init(
+        allocator: mem.Allocator,
+        target: Target,
+        ast: *const Ast,
+        tokens: *const TokenList,
+        src: *const SourceCode,
+    ) !CodeGenContext {
         return .{
             .allocator = allocator,
+            .ast = ast,
+            .tokens = tokens,
+            .src = src,
             .emitter = try AsmEmitter.init(allocator, target),
+            .indent = "  ",
         };
     }
 
@@ -97,8 +132,73 @@ pub const CodeGenContext = struct {
         try self.emitter.emitDirective(".text");
         try self.emitter.emitNewline();
 
+        // process all declarations
+        const program = self.ast.getProgram(self.ast.root);
+        const declarations = self.ast.getExtra(program.declarations);
+
+        for (declarations) |decl_idx| {
+            try self.generateDeclaration(decl_idx);
+        }
+
         // return owned copy of assembly
         const output = try self.allocator.dupe(u8, self.emitter.getOutput());
         return .{ .assembly = output };
+    }
+
+    fn generateDeclaration(self: *CodeGenContext, node_idx: NodeIndex) !void {
+        const kind = self.ast.getKind(node_idx);
+
+        switch (kind) {
+            .func_decl => try self.generateFunction(node_idx),
+            .const_decl, .var_decl => {
+                // global constants/variables handled at data section
+                // for now, skip (comptime evaluates constants)
+            },
+            else => {},
+        }
+    }
+
+    fn generateFunction(self: *CodeGenContext, node_idx: NodeIndex) !void {
+        const decl = self.ast.getFuncDecl(node_idx);
+
+        // skip external functions (no body)
+        if (decl.body == null) return;
+
+        // get func name
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const func_name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        // darwin requires underscore prefix for c symbols
+        var label_buf: [128]u8 = undefined;
+        const label = if (decl.calling_conv == .c or std.mem.eql(u8, func_name, "main"))
+            std.fmt.bufPrint(&label_buf, "_{s}", .{func_name}) catch unreachable
+        else
+            func_name;
+
+        // emit func header
+        try self.emitter.emitGlobal(label);
+        try self.emitter.emitLabel(label);
+
+        // emit prologue
+        try self.emitPrologue();
+
+        // emit epilogue
+        try self.emitEpilogue();
+        try self.emitter.emitRet(self.indent);
+
+        try self.emitter.emitNewline();
+    }
+
+    fn emitPrologue(self: *CodeGenContext) !void {
+        try self.emitter.emitComment("prologue", self.indent);
+
+        // TODO: save frame pointer and link register (and allocate stack frame)
+    }
+
+    fn emitEpilogue(self: *CodeGenContext) !void {
+        try self.emitter.emitComment("epilogue", self.indent);
+
+        // TODO: restore frame pointer and link register, and deallocate stack frame
     }
 };

@@ -107,7 +107,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     defer codegen_arena.deinit();
 
     const target = .arm64;
-    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target);
+    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &parse_result.ast, &lexer_result.tokens, &src);
 
     // print emitted code
     std.debug.print("\n\n{s}::[[ Code Emission ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
