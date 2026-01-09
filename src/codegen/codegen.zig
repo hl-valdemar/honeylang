@@ -159,19 +159,19 @@ pub const CodeGenContext = struct {
     }
 
     fn generateFunction(self: *CodeGenContext, node_idx: NodeIndex) !void {
-        const decl = self.ast.getFuncDecl(node_idx);
+        const func = self.ast.getFuncDecl(node_idx);
 
         // skip external functions (no body)
-        if (decl.body == null) return;
+        if (func.body == null) return;
 
         // get func name
-        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_ident = self.ast.getIdentifier(func.name);
         const name_token = self.tokens.items[name_ident.token_idx];
         const func_name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
 
         // darwin requires underscore prefix for c symbols
         var label_buf: [128]u8 = undefined;
-        const label = if (decl.calling_conv == .c or std.mem.eql(u8, func_name, "main"))
+        const label = if (func.calling_conv == .c or std.mem.eql(u8, func_name, "main"))
             std.fmt.bufPrint(&label_buf, "_{s}", .{func_name}) catch unreachable
         else
             func_name;
@@ -183,6 +183,9 @@ pub const CodeGenContext = struct {
         // emit prologue
         try self.emitPrologue();
 
+        // emit body
+        try self.generateBlock(func.body.?);
+
         // emit epilogue
         try self.emitEpilogue();
         try self.emitter.emitRet(self.indent);
@@ -191,14 +194,38 @@ pub const CodeGenContext = struct {
     }
 
     fn emitPrologue(self: *CodeGenContext) !void {
-        try self.emitter.emitComment("prologue", self.indent);
-
+        try self.emitter.emitComment("::prologue::", self.indent);
         // TODO: save frame pointer and link register (and allocate stack frame)
+        try self.emitter.emitNewline();
     }
 
     fn emitEpilogue(self: *CodeGenContext) !void {
-        try self.emitter.emitComment("epilogue", self.indent);
-
+        try self.emitter.emitComment("::epilogue::", self.indent);
         // TODO: restore frame pointer and link register, and deallocate stack frame
+        try self.emitter.emitNewline();
+    }
+
+    fn generateBlock(self: *CodeGenContext, node_idx: NodeIndex) !void {
+        const block = self.ast.getBlock(node_idx);
+        const statements = self.ast.getExtra(block.statements);
+        const deferred = self.ast.getExtra(block.deferred);
+
+        try self.emitter.emitComment("::function body::", self.indent);
+
+        for (statements) |stmt_idx| {
+            // TODO: generate statement (make sure that deferred statements are run in case of early return)
+            _ = stmt_idx;
+            try self.emitter.emitComment("statement placeholder", self.indent);
+        }
+
+        // execute deferred statements in reverse order
+        var i = deferred.len;
+        while (i > 0) {
+            i -= 1;
+            // TODO: generate deferred statement
+            try self.emitter.emitComment("deferred placeholder", self.indent);
+        }
+
+        try self.emitter.emitNewline();
     }
 };
