@@ -110,7 +110,6 @@ pub const SemanticContext = struct {
 
     fn collectDeclaration(self: *SemanticContext, node_idx: NodeIndex) !void {
         const kind = self.ast.getKind(node_idx);
-
         switch (kind) {
             .const_decl => try self.collectConstDecl(node_idx),
             .var_decl => try self.collectVarDecl(node_idx),
@@ -328,7 +327,6 @@ pub const SemanticContext = struct {
     /// Returns null if type cannot be determined yet.
     fn tryInferType(self: *SemanticContext, node_idx: NodeIndex) ?TypeId {
         const kind = self.ast.getKind(node_idx);
-
         return switch (kind) {
             .literal => self.inferLiteralType(node_idx),
             .identifier => self.inferIdentifierType(node_idx),
@@ -393,7 +391,6 @@ pub const SemanticContext = struct {
 
     fn propagateType(self: *SemanticContext, node_idx: NodeIndex, type_id: TypeId) void {
         const kind = self.ast.getKind(node_idx);
-
         switch (kind) {
             .identifier => {
                 // look up the symbol and resolve if pending
@@ -431,7 +428,6 @@ pub const SemanticContext = struct {
 
     fn checkDeclaration(self: *SemanticContext, node_idx: NodeIndex) !void {
         const kind = self.ast.getKind(node_idx);
-
         switch (kind) {
             .const_decl => try self.checkConstDecl(node_idx),
             .func_decl => try self.checkFuncDecl(node_idx),
@@ -590,7 +586,6 @@ pub const SemanticContext = struct {
 
     fn checkStatement(self: *SemanticContext, node_idx: NodeIndex) !void {
         const kind = self.ast.getKind(node_idx);
-
         switch (kind) {
             .var_decl => {
                 _ = try self.checkLocalVarDecl(node_idx);

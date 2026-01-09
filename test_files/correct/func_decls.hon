@@ -1,10 +1,18 @@
+SKIP :: true
+
 add :: func(a: i32, b: i32) i32 {
   return a + b
 }
 
 main :: func() i32 {
   defer y := 10  # executed after return
+
+  if SKIP {
+    return add(39, 3)
+  }
+
   mut x := 3
   x += 4
+
   return add(x, 3)
 }

@@ -184,7 +184,6 @@ pub const ComptimeContext = struct {
 
     fn evaluateExpr(self: *ComptimeContext, node_idx: NodeIndex, type_id: TypeId) EvalError!?[]const u8 {
         const kind = self.ast.getKind(node_idx);
-
         return switch (kind) {
             .literal => self.evaluateLiteral(node_idx, type_id),
             .identifier => self.evaluateIdentifier(node_idx, type_id),

@@ -5,11 +5,13 @@ const mem = @import("std").mem;
 pub const Arm64Emitter = struct {
     allocator: mem.Allocator,
     buffer: std.ArrayList(u8),
+    indent: []const u8,
 
     pub fn init(allocator: mem.Allocator) !Arm64Emitter {
         return .{
             .allocator = allocator,
             .buffer = try std.ArrayList(u8).initCapacity(allocator, 4096), // 4 KB
+            .indent = "  ",
         };
     }
 
@@ -52,8 +54,13 @@ pub const Arm64Emitter = struct {
 
     // INSTRUCTIONS
 
-    pub fn emitRet(self: *Arm64Emitter, indent: ?[]const u8) !void {
-        if (indent) |i| try self.buffer.appendSlice(self.allocator, i);
+    pub fn emitRet(self: *Arm64Emitter) !void {
+        try self.buffer.appendSlice(self.allocator, self.indent);
         try self.buffer.appendSlice(self.allocator, "ret\n");
+    }
+
+    pub fn emitMovImmediate(self: *Arm64Emitter) !void {
+        _ = self;
+        // TODO: move immediate value to register (params)
     }
 };

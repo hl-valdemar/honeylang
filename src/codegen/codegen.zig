@@ -88,9 +88,9 @@ pub const AsmEmitter = union(Target) {
 
     // INSTRUCTIONS
 
-    pub fn emitRet(self: *AsmEmitter, indent: ?[]const u8) !void {
+    pub fn emitRet(self: *AsmEmitter) !void {
         switch (self.*) {
-            .arm64 => |*emitter| try emitter.emitRet(indent),
+            .arm64 => |*emitter| try emitter.emitRet(),
         }
     }
 };
@@ -101,7 +101,6 @@ pub const CodeGenContext = struct {
     tokens: *const TokenList,
     src: *const SourceCode,
     emitter: AsmEmitter,
-    indent: []const u8,
 
     pub fn init(
         allocator: mem.Allocator,
@@ -116,7 +115,6 @@ pub const CodeGenContext = struct {
             .tokens = tokens,
             .src = src,
             .emitter = try AsmEmitter.init(allocator, target),
-            .indent = "  ",
         };
     }
 
@@ -188,19 +186,19 @@ pub const CodeGenContext = struct {
 
         // emit epilogue
         try self.emitEpilogue();
-        try self.emitter.emitRet(self.indent);
+        try self.emitter.emitRet();
 
         try self.emitter.emitNewline();
     }
 
     fn emitPrologue(self: *CodeGenContext) !void {
-        try self.emitter.emitComment("::prologue::", self.indent);
+        try self.emitter.emitComment("::prologue::");
         // TODO: save frame pointer and link register (and allocate stack frame)
         try self.emitter.emitNewline();
     }
 
     fn emitEpilogue(self: *CodeGenContext) !void {
-        try self.emitter.emitComment("::epilogue::", self.indent);
+        try self.emitter.emitComment("::epilogue::");
         // TODO: restore frame pointer and link register, and deallocate stack frame
         try self.emitter.emitNewline();
     }
@@ -210,12 +208,12 @@ pub const CodeGenContext = struct {
         const statements = self.ast.getExtra(block.statements);
         const deferred = self.ast.getExtra(block.deferred);
 
-        try self.emitter.emitComment("::function body::", self.indent);
+        try self.emitter.emitComment("::function body::");
 
         for (statements) |stmt_idx| {
             // TODO: generate statement (make sure that deferred statements are run in case of early return)
             _ = stmt_idx;
-            try self.emitter.emitComment("statement placeholder", self.indent);
+            try self.emitter.emitComment("statement placeholder");
         }
 
         // execute deferred statements in reverse order
@@ -223,9 +221,57 @@ pub const CodeGenContext = struct {
         while (i > 0) {
             i -= 1;
             // TODO: generate deferred statement
-            try self.emitter.emitComment("deferred placeholder", self.indent);
+            try self.emitter.emitComment("deferred placeholder");
         }
 
         try self.emitter.emitNewline();
+    }
+
+    fn generateStatement(self: *CodeGenContext, node_idx: NodeIndex) !void {
+        const kind = self.ast.getKind(node_idx);
+        switch (kind) {
+            .return_stmt => try self.generateReturn(node_idx),
+            else => {},
+        }
+
+        // NOTE: remember to reset registers between statements
+    }
+
+    fn generateReturn(self: *CodeGenContext, node_idx: NodeIndex) !void {
+        const ret = self.ast.getReturn(node_idx);
+        _ = ret;
+
+        // TODO: generate expression
+        // TODO: move result to return register
+
+        try self.emitEpilogue();
+        try self.emitter.emitRet();
+    }
+
+    fn generateExpression(self: *CodeGenContext, node_idx: NodeIndex) !void {
+        // TODO: return register that holds result
+        const kind = self.ast.getKind(node_idx);
+        switch (kind) {
+            .literal => try self.generateLiteral(node_idx),
+            else => {},
+        }
+    }
+
+    fn generateLiteral(self: *CodeGenContext, node_idx: NodeIndex) !void {
+        const lit = self.ast.getLiteral(node_idx);
+        const token = self.tokens.items[lit.token_idx];
+        const value_str = self.src.getSlice(token.start, token.start + token.len);
+        _ = value_str;
+
+        // TODO: allocate register for result
+
+        if (token.kind == .@"bool") {
+            // TODO: convert bool to int and store
+        } else {
+            // TODO: store numeric value
+            // also, support more than just bools and numbers
+        }
+
+        // TODO: return result register
     }
 };
