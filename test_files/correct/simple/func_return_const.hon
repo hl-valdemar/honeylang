@@ -1,0 +1,11 @@
+DEBUG :: true
+
+ret_immediate :: c func() i32 {
+  return 42
+}
+
+ret_named :: c func() bool {
+  return DEBUG
+}
+
+main :: func() void {}  # must be present

@@ -1,6 +1,18 @@
+ROOM_NO :: 42
+
 # External C functions (no body)
 puts :: c func(s: i32) i32
 strlen :: c func(s: i32) i32
+
+# Simple const return value (immediate)
+const_return :: c func() i32 {
+  return 42
+}
+
+# Return named const value
+const_return_named :: c func() i32 {
+  return ROOM_NO
+}
 
 # Honey function with C calling convention
 my_callback :: c func(data: i32, len: i32) i32 {

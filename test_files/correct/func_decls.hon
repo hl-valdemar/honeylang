@@ -1,5 +1,9 @@
 SKIP :: true
 
+test_func :: func() i32 {
+  return 42
+}
+
 add :: func(a: i32, b: i32) i32 {
   return a + b
 }
