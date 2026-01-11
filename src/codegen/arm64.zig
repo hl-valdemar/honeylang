@@ -46,7 +46,7 @@ pub const Arm64Emitter = struct {
 
     pub fn comment(self: *Arm64Emitter, msg: []const u8, prefix: ?[]const u8) !void {
         if (prefix) |p| try self.buffer.appendSlice(self.allocator, p);
-        try self.buffer.appendSlice(self.allocator, "// ");
+        try self.buffer.appendSlice(self.allocator, "; ");
         try self.buffer.appendSlice(self.allocator, msg);
         try self.buffer.append(self.allocator, '\n');
     }

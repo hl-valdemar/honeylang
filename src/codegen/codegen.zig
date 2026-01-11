@@ -11,6 +11,8 @@ const SourceCode = @import("../source/source.zig").SourceCode;
 const arm64 = @import("arm64.zig");
 const Arm64Emitter = @import("arm64.zig").Arm64Emitter;
 
+pub const linker = @import("linker.zig");
+
 pub fn generate(
     allocator: mem.Allocator,
     target: Target,
@@ -155,6 +157,7 @@ pub const CodeGenContext = struct {
         try self.emitter.newline();
 
         try self.emitter.directive(".text");
+        try self.emitter.directive(".align 2");
         try self.emitter.newline();
 
         // process all declarations
@@ -206,9 +209,9 @@ pub const CodeGenContext = struct {
         try self.emitter.label(label);
 
         // emit prologue
-        try self.emitter.comment("prologue start", self.emitter.getIndent());
-        try self.emitter.funcPrologue();
-        try self.emitter.comment("prologue end\n", self.emitter.getIndent());
+        // try self.emitter.comment("prologue start", self.emitter.getIndent());
+        // try self.emitter.funcPrologue();
+        // try self.emitter.comment("prologue end\n", self.emitter.getIndent());
 
         // emit body
         const has_return = try self.generateBlock(func.body.?);
@@ -224,9 +227,9 @@ pub const CodeGenContext = struct {
             try self.emitter.newline();
 
             // emit epilogue
-            try self.emitter.comment("epilogue start", self.emitter.getIndent());
-            try self.emitter.funcEpilogue();
-            try self.emitter.comment("epilogue end\n", self.emitter.getIndent());
+            // try self.emitter.comment("epilogue start", self.emitter.getIndent());
+            // try self.emitter.funcEpilogue();
+            // try self.emitter.comment("epilogue end\n", self.emitter.getIndent());
 
             try self.emitter.ret();
             try self.emitter.newline();
@@ -280,9 +283,9 @@ pub const CodeGenContext = struct {
         try self.emitter.newline();
 
         // emit epilogue
-        try self.emitter.comment("epilogue start", self.emitter.getIndent());
-        try self.emitter.funcEpilogue();
-        try self.emitter.comment("epilogue end\n", self.emitter.getIndent());
+        // try self.emitter.comment("epilogue start", self.emitter.getIndent());
+        // try self.emitter.funcEpilogue();
+        // try self.emitter.comment("epilogue end\n", self.emitter.getIndent());
 
         try self.emitter.ret();
     }

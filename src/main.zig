@@ -113,6 +113,19 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     std.debug.print("\n\n{s}::[[ Code Emission ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
     std.debug.print("Emitted {s} assembly:\n\n", .{@tagName(target)});
     std.debug.print("{s}", .{codegen_result.assembly});
+
+    // 7. link into executable
+    const link_result = honey.codegen.linker.link(
+        codegen_arena.allocator(),
+        codegen_result.assembly,
+        "program",
+    ) catch |err| {
+        std.debug.print("\n{s}Linking failed: {s}{s}\n", .{ ansi.red(), @errorName(err), ansi.reset() });
+        return;
+    };
+
+    std.debug.print("\n{s}::[[ Linking ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
+    std.debug.print("Created executable: {s}\n", .{link_result.executable_path});
 }
 
 pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8) !void {

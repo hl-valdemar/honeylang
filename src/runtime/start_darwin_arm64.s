@@ -26,18 +26,18 @@ _start:
   mov x16, #1   ; syscall number for exit
   svc #0        ; trigger syscall
 
-# test runner entry point
-.global _test_start
-.align 2
-_test_start:
-  # function prologue start
-  # function prologue end
-
-  bl _test_runner  ; call test runner
-
-  # function epilogue start
-  # function epilogue end
-
-  # exit with the return code from test runner
-  mov x16, #1   ; syscall number for exit
-  svc #0        ; trigger syscall
+; # test runner entry point
+; .global _test_start
+; .align 2
+; _test_start:
+;   # function prologue start
+;   # function prologue end
+;
+;   bl _test_runner  ; call test runner
+;
+;   # function epilogue start
+;   # function epilogue end
+;
+;   # exit with the return code from test runner
+;   mov x16, #1   ; syscall number for exit
+;   svc #0        ; trigger syscall
