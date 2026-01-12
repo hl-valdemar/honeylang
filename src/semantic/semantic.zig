@@ -18,7 +18,7 @@ const TypeRegistry = @import("types.zig").TypeRegistry;
 const SemanticError = @import("error.zig").SemanticError;
 const ErrorList = @import("error.zig").ErrorList;
 
-pub const error_printer = @import("error_printer.zig");
+pub const error_printer = @import("error-printer.zig");
 
 pub fn analyze(
     allocator: mem.Allocator,

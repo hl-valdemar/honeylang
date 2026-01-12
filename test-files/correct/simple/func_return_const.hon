@@ -8,4 +8,6 @@ ret_named :: c func() bool {
   return DEBUG
 }
 
-main :: func() void {}  # must be present
+main :: func() bool {
+    return DEBUG
+}  # must be present

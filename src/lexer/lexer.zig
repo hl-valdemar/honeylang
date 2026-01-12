@@ -13,7 +13,7 @@ const lexer_error = @import("error.zig");
 const LexerErrorKind = lexer_error.LexerErrorKind;
 const ErrorList = lexer_error.ErrorList;
 
-pub const error_printer = @import("error_printer.zig");
+pub const error_printer = @import("error-printer.zig");
 
 const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     // declaration-related

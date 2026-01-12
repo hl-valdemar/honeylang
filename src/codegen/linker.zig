@@ -48,7 +48,7 @@ pub fn link(
     }
 
     // assemble runtime: as -o runtime.o runtime.s
-    const runtime_path = "src/runtime/start_darwin_arm64.s";
+    const runtime_path = "src/runtime/start-darwin-arm64.s";
     const runtime_obj_path = output_dir ++ "/runtime.o";
     const runtime_result = std.process.Child.run(.{
         .allocator = allocator,

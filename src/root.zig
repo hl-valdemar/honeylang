@@ -6,8 +6,8 @@ pub const comptime_ = @import("comptime/comptime.zig");
 pub const codegen = @import("codegen/codegen.zig");
 
 pub const ansi = @import("utils/ansi.zig");
-pub const token_printer = @import("lexer/token_printer.zig");
-pub const ast_printer = @import("parser/ast_printer.zig");
-pub const symbol_printer = @import("semantic/symbol_printer.zig");
-pub const type_printer = @import("semantic/type_printer.zig");
-pub const comptime_printer = @import("comptime/comptime_printer.zig");
+pub const token_printer = @import("lexer/token-printer.zig");
+pub const ast_printer = @import("parser/ast-printer.zig");
+pub const symbol_printer = @import("semantic/symbol-printer.zig");
+pub const type_printer = @import("semantic/type-printer.zig");
+pub const comptime_printer = @import("comptime/comptime-printer.zig");

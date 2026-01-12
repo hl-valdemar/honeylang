@@ -15,7 +15,7 @@ const parse_error = @import("error.zig");
 const ParseErrorKind = parse_error.ParseErrorKind;
 const ErrorList = parse_error.ErrorList;
 
-pub const error_printer = @import("error_printer.zig");
+pub const error_printer = @import("error-printer.zig");
 
 pub fn parse(allocator: mem.Allocator, tokens: TokenList) !ParseResult {
     var parser = try Parser.init(allocator, tokens);
