@@ -1,8 +1,58 @@
 const std = @import("std");
 const mem = @import("std").mem;
 
-pub const Register64 = enum(u4) { x0, x1, x2, x3, x4, x5, x6, x7 };
-pub const Register32 = enum(u4) { w0, w1, w2, w3, w4, w5, w6, w7 };
+pub const Register = u4;
+
+/// Simple linear register allocator.
+/// Uses x9-x15 as scratch registers (caller-saved temporaries).
+pub const Arm64Registers = struct {
+    // Bitmask: bit N set = register xN is available
+    // x9-x15 are our scratch registers
+    available: u16 = INITIAL_MASK,
+
+    const INITIAL_MASK: u16 = 0b0111_1111_0000_0000; // bits 9-15 set
+
+    pub fn alloc(self: *Arm64Registers) ?Register {
+        if (self.available == 0) return null;
+        const reg: Register = @intCast(@ctz(self.available));
+        self.available &= ~(@as(u16, 1) << reg);
+        return reg;
+    }
+
+    pub fn free(self: *Arm64Registers, reg: Register) void {
+        self.available |= @as(u16, 1) << reg;
+    }
+
+    pub fn reset(self: *Arm64Registers) void {
+        self.available = INITIAL_MASK;
+    }
+
+    /// Free a register only if it's a scratch register (x9-x15).
+    /// Safe to call with x0-x7 (will be ignored).
+    pub fn safeFree(self: *Arm64Registers, reg: Register) void {
+        if (reg >= 9 and reg <= 15) {
+            self.free(reg);
+        }
+    }
+
+    /// Format register name for assembly output (64 bit access).
+    pub fn name64(reg: Register) []const u8 {
+        const names = [_][]const u8{
+            "x0", "x1", "x2",  "x3",  "x4",  "x5",  "x6",  "x7",
+            "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+        };
+        return names[reg];
+    }
+
+    /// Format register name for assembly output (32 bit access).
+    pub fn name32(reg: Register) []const u8 {
+        const names = [_][]const u8{
+            "w0", "w1", "w2",  "w3",  "w4",  "w5",  "w6",  "w7",
+            "w8", "w9", "w10", "w11", "w12", "w13", "w14", "w15",
+        };
+        return names[reg];
+    }
+};
 
 /// ARM64 assembly emitter.
 pub const Arm64Emitter = struct {
@@ -63,18 +113,36 @@ pub const Arm64Emitter = struct {
     }
 
     // mov w<reg>, #<imm> (32-bit signed)
-    pub fn emitMovImmI32(self: *Arm64Emitter, reg: Register32, value: i32) !void {
+    pub fn movImm32(self: *Arm64Emitter, dst: Register, value: i32) !void {
         var buf: [32]u8 = undefined;
-        const instr = std.fmt.bufPrint(&buf, "mov w{d}, #{d}\n", .{ reg, value }) catch unreachable;
+        const reg_name = Arm64Registers.name32(dst);
+        const instr = std.fmt.bufPrint(&buf, "mov {s}, #{d}\n", .{ reg_name, value }) catch unreachable;
 
         try self.buffer.appendSlice(self.allocator, self.indent);
         try self.buffer.appendSlice(self.allocator, instr);
     }
 
-    // mov w<reg>, #<imm> (32-bit unsigned)
-    pub fn emitMovImmU32(self: *Arm64Emitter, reg: Register32, value: u32) !void {
+    // mov w<reg>, w<reg> (32-bit signed)
+    pub fn movReg32(self: *Arm64Emitter, dst: Register, src: Register) !void {
+        if (dst == src) return; // noop
+
         var buf: [32]u8 = undefined;
-        const instr = std.fmt.bufPrint(&buf, "mov w{d}, #{d}\n", .{ reg, value }) catch unreachable;
+        const instr = std.fmt.bufPrint(&buf, "mov {s}, {s}\n", .{
+            Arm64Registers.name32(dst),
+            Arm64Registers.name32(src),
+        }) catch unreachable;
+
+        try self.buffer.appendSlice(self.allocator, self.indent);
+        try self.buffer.appendSlice(self.allocator, instr);
+    }
+
+    pub fn addReg32(self: *Arm64Emitter, dst: Register, left: Register, right: Register) !void {
+        var buf: [32]u8 = undefined;
+        const instr = std.fmt.bufPrint(&buf, "add {s}, {s}, {s}\n", .{
+            Arm64Registers.name32(dst),
+            Arm64Registers.name32(left),
+            Arm64Registers.name32(right),
+        }) catch unreachable;
 
         try self.buffer.appendSlice(self.allocator, self.indent);
         try self.buffer.appendSlice(self.allocator, instr);

@@ -1,4 +1,6 @@
-ROOM_NO :: 42
+X: i32 :: 1
+Y :: 2
+Z :: X + Y
 
 # External C functions (no body)
 puts :: c func(s: i32) i32
@@ -11,7 +13,7 @@ const_return :: c func() i32 {
 
 # Return named const value
 const_return_named :: c func() i32 {
-  return ROOM_NO
+  return Z
 }
 
 # Honey function with C calling convention
@@ -25,5 +27,6 @@ add :: func(a: i32, b: i32) i32 {
 }
 
 main :: func() i32 {
-    return add(1, 2)
+  return 1 + 2
+    # return add(1, 2)
 }
