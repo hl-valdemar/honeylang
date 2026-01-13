@@ -112,7 +112,31 @@ pub const Arm64Emitter = struct {
         try self.buffer.appendSlice(self.allocator, "ret\n");
     }
 
-    // mov w<reg>, #<imm> (32-bit signed)
+    // mov x<reg>, #<imm> (64-bit)
+    pub fn movImm64(self: *Arm64Emitter, dst: Register, value: i64) !void {
+        var buf: [32]u8 = undefined;
+        const reg_name = Arm64Registers.name64(dst);
+        const instr = std.fmt.bufPrint(&buf, "mov {s}, #{d}\n", .{ reg_name, value }) catch unreachable;
+
+        try self.buffer.appendSlice(self.allocator, self.indent);
+        try self.buffer.appendSlice(self.allocator, instr);
+    }
+
+    // mov x<reg>, x<reg> (64-bit)
+    pub fn movReg64(self: *Arm64Emitter, dst: Register, src: Register) !void {
+        if (dst == src) return; // noop
+
+        var buf: [32]u8 = undefined;
+        const instr = std.fmt.bufPrint(&buf, "mov {s}, {s}\n", .{
+            Arm64Registers.name64(dst),
+            Arm64Registers.name64(src),
+        }) catch unreachable;
+
+        try self.buffer.appendSlice(self.allocator, self.indent);
+        try self.buffer.appendSlice(self.allocator, instr);
+    }
+
+    // mov w<reg>, #<imm> (32-bit)
     pub fn movImm32(self: *Arm64Emitter, dst: Register, value: i32) !void {
         var buf: [32]u8 = undefined;
         const reg_name = Arm64Registers.name32(dst);
@@ -122,7 +146,7 @@ pub const Arm64Emitter = struct {
         try self.buffer.appendSlice(self.allocator, instr);
     }
 
-    // mov w<reg>, w<reg> (32-bit signed)
+    // mov w<reg>, w<reg> (32-bit)
     pub fn movReg32(self: *Arm64Emitter, dst: Register, src: Register) !void {
         if (dst == src) return; // noop
 

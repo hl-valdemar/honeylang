@@ -3,6 +3,9 @@ const mem = @import("std").mem;
 
 const ComptimeResult = @import("../comptime/comptime.zig").ComptimeResult;
 const SymbolTable = @import("../semantic/symbols.zig").SymbolTable;
+const SymbolIndex = @import("../semantic/symbols.zig").SymbolIndex;
+const TypeId = @import("../semantic/types.zig").TypeId;
+const PrimitiveType = @import("../semantic/types.zig").PrimitiveType;
 const Ast = @import("../parser/ast.zig").Ast;
 const NodeIndex = @import("../parser/ast.zig").NodeIndex;
 const NodeKind = @import("../parser/ast.zig").NodeKind;
@@ -259,49 +262,58 @@ pub const CodeGenContext = struct {
     }
 
     fn generateIdentifier(self: *CodeGenContext, node_idx: NodeIndex) !?arm64.Register {
-        // FIXME: ASSUMES CONST DECLARATION
-
         const ident = self.ast.getIdentifier(node_idx);
         const token = self.tokens.items[ident.token_idx];
         const name = self.src.getSlice(token.start, token.start + token.len);
 
-        // look up symbol
         const sym_idx = self.symbols.lookup(name) orelse return null;
         const type_id = self.symbols.getTypeId(sym_idx);
         const kind = self.symbols.getKind(sym_idx);
+
+        return switch (kind) {
+            .constant => self.generateConstLoad(sym_idx, type_id),
+            .variable => error.UnsupportedFeature,
+            .function => error.UnsupportedFeature,
+        };
+    }
+
+    fn generateConstLoad(self: *CodeGenContext, sym_idx: SymbolIndex, type_id: TypeId) !?arm64.Register {
         const eval_state = self.comptime_result.eval_states.items[sym_idx];
+        if (eval_state != .evaluated) return null;
+
         const value_str = self.comptime_result.getEvalLiteral(sym_idx) orelse return null;
 
-        const dst = self.registers.alloc() orelse return error.OutOfMemory; // TODO: spill
+        return switch (type_id) {
+            .primitive => |prim| self.generatePrimitiveImmediate(prim, value_str),
+            else => null,
+        };
+    }
 
-        if (kind != .constant and eval_state != .evaluated) return null;
-        switch (type_id) {
-            .primitive => |prim| {
-                switch (prim) {
-                    .i32 => {
-                        const value = std.fmt.parseInt(i32, value_str, 10) catch 0;
-                        switch (self.emitter) {
-                            .arm64 => |*emitter| try emitter.movImm32(dst, value),
-                        }
-                    },
-                    else => {
-                        self.registers.free(dst);
-                        return null;
-                    },
-                }
-            },
-            else => {
-                self.registers.free(dst);
-                return null;
+    fn generatePrimitiveImmediate(self: *CodeGenContext, prim: PrimitiveType, value_str: []const u8) !?arm64.Register {
+        const dst = self.registers.alloc() orelse return error.OutOfMemory;
+        errdefer self.registers.free(dst);
+
+        switch (self.emitter) {
+            .arm64 => |*e| switch (prim) {
+                .bool => {
+                    const val: i32 = if (std.mem.eql(u8, value_str, "true")) 1 else 0;
+                    try e.movImm32(dst, val);
+                },
+                .i8, .i16, .i32, .u8, .u16, .u32 => {
+                    const val = std.fmt.parseInt(i32, value_str, 10) catch 0;
+                    try e.movImm32(dst, val);
+                },
+                .i64, .u64 => {
+                    const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
+                    try e.movImm64(dst, val);
+                },
+                .f16, .f32, .f64 => {
+                    return error.UnsupportedFeature;
+                },
+                .void => return null,
             },
         }
-
         return dst;
-
-        // const value_node = self.symbols.getValueNode(sym_idx);
-
-        // generate value expression
-        // return try self.generateExpression(value_node);
     }
 
     fn generateBinaryOp(self: *CodeGenContext, node_idx: NodeIndex) !?arm64.Register {
