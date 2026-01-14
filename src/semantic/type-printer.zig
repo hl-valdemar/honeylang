@@ -14,7 +14,7 @@ pub fn print(registry: *const TypeRegistry) void {
     }
 
     // print header
-    std.debug.print("{s:<5} {s:<8} {s:<8} {s}\n", .{ "idx", "conv", "params", "signature" });
+    std.debug.print("{s:<5} {s:<8} {s:<8} {s}\n", .{ "idx", "cc", "params", "signature" });
     std.debug.print("{s:-<5} {s:-<8} {s:-<8} {s:-<32}\n", .{ "", "", "", "" });
 
     // print each function type

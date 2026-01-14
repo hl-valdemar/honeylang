@@ -87,11 +87,11 @@ fn getNodeInfo(
             const decl = ast.getFuncDecl(idx);
             const name = getIdentifierName(ast, tokens, src, decl.name);
             const param_count = decl.params.len / 2; // params stored as (name, type) pairs
-            const cc_str = if (decl.calling_conv == .c)
+            const cc_str = if (decl.call_conv == .c)
                 "c "
-            else if (decl.calling_conv == .cobol)
+            else if (decl.call_conv == .cobol)
                 "cobol "
-            else if (decl.calling_conv == .fortran)
+            else if (decl.call_conv == .fortran)
                 "fortran "
             else
                 "";
@@ -223,11 +223,11 @@ fn printNode(
 
         .func_decl => {
             const decl = ast.getFuncDecl(idx);
-            const cc_str = if (decl.calling_conv == .c)
+            const cc_str = if (decl.call_conv == .c)
                 "c "
-            else if (decl.calling_conv == .cobol)
+            else if (decl.call_conv == .cobol)
                 "cobol "
-            else if (decl.calling_conv == .fortran)
+            else if (decl.call_conv == .fortran)
                 "fortran "
             else
                 "";
@@ -237,7 +237,7 @@ fn printNode(
             printIdentifierValue(ast, tokens, src, decl.name);
             std.debug.print("\n", .{});
 
-            std.debug.print("{s}├─ convention: {s}\n", .{ child_prefix, @tagName(decl.calling_conv) });
+            std.debug.print("{s}├─ convention: {s}\n", .{ child_prefix, @tagName(decl.call_conv) });
 
             std.debug.print("{s}├─ return: ", .{child_prefix});
             printIdentifierValue(ast, tokens, src, decl.return_type);

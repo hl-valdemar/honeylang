@@ -259,7 +259,7 @@ pub const SemanticContext = struct {
         const func_type = try self.types.addFunctionType(
             param_types.items,
             return_type,
-            decl.calling_conv,
+            decl.call_conv,
         );
 
         // register symbol

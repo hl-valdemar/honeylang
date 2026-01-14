@@ -46,7 +46,6 @@ pub fn generate(
         tokens,
         src,
     );
-    defer ctx.deinit();
 
     try ctx.generate();
 
@@ -55,7 +54,10 @@ pub fn generate(
         .arm64 => try arm64.lower(allocator, &ctx.module),
     };
 
-    return .{ .assembly = assembly };
+    return .{
+        .assembly = assembly,
+        .mir = ctx.module,
+    };
 }
 
 pub const CodeGenContext = struct {
@@ -125,11 +127,11 @@ pub const CodeGenContext = struct {
         const name_token = self.tokens.items[name_ident.token_idx];
         const func_name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
 
-        // determine if C calling convention
-        const is_c_cc = func.calling_conv == .c or std.mem.eql(u8, func_name, "main");
+        // calling conv should be c if main
+        const call_conv = if (std.mem.eql(u8, func_name, "main")) .c else func.call_conv;
 
         // create MIR function
-        self.current_func = try self.module.addFunction(func_name, is_c_cc);
+        self.current_func = try self.module.addFunction(func_name, call_conv);
 
         // emit body
         const has_return = try self.generateBlock(func.body.?);
@@ -291,4 +293,5 @@ pub const CodeGenError = error{
 
 pub const CodeGenResult = struct {
     assembly: []const u8,
+    mir: MIRModule,
 };

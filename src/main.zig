@@ -109,8 +109,13 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     const target = .arm64;
     const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &parse_result.ast, &lexer_result.tokens, &src);
 
+    // print generated MIR
+    std.debug.print("\n\n{s}::[[ MIR Generation ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
+    std.debug.print("Generated {d} functions:\n\n", .{codegen_result.mir.functions.items.len});
+    honey.mir_printer.print(&codegen_result.mir);
+
     // print emitted code
-    std.debug.print("\n\n{s}::[[ Code Emission ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
+    std.debug.print("\n{s}::[[ Code Emission ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
     std.debug.print("Emitted {s} assembly:\n\n", .{@tagName(target)});
     std.debug.print("{s}", .{codegen_result.assembly});
 

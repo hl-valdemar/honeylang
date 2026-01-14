@@ -1,6 +1,8 @@
 const std = @import("std");
 const mem = std.mem;
 
+const CallingConvention = @import("../parser/ast.zig").CallingConvention;
+
 /// Virtual register - unlimited during MIR generation,
 /// mapped to physical registers during lowering.
 pub const VReg = u16;
@@ -99,15 +101,15 @@ pub const MInst = union(enum) {
 /// A function in MIR form.
 pub const MIRFunction = struct {
     name: []const u8,
-    is_c_calling_conv: bool,
+    call_conv: CallingConvention,
     instructions: std.ArrayListUnmanaged(MInst),
     next_vreg: VReg,
     allocator: mem.Allocator,
 
-    pub fn init(allocator: mem.Allocator, name: []const u8, is_c_calling_conv: bool) MIRFunction {
+    pub fn init(allocator: mem.Allocator, name: []const u8, call_conv: CallingConvention) MIRFunction {
         return .{
             .name = name,
-            .is_c_calling_conv = is_c_calling_conv,
+            .call_conv = call_conv,
             .instructions = .{},
             .next_vreg = 0,
             .allocator = allocator,
@@ -176,8 +178,8 @@ pub const MIRModule = struct {
         self.functions.deinit(self.allocator);
     }
 
-    pub fn addFunction(self: *MIRModule, name: []const u8, is_c_calling_conv: bool) !*MIRFunction {
-        try self.functions.append(self.allocator, MIRFunction.init(self.allocator, name, is_c_calling_conv));
+    pub fn addFunction(self: *MIRModule, name: []const u8, call_conv: CallingConvention) !*MIRFunction {
+        try self.functions.append(self.allocator, MIRFunction.init(self.allocator, name, call_conv));
         return &self.functions.items[self.functions.items.len - 1];
     }
 };

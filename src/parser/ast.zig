@@ -70,7 +70,7 @@ pub const FuncDecl = struct {
     params: Range,
     return_type: NodeIndex,
     body: ?NodeIndex, // null for external functions
-    calling_conv: CallingConvention,
+    call_conv: CallingConvention,
 };
 
 pub const VarDecl = struct {
@@ -351,7 +351,7 @@ pub const Ast = struct {
             .params = params,
             .return_type = return_type,
             .body = body,
-            .calling_conv = calling_conv,
+            .call_conv = calling_conv,
         });
 
         return node_idx;

@@ -35,7 +35,7 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule) ![]const u8 {
 fn lowerFunction(emitter: *Emitter, func: *const MIRFunction) !void {
     // function label (with underscore prefix for C ABI on Darwin)
     var label_buf: [128]u8 = undefined;
-    const label = if (func.is_c_calling_conv)
+    const label = if (func.call_conv == .c)
         std.fmt.bufPrint(&label_buf, "_{s}", .{func.name}) catch unreachable
     else
         func.name;
@@ -283,16 +283,16 @@ const Emitter = struct {
 
 fn regName32(reg: PReg) []const u8 {
     const names = [_][]const u8{
-        "w0",  "w1",  "w2",  "w3",  "w4",  "w5",  "w6",  "w7",
-        "w8",  "w9",  "w10", "w11", "w12", "w13", "w14", "w15",
+        "w0", "w1", "w2",  "w3",  "w4",  "w5",  "w6",  "w7",
+        "w8", "w9", "w10", "w11", "w12", "w13", "w14", "w15",
     };
     return names[reg];
 }
 
 fn regName64(reg: PReg) []const u8 {
     const names = [_][]const u8{
-        "x0",  "x1",  "x2",  "x3",  "x4",  "x5",  "x6",  "x7",
-        "x8",  "x9",  "x10", "x11", "x12", "x13", "x14", "x15",
+        "x0", "x1", "x2",  "x3",  "x4",  "x5",  "x6",  "x7",
+        "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
     };
     return names[reg];
 }
