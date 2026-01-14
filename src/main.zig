@@ -106,7 +106,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     var codegen_arena = std.heap.ArenaAllocator.init(gpa);
     defer codegen_arena.deinit();
 
-    const target = .aarch64;
+    const target = honey.codegen.Target{ .arch = .aarch64, .os = .darwin };
     const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &parse_result.ast, &lexer_result.tokens, &src);
 
     // print generated MIR
@@ -116,7 +116,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
 
     // print emitted code
     std.debug.print("\n{s}::[[ Code Emission ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
-    std.debug.print("Emitted {s} assembly:\n\n", .{@tagName(target)});
+    std.debug.print("Emitted {s} assembly:\n\n", .{@tagName(target.arch)});
     std.debug.print("{s}", .{codegen_result.assembly});
 
     // 7. link into executable

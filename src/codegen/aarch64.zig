@@ -9,11 +9,13 @@ const VReg = mir.VReg;
 const Width = mir.Width;
 const BinOp = mir.BinOp;
 
+const Os = @import("codegen.zig").Os;
+
 /// Physical register (x0-x15).
 pub const PReg = u4;
 
 /// Lower MIR module to ARM64 assembly.
-pub fn lower(allocator: mem.Allocator, module: *const MIRModule) ![]const u8 {
+pub fn lower(allocator: mem.Allocator, module: *const MIRModule, os: Os) ![]const u8 {
     var emitter = try Emitter.init(allocator);
     defer emitter.deinit();
 
@@ -26,16 +28,17 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule) ![]const u8 {
 
     // lower each function
     for (module.functions.items) |*func| {
-        try lowerFunction(&emitter, func);
+        try lowerFunction(&emitter, func, os);
     }
 
     return try allocator.dupe(u8, emitter.getOutput());
 }
 
-fn lowerFunction(emitter: *Emitter, func: *const MIRFunction) !void {
+fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, os: Os) !void {
     // function label (with underscore prefix for C ABI on Darwin)
     var label_buf: [128]u8 = undefined;
-    const label = if (func.call_conv == .c)
+    const needs_underscore = func.call_conv == .c and os == .darwin;
+    const label = if (needs_underscore)
         std.fmt.bufPrint(&label_buf, "_{s}", .{func.name}) catch unreachable
     else
         func.name;

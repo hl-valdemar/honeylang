@@ -24,8 +24,18 @@ const arm64 = @import("aarch64.zig");
 
 pub const linker = @import("linker.zig");
 
-pub const Target = enum {
+pub const Arch = enum {
     aarch64,
+};
+
+pub const Os = enum {
+    darwin,
+    linux,
+};
+
+pub const Target = struct {
+    arch: Arch,
+    os: Os,
 };
 
 pub fn generate(
@@ -50,8 +60,8 @@ pub fn generate(
     try ctx.generate();
 
     // lower MIR to assembly (architecture-specific)
-    const assembly = switch (target) {
-        .aarch64 => try arm64.lower(allocator, &ctx.mir),
+    const assembly = switch (target.arch) {
+        .aarch64 => try arm64.lower(allocator, &ctx.mir, target.os),
     };
 
     return .{
