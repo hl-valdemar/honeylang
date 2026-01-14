@@ -106,7 +106,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     var codegen_arena = std.heap.ArenaAllocator.init(gpa);
     defer codegen_arena.deinit();
 
-    const target = .arm64;
+    const target = .aarch64;
     const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &parse_result.ast, &lexer_result.tokens, &src);
 
     // print generated MIR

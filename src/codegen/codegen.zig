@@ -20,12 +20,12 @@ const VReg = mir.VReg;
 const Width = mir.Width;
 const BinOp = mir.BinOp;
 
-const arm64 = @import("arm64.zig");
+const arm64 = @import("aarch64.zig");
 
 pub const linker = @import("linker.zig");
 
 pub const Target = enum {
-    arm64,
+    aarch64,
 };
 
 pub fn generate(
@@ -51,7 +51,7 @@ pub fn generate(
 
     // lower MIR to assembly (architecture-specific)
     const assembly = switch (target) {
-        .arm64 => try arm64.lower(allocator, &ctx.module),
+        .aarch64 => try arm64.lower(allocator, &ctx.module),
     };
 
     return .{
