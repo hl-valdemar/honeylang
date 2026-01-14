@@ -1,4 +1,4 @@
-X: i32 :: 1
+X :: 1
 Y :: 2
 Z :: X + Y
 
@@ -11,10 +11,10 @@ const_return :: c func() i32 {
   return 42
 }
 
-# Return named const value
-const_return_named :: c func() i32 {
-  return Z
-}
+# # Return named const value
+# const_return_named :: c func() i32 {
+#   return Z
+# }
 
 # Honey function with C calling convention
 my_callback :: c func(data: i32, len: i32) i32 {
@@ -27,6 +27,6 @@ add :: func(a: i32, b: i32) i32 {
 }
 
 main :: func() i32 {
-  return 1 + 2
+  return Z
     # return add(1, 2)
 }

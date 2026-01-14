@@ -77,7 +77,7 @@ pub const SemanticContext = struct {
         try self.collectSymbols();
 
         // 2. infer types from anchors
-        try self.inferTypes();
+        self.inferTypes();
 
         // 3. check type compatibility
         try self.checkTypes();
@@ -301,8 +301,11 @@ pub const SemanticContext = struct {
         return type_map.get(name);
     }
 
-    fn inferTypes(self: *SemanticContext) !void {
-        // iterate until no more types can be inferred
+    fn inferTypes(self: *SemanticContext) void {
+        // sub-phase 1: infer types from function contexts (return types, etc.)
+        self.inferTypesFromFuncs();
+
+        // sub-phase 2: iterate until no more types can be inferred
         var changed = true;
         while (changed) {
             changed = false;
@@ -319,6 +322,52 @@ pub const SemanticContext = struct {
                     self.symbols.resolve(idx, type_id);
                     changed = true;
                 }
+            }
+        }
+    }
+
+    fn inferTypesFromFuncs(self: *SemanticContext) void {
+        for (0..self.symbols.count()) |i| {
+            const idx: SymbolIndex = @intCast(i);
+            if (self.symbols.getKind(idx) != .function) continue;
+
+            const func_type_id = self.symbols.getTypeId(idx);
+            const return_type = self.types.getReturnType(func_type_id) orelse continue;
+            if (return_type.isUnresolved()) continue;
+
+            const func_node = self.symbols.getValueNode(idx);
+            const decl = self.ast.getFuncDecl(func_node);
+
+            // external functions have no body
+            if (decl.body) |body| {
+                self.propagateTypeToReturns(body, return_type);
+            }
+        }
+    }
+
+    fn propagateTypeToReturns(self: *SemanticContext, body_node: NodeIndex, return_type: TypeId) void {
+        const block = self.ast.getBlock(body_node);
+        const statements = self.ast.getExtra(block.statements);
+        for (statements) |stmt| {
+            switch (self.ast.getKind(stmt)) {
+                .return_stmt => {
+                    const ret = self.ast.getReturn(stmt);
+                    self.propagateType(ret.expr, return_type);
+                },
+                .block => self.propagateTypeToReturns(stmt, return_type),
+                .if_stmt => {
+                    const if_stmt = self.ast.getIf(stmt);
+                    self.propagateTypeToReturns(if_stmt.if_block, return_type);
+                    for (0..if_stmt.elseIfCount()) |i| {
+                        if (if_stmt.getElseIf(self.ast, i)) |pair| {
+                            self.propagateTypeToReturns(pair.block, return_type);
+                        }
+                    }
+                    if (if_stmt.else_block) |else_blk| {
+                        self.propagateTypeToReturns(else_blk, return_type);
+                    }
+                },
+                else => continue,
             }
         }
     }
