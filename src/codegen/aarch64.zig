@@ -115,6 +115,8 @@ fn lowerInst(emitter: *Emitter, inst: MInst, reg_map: *RegMap) !void {
                     .w64 => try emitter.movReg64(0, src_preg),
                 }
             }
+            // epilogue: restore frame pointer and link register
+            try emitter.raw("ldp x29, x30, [sp], #16");
             try emitter.ret();
         },
 

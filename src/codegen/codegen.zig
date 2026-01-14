@@ -51,12 +51,12 @@ pub fn generate(
 
     // lower MIR to assembly (architecture-specific)
     const assembly = switch (target) {
-        .aarch64 => try arm64.lower(allocator, &ctx.module),
+        .aarch64 => try arm64.lower(allocator, &ctx.mir),
     };
 
     return .{
         .assembly = assembly,
-        .mir = ctx.module,
+        .mir = ctx.mir,
     };
 }
 
@@ -67,7 +67,7 @@ pub const CodeGenContext = struct {
     ast: *const Ast,
     tokens: *const TokenList,
     src: *const SourceCode,
-    module: MIRModule,
+    mir: MIRModule,
     current_func: ?*MIRFunction,
 
     pub fn init(
@@ -85,13 +85,13 @@ pub const CodeGenContext = struct {
             .ast = ast,
             .tokens = tokens,
             .src = src,
-            .module = MIRModule.init(allocator),
+            .mir = MIRModule.init(allocator),
             .current_func = null,
         };
     }
 
     pub fn deinit(self: *CodeGenContext) void {
-        self.module.deinit();
+        self.mir.deinit();
     }
 
     pub fn generate(self: *CodeGenContext) !void {
@@ -127,13 +127,14 @@ pub const CodeGenContext = struct {
         const name_token = self.tokens.items[name_ident.token_idx];
         const func_name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
 
-        // calling conv should be c if main
+        // calling conv should be c if main (for darwin)
         const call_conv = if (std.mem.eql(u8, func_name, "main")) .c else func.call_conv;
 
         // create MIR function
-        self.current_func = try self.module.addFunction(func_name, call_conv);
+        self.current_func = try self.mir.addFunction(func_name, call_conv);
 
-        // emit body
+        // emit function prologue and body
+        try self.current_func.?.emit(.prologue);
         const has_return = try self.generateBlock(func.body.?);
 
         if (!has_return) {
@@ -181,6 +182,7 @@ pub const CodeGenContext = struct {
         const func = self.current_func.?;
 
         const result_reg = try self.generateExpression(ret.expr);
+
         // TODO: determine width from return type
         try func.emitRet(result_reg, .w32);
     }
