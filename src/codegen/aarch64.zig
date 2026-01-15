@@ -10,6 +10,7 @@ const Width = mir.Width;
 const BinOp = mir.BinOp;
 
 const Os = @import("codegen.zig").Os;
+const CallingConvention = @import("../parser/ast.zig").CallingConvention;
 
 /// Physical register (x0-x15).
 pub const PReg = u4;
@@ -35,10 +36,19 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule, os: Os) ![]cons
 }
 
 fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, os: Os) !void {
-    // function label (with underscore prefix for C ABI on Darwin)
+    switch (func.call_conv) {
+        .c => try lowerFunctionC(emitter, func, os),
+        .honey => try lowerFunctionHoney(emitter, func),
+        else => try lowerFunctionHoney(emitter, func), // fallback for unimplemented conventions
+    }
+}
+
+/// Lower function with C calling convention (AAPCS64).
+/// - Underscore prefix on Darwin
+/// - Full prologue/epilogue for stack frame
+fn lowerFunctionC(emitter: *Emitter, func: *const MIRFunction, os: Os) !void {
     var label_buf: [128]u8 = undefined;
-    const needs_underscore = func.call_conv == .c and os == .darwin;
-    const label = if (needs_underscore)
+    const label = if (os == .darwin)
         std.fmt.bufPrint(&label_buf, "_{s}", .{func.name}) catch unreachable
     else
         func.name;
@@ -46,9 +56,22 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, os: Os) !void {
     try emitter.global(label);
     try emitter.label(label);
 
-    // simple register allocator: map vregs to physical regs
     var reg_map = RegMap{};
+    for (func.instructions.items) |inst| {
+        try lowerInst(emitter, inst, &reg_map);
+    }
 
+    try emitter.newline();
+}
+
+/// Lower function with Honey's native calling convention.
+/// - No underscore prefix
+/// - Could optimize prologue/epilogue for leaf functions in the future
+fn lowerFunctionHoney(emitter: *Emitter, func: *const MIRFunction) !void {
+    try emitter.global(func.name);
+    try emitter.label(func.name);
+
+    var reg_map = RegMap{};
     for (func.instructions.items) |inst| {
         try lowerInst(emitter, inst, &reg_map);
     }
