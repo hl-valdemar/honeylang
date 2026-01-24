@@ -17,20 +17,91 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    if (args.len < 2) {
-        std.debug.print("Usage: {s} <file>\n", .{args[0]});
+    // parse arguments
+    var file_path: ?[]const u8 = null;
+    var target: ?honey.codegen.Target = null;
+
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (mem.startsWith(u8, arg, "--target=")) {
+            target = parseTarget(arg[9..]);
+        } else if (!mem.startsWith(u8, arg, "-")) {
+            file_path = arg;
+        }
+    }
+
+    if (file_path == null) {
+        std.debug.print("Usage: {s} [--target=<arch>-<os>] <file>\n", .{args[0]});
+        std.debug.print("\nTargets:\n", .{});
+        std.debug.print("  aarch64-darwin  ARM64 macOS (native backend)\n", .{});
+        std.debug.print("  aarch64-linux   ARM64 Linux (native backend)\n", .{});
+        std.debug.print("  x86_64-darwin   x86_64 macOS (LLVM backend)\n", .{});
+        std.debug.print("  x86_64-linux    x86_64 Linux (LLVM backend)\n", .{});
+        std.debug.print("  llvm            Native platform (force LLVM backend)\n", .{});
         return error.MissingArgument;
     }
 
-    const file_path = args[1];
+    // default to native target, auto-fallback to LLVM for unsupported architectures
+    const final_target = target orelse getNativeTarget();
 
     switch (builtin.mode) {
-        .Debug => try compileDebug(allocator, file_path),
-        else => try compileRelease(allocator, file_path),
+        .Debug => try compileDebug(allocator, file_path.?, final_target),
+        else => try compileRelease(allocator, file_path.?, final_target),
     }
 }
 
-pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
+fn parseTarget(target_str: []const u8) ?honey.codegen.Target {
+    // special case: just "llvm" means native OS via LLVM backend
+    if (mem.eql(u8, target_str, "llvm")) {
+        return .{ .arch = .llvm, .os = getNativeOs() };
+    }
+
+    // parse "<arch>-<os>" format
+    if (mem.indexOf(u8, target_str, "-")) |sep| {
+        const arch_str = target_str[0..sep];
+        const os_str = target_str[sep + 1 ..];
+
+        const arch: honey.codegen.Arch = if (mem.eql(u8, arch_str, "aarch64"))
+            .aarch64
+        else if (mem.eql(u8, arch_str, "x86_64"))
+            .x86_64
+        else if (mem.eql(u8, arch_str, "llvm"))
+            .llvm
+        else
+            return null;
+
+        const os: honey.codegen.Os = if (mem.eql(u8, os_str, "darwin"))
+            .darwin
+        else if (mem.eql(u8, os_str, "linux"))
+            .linux
+        else
+            return null;
+
+        return .{ .arch = arch, .os = os };
+    }
+    return null;
+}
+
+fn getNativeOs() honey.codegen.Os {
+    return switch (builtin.os.tag) {
+        .macos => .darwin,
+        .linux => .linux,
+        else => .darwin,
+    };
+}
+
+fn getNativeTarget() honey.codegen.Target {
+    const native_arch: honey.codegen.Arch = switch (builtin.cpu.arch) {
+        .aarch64 => .aarch64,
+        .x86_64 => .x86_64,
+        else => .llvm, // fallback for unknown architectures
+    };
+
+    return .{ .arch = native_arch, .os = getNativeOs() };
+}
+
+pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.codegen.Target) !void {
     const ansi = honey.ansi;
 
     // 1. read source
@@ -106,7 +177,6 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
     var codegen_arena = std.heap.ArenaAllocator.init(gpa);
     defer codegen_arena.deinit();
 
-    const target = honey.codegen.Target{ .arch = .aarch64, .os = .darwin };
     const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &parse_result.ast, &lexer_result.tokens, &src);
 
     // print generated MIR
@@ -116,24 +186,38 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8) !void {
 
     // print emitted code
     std.debug.print("\n{s}::[[ Code Emission ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
-    std.debug.print("Emitted {s} assembly:\n\n", .{@tagName(target.arch)});
-    std.debug.print("{s}", .{codegen_result.assembly});
+    if (codegen_result.is_llvm_ir) {
+        std.debug.print("Emitted LLVM IR (target: {s}-{s}):\n\n", .{ @tagName(target.arch), @tagName(target.os) });
+    } else {
+        std.debug.print("Emitted {s} assembly:\n\n", .{@tagName(target.arch)});
+    }
+    std.debug.print("{s}", .{codegen_result.output});
 
     // 7. link into executable
-    const link_result = honey.codegen.linker.link(
-        codegen_arena.allocator(),
-        codegen_result.assembly,
-        "program",
-    ) catch |err| {
+    const link_result = if (codegen_result.is_llvm_ir)
+        honey.codegen.linker.linkLLVM(
+            codegen_arena.allocator(),
+            codegen_result.output,
+            target.getLLVMTriple(),
+            "program",
+        )
+    else
+        honey.codegen.linker.link(
+            codegen_arena.allocator(),
+            codegen_result.output,
+            "program",
+        );
+
+    if (link_result) |result| {
+        std.debug.print("\n{s}::[[ Linking ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
+        std.debug.print("Created executable: {s}\n", .{result.executable_path});
+    } else |err| {
         std.debug.print("\n{s}Linking failed: {s}{s}\n", .{ ansi.red(), @errorName(err), ansi.reset() });
         return;
-    };
-
-    std.debug.print("\n{s}::[[ Linking ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
-    std.debug.print("Created executable: {s}\n", .{link_result.executable_path});
+    }
 }
 
-pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8) !void {
+pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.codegen.Target) !void {
     const ansi = honey.ansi;
 
     // 1. read source
@@ -178,5 +262,31 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8) !void {
     var comptime_arena = std.heap.ArenaAllocator.init(gpa);
     defer comptime_arena.deinit();
     const comptime_result = try honey.comptime_.evaluate(comptime_arena.allocator(), &parse_result.ast, &lexer_result.tokens, &src, &sem_result.symbols);
-    _ = comptime_result;
+
+    // 6. code emission
+    var codegen_arena = std.heap.ArenaAllocator.init(gpa);
+    defer codegen_arena.deinit();
+
+    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &parse_result.ast, &lexer_result.tokens, &src);
+
+    // 7. link into executable
+    const link_result = if (codegen_result.is_llvm_ir)
+        honey.codegen.linker.linkLLVM(
+            codegen_arena.allocator(),
+            codegen_result.output,
+            target.getLLVMTriple(),
+            "program",
+        )
+    else
+        honey.codegen.linker.link(
+            codegen_arena.allocator(),
+            codegen_result.output,
+            "program",
+        );
+
+    if (link_result) |result| {
+        std.debug.print("Created executable: {s}\n", .{result.executable_path});
+    } else |err| {
+        std.debug.print("{s}Linking failed: {s}{s}\n", .{ ansi.red(), @errorName(err), ansi.reset() });
+    }
 }

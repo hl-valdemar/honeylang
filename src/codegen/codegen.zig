@@ -21,11 +21,14 @@ const Width = mir.Width;
 const BinOp = mir.BinOp;
 
 const arm64 = @import("aarch64.zig");
+const llvm = @import("llvm.zig");
 
 pub const linker = @import("linker.zig");
 
 pub const Arch = enum {
     aarch64,
+    x86_64,
+    llvm, // meta-target that defers to LLVM toolchain
 };
 
 pub const Os = enum {
@@ -36,6 +39,37 @@ pub const Os = enum {
 pub const Target = struct {
     arch: Arch,
     os: Os,
+
+    /// Get the LLVM target triple for this target.
+    pub fn getLLVMTriple(self: Target) []const u8 {
+        const builtin = @import("builtin");
+
+        // For .llvm pseudo-arch, use the native CPU architecture
+        const effective_arch: Arch = if (self.arch == .llvm)
+            switch (builtin.cpu.arch) {
+                .aarch64 => .aarch64,
+                .x86_64 => .x86_64,
+                else => .x86_64, // fallback
+            }
+        else
+            self.arch;
+
+        return switch (self.os) {
+            .darwin => switch (effective_arch) {
+                .aarch64 => "arm64-apple-darwin",
+                .x86_64, .llvm => "x86_64-apple-darwin",
+            },
+            .linux => switch (effective_arch) {
+                .aarch64 => "aarch64-unknown-linux-gnu",
+                .x86_64, .llvm => "x86_64-unknown-linux-gnu",
+            },
+        };
+    }
+
+    /// Check if this target requires LLVM (no native backend).
+    pub fn requiresLLVM(self: Target) bool {
+        return self.arch == .x86_64 or self.arch == .llvm;
+    }
 };
 
 pub fn generate(
@@ -59,13 +93,21 @@ pub fn generate(
 
     try ctx.generate();
 
-    // lower MIR to assembly (architecture-specific)
-    const assembly = switch (target.arch) {
-        .aarch64 => try arm64.lower(allocator, &ctx.mir, target.os),
+    // lower MIR to assembly/IR (architecture-specific)
+    const output = switch (target.arch) {
+        .aarch64 => LoweringResult{
+            .output = try arm64.lower(allocator, &ctx.mir, target.os),
+            .is_llvm_ir = false,
+        },
+        .x86_64, .llvm => LoweringResult{
+            .output = try llvm.lower(allocator, &ctx.mir, target),
+            .is_llvm_ir = true,
+        },
     };
 
     return .{
-        .assembly = assembly,
+        .output = output.output,
+        .is_llvm_ir = output.is_llvm_ir,
         .mir = ctx.mir,
     };
 }
@@ -304,6 +346,12 @@ pub const CodeGenError = error{
 };
 
 pub const CodeGenResult = struct {
-    assembly: []const u8,
+    output: []const u8, // assembly or LLVM IR depending on target
+    is_llvm_ir: bool,
     mir: MIRModule,
+};
+
+const LoweringResult = struct {
+    output: []const u8,
+    is_llvm_ir: bool,
 };
