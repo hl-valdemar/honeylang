@@ -128,6 +128,15 @@ pub const MInst = union(enum) {
 
     /// Function epilogue (restore frame pointer, etc).
     epilogue,
+
+    /// Call a function.
+    call: struct {
+        dst: ?VReg, // destination for return value (null for void)
+        func_name: []const u8, // function name
+        args: []const VReg, // argument registers (in order)
+        call_conv: CallingConvention,
+        width: Width, // return value width
+    },
 };
 
 /// A function in MIR form.
@@ -214,6 +223,26 @@ pub const MIRFunction = struct {
     /// Emit a store to local variable.
     pub fn emitStoreLocal(self: *MIRFunction, src: VReg, offset: i16, width: Width) !void {
         try self.emit(.{ .store_local = .{ .src = src, .offset = offset, .width = width } });
+    }
+
+    /// Emit a function call and return the destination vreg (null for void).
+    pub fn emitCall(
+        self: *MIRFunction,
+        func_name: []const u8,
+        args: []const VReg,
+        call_conv: CallingConvention,
+        return_width: ?Width,
+    ) !?VReg {
+        const dst: ?VReg = if (return_width != null) self.allocVReg() else null;
+        const args_copy = try self.allocator.dupe(VReg, args);
+        try self.emit(.{ .call = .{
+            .dst = dst,
+            .func_name = func_name,
+            .args = args_copy,
+            .call_conv = call_conv,
+            .width = return_width orelse .w32,
+        } });
+        return dst;
     }
 };
 

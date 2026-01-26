@@ -220,6 +220,38 @@ fn lowerInst(emitter: *Emitter, inst: MInst, reg_map: *RegMap, globals: *const G
             }
             try emitter.raw("ldp x29, x30, [sp], #16");
         },
+
+        .call => |op| {
+            // 1. Move arguments to x0-x7 (max 8 register args)
+            for (op.args, 0..) |arg_vreg, i| {
+                if (i >= 8) break;
+                const src_preg = reg_map.get(arg_vreg);
+                switch (op.width) {
+                    .w32 => try emitter.movReg32(@intCast(i), src_preg),
+                    .w64 => try emitter.movReg64(@intCast(i), src_preg),
+                }
+            }
+
+            // 2. Emit bl with proper name mangling for C calling convention
+            var label_buf: [128]u8 = undefined;
+            const call_label = switch (op.call_conv) {
+                .c => if (emitter.os == .darwin)
+                    std.fmt.bufPrint(&label_buf, "_{s}", .{op.func_name}) catch unreachable
+                else
+                    op.func_name,
+                else => op.func_name,
+            };
+            try emitter.bl(call_label);
+
+            // 3. Move x0 result to destination vreg (if non-void)
+            if (op.dst) |dst_vreg| {
+                const dst_preg = reg_map.allocFor(dst_vreg);
+                switch (op.width) {
+                    .w32 => try emitter.movReg32(dst_preg, 0),
+                    .w64 => try emitter.movReg64(dst_preg, 0),
+                }
+            }
+        },
     }
 }
 
@@ -348,6 +380,13 @@ const Emitter = struct {
         if (dst == src) return;
         var buf: [32]u8 = undefined;
         const instr = std.fmt.bufPrint(&buf, "mov {s}, {s}\n", .{ regName64(dst), regName64(src) }) catch unreachable;
+        try self.buffer.appendSlice(self.allocator, self.indent);
+        try self.buffer.appendSlice(self.allocator, instr);
+    }
+
+    fn bl(self: *Emitter, target: []const u8) !void {
+        var buf: [128]u8 = undefined;
+        const instr = std.fmt.bufPrint(&buf, "bl {s}\n", .{target}) catch unreachable;
         try self.buffer.appendSlice(self.allocator, self.indent);
         try self.buffer.appendSlice(self.allocator, instr);
     }

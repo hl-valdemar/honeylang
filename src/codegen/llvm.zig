@@ -146,6 +146,34 @@ fn lowerInst(emitter: *Emitter, inst: MInst, ssa_map: *SsaMap) !void {
         .store_local => |_| {
             // TODO: implement local store with alloca
         },
+
+        .call => |op| {
+            // Build argument list
+            var args_str = try std.ArrayList(u8).initCapacity(emitter.allocator, 64);
+            defer args_str.deinit(emitter.allocator);
+
+            for (op.args, 0..) |arg_vreg, i| {
+                if (i > 0) try args_str.appendSlice(emitter.allocator, ", ");
+                const arg_ssa = ssa_map.get(arg_vreg);
+                var buf: [32]u8 = undefined;
+                const arg_fmt = std.fmt.bufPrint(&buf, "i32 %{d}", .{arg_ssa}) catch unreachable;
+                try args_str.appendSlice(emitter.allocator, arg_fmt);
+            }
+
+            const cc_attr: []const u8 = if (op.call_conv == .honey) "fastcc " else "";
+
+            if (op.dst) |dst_vreg| {
+                const dst_ssa = ssa_map.allocFor(dst_vreg);
+                const ret_type = widthToLLVMType(op.width);
+                try emitter.appendFmt("  %{d} = {s}call {s} @{s}({s})\n", .{
+                    dst_ssa, cc_attr, ret_type, op.func_name, args_str.items,
+                });
+            } else {
+                try emitter.appendFmt("  {s}call void @{s}({s})\n", .{
+                    cc_attr, op.func_name, args_str.items,
+                });
+            }
+        },
     }
 }
 

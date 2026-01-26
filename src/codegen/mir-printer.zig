@@ -149,6 +149,18 @@ fn printInstruction(inst: *const MInst) void {
                 l.src,
             });
         },
+        .call => |c| {
+            if (c.dst) |dst| {
+                std.debug.print("call.{s} v{d} = {s}(", .{ widthStr(c.width), dst, c.func_name });
+            } else {
+                std.debug.print("call void {s}(", .{c.func_name});
+            }
+            for (c.args, 0..) |arg, i| {
+                if (i > 0) std.debug.print(", ", .{});
+                std.debug.print("v{d}", .{arg});
+            }
+            std.debug.print(")", .{});
+        },
     }
 }
 

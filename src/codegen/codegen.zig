@@ -456,6 +456,7 @@ pub const CodeGenContext = struct {
             .literal => try self.generateLiteral(node_idx),
             .identifier => try self.generateIdentifier(node_idx),
             .binary_op => try self.generateBinaryOp(node_idx),
+            .call_expr => try self.generateCallExpr(node_idx),
             else => null,
         };
     }
@@ -571,6 +572,48 @@ pub const CodeGenContext = struct {
 
         // TODO: determine width from type
         return try func.emitBinOp(mir_op, left_reg, right_reg, .w32);
+    }
+
+    fn generateCallExpr(self: *CodeGenContext, node_idx: NodeIndex) !?VReg {
+        const func = self.current_func.?;
+        const call = self.ast.getCallExpr(node_idx);
+
+        // 1. Get function name from identifier
+        const func_ident = self.ast.getIdentifier(call.func);
+        const func_token = self.tokens.items[func_ident.token_idx];
+        const func_name = self.src.getSlice(func_token.start, func_token.start + func_token.len);
+
+        // 2. Look up function to get calling convention
+        const sym_idx = self.symbols.lookup(func_name) orelse return null;
+        const value_node = self.symbols.getValueNode(sym_idx);
+        const func_decl = self.ast.getFuncDecl(value_node);
+        const call_conv = func_decl.call_conv;
+
+        // 3. Generate argument expressions
+        const arg_nodes = self.ast.getExtra(call.args);
+        var arg_regs = try std.ArrayList(VReg).initCapacity(self.allocator, arg_nodes.len);
+        defer arg_regs.deinit(self.allocator);
+
+        for (arg_nodes) |arg_idx| {
+            const arg_reg = try self.generateExpression(arg_idx) orelse {
+                // If arg generation fails, use 0 as placeholder
+                const zero = try func.emitMovImm(0, .w32);
+                try arg_regs.append(self.allocator, zero);
+                continue;
+            };
+            try arg_regs.append(self.allocator, arg_reg);
+        }
+
+        // 4. Determine return width from type (default to w32)
+        const return_type = self.node_types.get(node_idx);
+        const return_width: ?Width = if (return_type) |rt| blk: {
+            if (rt == .unresolved) break :blk .w32;
+            if (rt == .primitive and rt.primitive == .void) break :blk null;
+            break :blk typeIdToWidth(rt);
+        } else .w32;
+
+        // 5. Emit call instruction
+        return try func.emitCall(func_name, arg_regs.items, call_conv, return_width);
     }
 };
 
