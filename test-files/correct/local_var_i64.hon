@@ -1,0 +1,4 @@
+main :: func() i64 {
+    x: i64 = 42
+    return x
+}

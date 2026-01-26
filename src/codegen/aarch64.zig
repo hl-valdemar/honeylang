@@ -63,6 +63,11 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
     }
 }
 
+/// Track frame size for epilogue stack restoration.
+const FunctionState = struct {
+    frame_size: u16 = 0,
+};
+
 /// Lower function with C calling convention (AAPCS64).
 /// - Underscore prefix on Darwin
 /// - Full prologue/epilogue for stack frame
@@ -77,8 +82,9 @@ fn lowerFunctionC(emitter: *Emitter, func: *const MIRFunction, globals: *const G
     try emitter.label(label);
 
     var reg_map = RegMap{};
+    var func_state = FunctionState{ .frame_size = func.frame_size };
     for (func.instructions.items) |inst| {
-        try lowerInst(emitter, inst, &reg_map, globals);
+        try lowerInst(emitter, inst, &reg_map, globals, &func_state);
     }
 
     try emitter.newline();
@@ -92,14 +98,15 @@ fn lowerFunctionHoney(emitter: *Emitter, func: *const MIRFunction, globals: *con
     try emitter.label(func.name);
 
     var reg_map = RegMap{};
+    var func_state = FunctionState{ .frame_size = func.frame_size };
     for (func.instructions.items) |inst| {
-        try lowerInst(emitter, inst, &reg_map, globals);
+        try lowerInst(emitter, inst, &reg_map, globals, &func_state);
     }
 
     try emitter.newline();
 }
 
-fn lowerInst(emitter: *Emitter, inst: MInst, reg_map: *RegMap, globals: *const GlobalVars) !void {
+fn lowerInst(emitter: *Emitter, inst: MInst, reg_map: *RegMap, globals: *const GlobalVars, func_state: *const FunctionState) !void {
     switch (inst) {
         .mov_imm => |op| {
             const preg = reg_map.allocFor(op.dst);
@@ -164,6 +171,22 @@ fn lowerInst(emitter: *Emitter, inst: MInst, reg_map: *RegMap, globals: *const G
             try emitter.storeGlobal(src_preg, name, op.width);
         },
 
+        .load_local => |op| {
+            const dst_preg = reg_map.allocFor(op.dst);
+            switch (op.width) {
+                .w32 => try emitter.loadFpOffset32(dst_preg, op.offset),
+                .w64 => try emitter.loadFpOffset64(dst_preg, op.offset),
+            }
+        },
+
+        .store_local => |op| {
+            const src_preg = reg_map.get(op.src);
+            switch (op.width) {
+                .w32 => try emitter.storeFpOffset32(src_preg, op.offset),
+                .w64 => try emitter.storeFpOffset64(src_preg, op.offset),
+            }
+        },
+
         .ret => |op| {
             if (op.value) |vreg| {
                 const src_preg = reg_map.get(vreg);
@@ -173,6 +196,10 @@ fn lowerInst(emitter: *Emitter, inst: MInst, reg_map: *RegMap, globals: *const G
                     .w64 => try emitter.movReg64(0, src_preg),
                 }
             }
+            // restore stack for locals
+            if (func_state.frame_size > 0) {
+                try emitter.addSpImm(func_state.frame_size);
+            }
             // epilogue: restore frame pointer and link register
             try emitter.raw("ldp x29, x30, [sp], #16");
             try emitter.ret();
@@ -181,9 +208,16 @@ fn lowerInst(emitter: *Emitter, inst: MInst, reg_map: *RegMap, globals: *const G
         .prologue => {
             try emitter.raw("stp x29, x30, [sp, #-16]!");
             try emitter.raw("mov x29, sp");
+            // allocate stack for locals
+            if (func_state.frame_size > 0) {
+                try emitter.subSpImm(func_state.frame_size);
+            }
         },
 
         .epilogue => {
+            if (func_state.frame_size > 0) {
+                try emitter.addSpImm(func_state.frame_size);
+            }
             try emitter.raw("ldp x29, x30, [sp], #16");
         },
     }
@@ -418,6 +452,50 @@ const Emitter = struct {
             try self.buffer.appendSlice(self.allocator, self.indent);
             try self.buffer.appendSlice(self.allocator, str);
         }
+    }
+
+    // -- Local variable support (fp-relative addressing) --
+
+    fn loadFpOffset32(self: *Emitter, dst: PReg, offset: i16) !void {
+        var buf: [48]u8 = undefined;
+        const instr = std.fmt.bufPrint(&buf, "ldr {s}, [x29, #{d}]\n", .{ regName32(dst), offset }) catch unreachable;
+        try self.buffer.appendSlice(self.allocator, self.indent);
+        try self.buffer.appendSlice(self.allocator, instr);
+    }
+
+    fn loadFpOffset64(self: *Emitter, dst: PReg, offset: i16) !void {
+        var buf: [48]u8 = undefined;
+        const instr = std.fmt.bufPrint(&buf, "ldr {s}, [x29, #{d}]\n", .{ regName64(dst), offset }) catch unreachable;
+        try self.buffer.appendSlice(self.allocator, self.indent);
+        try self.buffer.appendSlice(self.allocator, instr);
+    }
+
+    fn storeFpOffset32(self: *Emitter, src: PReg, offset: i16) !void {
+        var buf: [48]u8 = undefined;
+        const instr = std.fmt.bufPrint(&buf, "str {s}, [x29, #{d}]\n", .{ regName32(src), offset }) catch unreachable;
+        try self.buffer.appendSlice(self.allocator, self.indent);
+        try self.buffer.appendSlice(self.allocator, instr);
+    }
+
+    fn storeFpOffset64(self: *Emitter, src: PReg, offset: i16) !void {
+        var buf: [48]u8 = undefined;
+        const instr = std.fmt.bufPrint(&buf, "str {s}, [x29, #{d}]\n", .{ regName64(src), offset }) catch unreachable;
+        try self.buffer.appendSlice(self.allocator, self.indent);
+        try self.buffer.appendSlice(self.allocator, instr);
+    }
+
+    fn subSpImm(self: *Emitter, imm: u16) !void {
+        var buf: [48]u8 = undefined;
+        const instr = std.fmt.bufPrint(&buf, "sub sp, sp, #{d}\n", .{imm}) catch unreachable;
+        try self.buffer.appendSlice(self.allocator, self.indent);
+        try self.buffer.appendSlice(self.allocator, instr);
+    }
+
+    fn addSpImm(self: *Emitter, imm: u16) !void {
+        var buf: [48]u8 = undefined;
+        const instr = std.fmt.bufPrint(&buf, "add sp, sp, #{d}\n", .{imm}) catch unreachable;
+        try self.buffer.appendSlice(self.allocator, self.indent);
+        try self.buffer.appendSlice(self.allocator, instr);
     }
 };
 

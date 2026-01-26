@@ -109,6 +109,20 @@ pub const MInst = union(enum) {
         width: Width,
     },
 
+    /// Load from local variable (stack slot).
+    load_local: struct {
+        dst: VReg,
+        offset: i16, // negative offset from fp
+        width: Width,
+    },
+
+    /// Store to local variable (stack slot).
+    store_local: struct {
+        src: VReg,
+        offset: i16, // negative offset from fp
+        width: Width,
+    },
+
     /// Function prologue (save frame pointer, etc).
     prologue,
 
@@ -123,6 +137,7 @@ pub const MIRFunction = struct {
     instructions: std.ArrayListUnmanaged(MInst),
     next_vreg: VReg,
     allocator: mem.Allocator,
+    frame_size: u16 = 0, // stack frame size for locals (16-byte aligned)
 
     pub fn init(allocator: mem.Allocator, name: []const u8, call_conv: CallingConvention) MIRFunction {
         return .{
@@ -131,6 +146,7 @@ pub const MIRFunction = struct {
             .instructions = .{},
             .next_vreg = 0,
             .allocator = allocator,
+            .frame_size = 0,
         };
     }
 
@@ -186,6 +202,18 @@ pub const MIRFunction = struct {
     /// Emit a store to global variable.
     pub fn emitStoreGlobal(self: *MIRFunction, src: VReg, global_idx: GlobalIndex, width: Width) !void {
         try self.emit(.{ .store_global = .{ .src = src, .global_idx = global_idx, .width = width } });
+    }
+
+    /// Emit a load from local variable and return the destination vreg.
+    pub fn emitLoadLocal(self: *MIRFunction, offset: i16, width: Width) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .load_local = .{ .dst = dst, .offset = offset, .width = width } });
+        return dst;
+    }
+
+    /// Emit a store to local variable.
+    pub fn emitStoreLocal(self: *MIRFunction, src: VReg, offset: i16, width: Width) !void {
+        try self.emit(.{ .store_local = .{ .src = src, .offset = offset, .width = width } });
     }
 };
 

@@ -19,10 +19,9 @@ const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     // declaration-related
     .{ "func", .func },
 
-    // abi modifiers
-    .{ "c", .abi_c },
-    .{ "cobol", .abi_cobol },
-    .{ "fortran", .abi_fortran },
+    // NOTE: calling convention modifiers (c, cobol, fortran) are handled
+    // contextually in the parser, not as keywords. This allows using
+    // them as variable names (e.g., `c := 10`).
 
     // statement-related
     .{ "mut", .mut },

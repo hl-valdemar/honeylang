@@ -135,6 +135,20 @@ fn printInstruction(inst: *const MInst) void {
                 g.src,
             });
         },
+        .load_local => |l| {
+            std.debug.print("load.{s} v{d}, [fp{d}]", .{
+                widthStr(l.width),
+                l.dst,
+                l.offset,
+            });
+        },
+        .store_local => |l| {
+            std.debug.print("store.{s} [fp{d}], v{d}", .{
+                widthStr(l.width),
+                l.offset,
+                l.src,
+            });
+        },
     }
 }
 

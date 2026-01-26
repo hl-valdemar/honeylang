@@ -37,6 +37,7 @@ pub const TypeError = error{
 pub const SemanticResult = struct {
     symbols: SymbolTable,
     types: TypeRegistry,
+    node_types: std.AutoHashMapUnmanaged(NodeIndex, TypeId),
     errors: ErrorList,
 };
 
@@ -49,6 +50,7 @@ pub const SemanticContext = struct {
 
     symbols: SymbolTable,
     types: TypeRegistry,
+    node_types: std.AutoHashMapUnmanaged(NodeIndex, TypeId),
     scopes: std.ArrayList(Scope),
     errors: ErrorList,
 
@@ -67,6 +69,7 @@ pub const SemanticContext = struct {
             .src = src,
             .symbols = try SymbolTable.init(allocator),
             .types = try TypeRegistry.init(allocator),
+            .node_types = .{},
             .scopes = try std.ArrayList(Scope).initCapacity(allocator, 4),
             .errors = try ErrorList.init(allocator),
         };
@@ -95,6 +98,7 @@ pub const SemanticContext = struct {
         return .{
             .symbols = self.symbols,
             .types = self.types,
+            .node_types = self.node_types,
             .errors = self.errors,
         };
     }
@@ -659,6 +663,9 @@ pub const SemanticContext = struct {
     fn checkLocalVarDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
         const decl = self.ast.getVarDecl(node_idx);
         const type_id = try self.checkVarDecl(node_idx);
+
+        // store resolved type for codegen
+        try self.node_types.put(self.allocator, node_idx, type_id);
 
         // get name
         const name_ident = self.ast.getIdentifier(decl.name);

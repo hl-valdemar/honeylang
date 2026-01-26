@@ -1,0 +1,15 @@
+# Test calling convention handling
+# Verifies that c, cobol, fortran can be used as:
+# 1. Calling convention modifiers before 'func'
+# 2. Regular variable names
+
+# Use 'c' as a calling convention
+extern_func :: c func(x: i32) i32
+
+# Use 'c' as a variable name
+main :: func() i32 {
+    c := 10            # 'c' as variable name
+    fortran := 20      # 'fortran' as variable name
+    cobol := 12        # 'cobol' as variable name
+    return c + fortran + cobol
+}

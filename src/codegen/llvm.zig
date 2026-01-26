@@ -138,6 +138,14 @@ fn lowerInst(emitter: *Emitter, inst: MInst, ssa_map: *SsaMap) !void {
         .store_global => |_| {
             // TODO: implement global store
         },
+
+        .load_local => |_| {
+            // TODO: implement local load with alloca
+        },
+
+        .store_local => |_| {
+            // TODO: implement local store with alloca
+        },
     }
 }
 

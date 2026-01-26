@@ -131,7 +131,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     // 3. parse tokens
     var ast_arena = std.heap.ArenaAllocator.init(gpa);
     defer ast_arena.deinit();
-    const parse_result = try honey.parser.parse(ast_arena.allocator(), lexer_result.tokens);
+    const parse_result = try honey.parser.parse(ast_arena.allocator(), lexer_result.tokens, &src);
 
     // print generated parse tree
     std.debug.print("\n\n{s}::[[ Parsing ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
@@ -177,7 +177,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     var codegen_arena = std.heap.ArenaAllocator.init(gpa);
     defer codegen_arena.deinit();
 
-    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &parse_result.ast, &lexer_result.tokens, &src);
+    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &sem_result.node_types, &parse_result.ast, &lexer_result.tokens, &src);
 
     // print generated MIR
     std.debug.print("\n\n{s}::[[ MIR Generation ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
@@ -239,7 +239,7 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
     // 3. parse tokens
     var ast_arena = std.heap.ArenaAllocator.init(gpa);
     defer ast_arena.deinit();
-    const parse_result = try honey.parser.parse(ast_arena.allocator(), lexer_result.tokens);
+    const parse_result = try honey.parser.parse(ast_arena.allocator(), lexer_result.tokens, &src);
 
     // print parse errors if any
     if (parse_result.errors.hasErrors()) {
@@ -267,7 +267,7 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
     var codegen_arena = std.heap.ArenaAllocator.init(gpa);
     defer codegen_arena.deinit();
 
-    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &parse_result.ast, &lexer_result.tokens, &src);
+    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &sem_result.node_types, &parse_result.ast, &lexer_result.tokens, &src);
 
     // 7. link into executable
     const link_result = if (codegen_result.is_llvm_ir)

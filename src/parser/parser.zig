@@ -10,6 +10,7 @@ const ast = @import("ast.zig");
 const Ast = @import("ast.zig").Ast;
 const NodeIndex = @import("ast.zig").NodeIndex;
 const SourceIndex = @import("../source/source.zig").SourceIndex;
+const SourceCode = @import("../source/source.zig").SourceCode;
 
 const parse_error = @import("error.zig");
 const ParseErrorKind = parse_error.ParseErrorKind;
@@ -17,8 +18,8 @@ const ErrorList = parse_error.ErrorList;
 
 pub const error_printer = @import("error-printer.zig");
 
-pub fn parse(allocator: mem.Allocator, tokens: TokenList) !ParseResult {
-    var parser = try Parser.init(allocator, tokens);
+pub fn parse(allocator: mem.Allocator, tokens: TokenList, src: *const SourceCode) !ParseResult {
+    var parser = try Parser.init(allocator, tokens, src);
     return parser.parse();
 }
 
@@ -37,14 +38,16 @@ pub const Parser = struct {
     allocator: mem.Allocator,
     errors: ErrorList,
     tokens: []const Token,
+    src: *const SourceCode,
     pos: TokenIndex,
     ast: Ast,
 
-    pub fn init(allocator: mem.Allocator, tokens: TokenList) !Parser {
+    pub fn init(allocator: mem.Allocator, tokens: TokenList, src: *const SourceCode) !Parser {
         return .{
             .allocator = allocator,
             .errors = try ErrorList.init(allocator),
             .tokens = tokens.items,
+            .src = src,
             .pos = 0,
             .ast = try Ast.init(allocator),
         };
@@ -134,13 +137,13 @@ pub const Parser = struct {
 
                 if (after.kind == .func) {
                     return try self.parseFuncDecl();
-                } else if (after.kind == .abi_c) {
-                    // check if followed by func
-                    const after_abi = self.peekOffset(3) orelse {
+                } else if (after.kind == .identifier and self.isCallingConvention(2)) {
+                    // check if calling convention is followed by func
+                    const after_cc = self.peekOffset(3) orelse {
                         try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
                         return error.UnexpectedEof;
                     };
-                    if (after_abi.kind == .func) {
+                    if (after_cc.kind == .func) {
                         return try self.parseFuncDecl();
                     } else {
                         return try self.parseConstDecl();
@@ -212,15 +215,8 @@ pub const Parser = struct {
         // expect ::
         try self.expectToken(.double_colon, .expected_double_colon);
 
-        // parse optional calling convention
-        const calling_conv: ast.CallingConvention = if (self.match(.abi_c))
-            .c
-        else if (self.match(.abi_cobol))
-            .cobol
-        else if (self.match(.abi_fortran))
-            .fortran
-        else
-            .honey;
+        // parse optional calling convention (c, cobol, fortran)
+        const calling_conv = self.matchCallingConvention();
 
         // expect 'func'
         try self.expectToken(.func, .unexpected_token);
@@ -868,6 +864,46 @@ pub const Parser = struct {
             return prev.start + prev.len;
         }
         return 0;
+    }
+
+    /// Get the source text for a token at the given offset from current position.
+    fn getTokenText(self: *const Parser, offset: TokenIndex) ?[]const u8 {
+        const token = self.peekOffset(offset) orelse return null;
+        return self.src.getSlice(token.start, token.start + token.len);
+    }
+
+    /// Check if the token at the given offset is an identifier matching the given text.
+    fn isIdentifierText(self: *const Parser, offset: TokenIndex, text: []const u8) bool {
+        const token = self.peekOffset(offset) orelse return false;
+        if (token.kind != .identifier) return false;
+        const token_text = self.src.getSlice(token.start, token.start + token.len);
+        return mem.eql(u8, token_text, text);
+    }
+
+    /// Check if the token at the given offset is a calling convention identifier.
+    fn isCallingConvention(self: *const Parser, offset: TokenIndex) bool {
+        return self.isIdentifierText(offset, "c") or
+            self.isIdentifierText(offset, "cobol") or
+            self.isIdentifierText(offset, "fortran");
+    }
+
+    /// Try to match and consume a calling convention identifier. Returns the convention if matched.
+    fn matchCallingConvention(self: *Parser) ast.CallingConvention {
+        const token = self.peek() orelse return .honey;
+        if (token.kind != .identifier) return .honey;
+
+        const text = self.src.getSlice(token.start, token.start + token.len);
+        if (mem.eql(u8, text, "c")) {
+            self.advance();
+            return .c;
+        } else if (mem.eql(u8, text, "cobol")) {
+            self.advance();
+            return .cobol;
+        } else if (mem.eql(u8, text, "fortran")) {
+            self.advance();
+            return .fortran;
+        }
+        return .honey;
     }
 
     fn synchronize(self: *Parser) void {

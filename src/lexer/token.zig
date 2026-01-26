@@ -25,10 +25,8 @@ pub const Kind = enum {
     return_,
     mut,
 
-    // abi modifiers
-    abi_c,
-    abi_cobol,
-    abi_fortran,
+    // NOTE: calling conventions (c, cobol, fortran) are now handled
+    // contextually in the parser, not as token kinds
 
     // assignment
     colon,

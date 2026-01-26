@@ -26,6 +26,77 @@ const llvm = @import("llvm.zig");
 
 pub const linker = @import("linker.zig");
 
+/// Local variable storage for a function (struct of arrays).
+pub const LocalVars = struct {
+    offsets: std.ArrayListUnmanaged(i16),
+    widths: std.ArrayListUnmanaged(Width),
+    name_map: std.StringHashMapUnmanaged(u16), // name -> index
+    next_offset: i16 = -8, // first local at fp-8
+
+    pub fn init() LocalVars {
+        return .{
+            .offsets = .{},
+            .widths = .{},
+            .name_map = .{},
+            .next_offset = -8,
+        };
+    }
+
+    pub fn deinit(self: *LocalVars, allocator: mem.Allocator) void {
+        self.offsets.deinit(allocator);
+        self.widths.deinit(allocator);
+        self.name_map.deinit(allocator);
+    }
+
+    pub fn add(
+        self: *LocalVars,
+        allocator: mem.Allocator,
+        name: []const u8,
+        width: Width,
+    ) !i16 {
+        const idx: u16 = @intCast(self.offsets.items.len);
+        const offset = self.next_offset;
+
+        try self.offsets.append(allocator, offset);
+        try self.widths.append(allocator, width);
+        try self.name_map.put(allocator, name, idx);
+
+        // Advance offset for next local (8-byte slots for simplicity)
+        self.next_offset -= 8;
+
+        return offset;
+    }
+
+    pub const LocalInfo = struct {
+        offset: i16,
+        width: Width,
+    };
+
+    pub fn lookup(self: *const LocalVars, name: []const u8) ?LocalInfo {
+        const idx = self.name_map.get(name) orelse return null;
+        return .{
+            .offset = self.offsets.items[idx],
+            .width = self.widths.items[idx],
+        };
+    }
+
+    /// Get frame size aligned to 16 bytes.
+    pub fn frameSize(self: *const LocalVars) u16 {
+        if (self.offsets.items.len == 0) return 0;
+        // next_offset is negative, e.g., -24 means we used 16 bytes
+        const used: u16 = @intCast(-self.next_offset - 8 + 8); // bytes used
+        // Round up to 16-byte alignment
+        return (used + 15) & ~@as(u16, 15);
+    }
+
+    pub fn reset(self: *LocalVars) void {
+        self.offsets.clearRetainingCapacity();
+        self.widths.clearRetainingCapacity();
+        self.name_map.clearRetainingCapacity();
+        self.next_offset = -8;
+    }
+};
+
 pub const Arch = enum {
     aarch64,
     x86_64,
@@ -78,6 +149,7 @@ pub fn generate(
     target: Target,
     comptime_result: *const ComptimeResult,
     symbols: *const SymbolTable,
+    node_types: *const std.AutoHashMapUnmanaged(NodeIndex, TypeId),
     ast: *const Ast,
     tokens: *const TokenList,
     src: *const SourceCode,
@@ -87,6 +159,7 @@ pub fn generate(
         allocator,
         comptime_result,
         symbols,
+        node_types,
         ast,
         tokens,
         src,
@@ -117,16 +190,19 @@ pub const CodeGenContext = struct {
     allocator: mem.Allocator,
     comptime_result: *const ComptimeResult,
     symbols: *const SymbolTable,
+    node_types: *const std.AutoHashMapUnmanaged(NodeIndex, TypeId),
     ast: *const Ast,
     tokens: *const TokenList,
     src: *const SourceCode,
     mir: MIRModule,
     current_func: ?*MIRFunction,
+    locals: LocalVars,
 
     pub fn init(
         allocator: mem.Allocator,
         comptime_result: *const ComptimeResult,
         symbols: *const SymbolTable,
+        node_types: *const std.AutoHashMapUnmanaged(NodeIndex, TypeId),
         ast: *const Ast,
         tokens: *const TokenList,
         src: *const SourceCode,
@@ -135,16 +211,19 @@ pub const CodeGenContext = struct {
             .allocator = allocator,
             .comptime_result = comptime_result,
             .symbols = symbols,
+            .node_types = node_types,
             .ast = ast,
             .tokens = tokens,
             .src = src,
             .mir = MIRModule.init(allocator),
             .current_func = null,
+            .locals = LocalVars.init(),
         };
     }
 
     pub fn deinit(self: *CodeGenContext) void {
         self.mir.deinit();
+        self.locals.deinit(self.allocator);
     }
 
     pub fn generate(self: *CodeGenContext) !void {
@@ -267,6 +346,9 @@ pub const CodeGenContext = struct {
         // calling conv should be c if main (for darwin)
         const call_conv = if (std.mem.eql(u8, func_name, "main")) .c else func.call_conv;
 
+        // reset locals for new function
+        self.locals.reset();
+
         // create MIR function
         self.current_func = try self.mir.addFunction(func_name, call_conv);
 
@@ -279,6 +361,9 @@ pub const CodeGenContext = struct {
             const zero = try self.current_func.?.emitMovImm(0, .w32);
             try self.current_func.?.emitRet(zero, .w32);
         }
+
+        // set frame size for locals
+        self.current_func.?.frame_size = self.locals.frameSize();
 
         self.current_func = null;
     }
@@ -309,9 +394,35 @@ pub const CodeGenContext = struct {
         const kind = self.ast.getKind(node_idx);
         switch (kind) {
             .return_stmt => try self.generateReturn(node_idx),
+            .var_decl => try self.generateLocalVarDecl(node_idx),
+            .defer_stmt => {
+                // unwrap defer and generate the inner statement
+                const defer_node = self.ast.getDefer(node_idx);
+                _ = try self.generateStatement(defer_node.stmt);
+            },
             else => return null,
         }
         return kind;
+    }
+
+    fn generateLocalVarDecl(self: *CodeGenContext, node_idx: NodeIndex) !void {
+        const var_decl = self.ast.getVarDecl(node_idx);
+        const name_ident = self.ast.getIdentifier(var_decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        // Get resolved type from sema (falls back to i32 if not found)
+        const type_id = self.node_types.get(node_idx) orelse TypeId{ .primitive = .i32 };
+        const width = typeIdToWidth(type_id);
+
+        // Allocate stack slot
+        const offset = try self.locals.add(self.allocator, name, width);
+
+        // Generate initializer expression
+        const value_reg = try self.generateExpression(var_decl.value) orelse return;
+
+        // Store to local
+        try self.current_func.?.emitStoreLocal(value_reg, offset, width);
     }
 
     fn generateReturn(self: *CodeGenContext, node_idx: NodeIndex) !void {
@@ -359,6 +470,12 @@ pub const CodeGenContext = struct {
         const token = self.tokens.items[ident.token_idx];
         const name = self.src.getSlice(token.start, token.start + token.len);
 
+        // Check locals first (for function-scoped variables)
+        if (self.locals.lookup(name)) |local| {
+            return try self.current_func.?.emitLoadLocal(local.offset, local.width);
+        }
+
+        // Then check symbols (globals/constants)
         const sym_idx = self.symbols.lookup(name) orelse return null;
         const type_id = self.symbols.getTypeId(sym_idx);
         const kind = self.symbols.getKind(sym_idx);

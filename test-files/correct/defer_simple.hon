@@ -1,0 +1,17 @@
+# Test defer and regular statement ordering
+#
+# This verifies that:
+# 1. Regular statements execute in order
+# 2. Deferred statements are collected separately in the AST
+# 3. Return value comes from regular flow
+#
+# NOTE: Currently deferred code is generated AFTER returns, so it won't
+# execute. Proper defer semantics require inserting cleanup before returns.
+# Expected exit code: 30
+
+main :: func() i32 {
+    a := 10            # regular statement 1
+    defer b := 20      # deferred - generated but placed after return
+    c := 30            # regular statement 2
+    return c           # returns 30
+}

@@ -1,0 +1,6 @@
+OFFSET :: 100
+
+main :: func() i32 {
+    x := 42
+    return x + OFFSET
+}
