@@ -19,6 +19,7 @@ const MInst = mir.MInst;
 const VReg = mir.VReg;
 const Width = mir.Width;
 const BinOp = mir.BinOp;
+const GlobalIndex = mir.GlobalIndex;
 
 const arm64 = @import("aarch64.zig");
 const llvm = @import("llvm.zig");
@@ -150,9 +151,93 @@ pub const CodeGenContext = struct {
         const program = self.ast.getProgram(self.ast.root);
         const declarations = self.ast.getExtra(program.declarations);
 
+        // Phase 1: Collect global variables
+        var globals_needing_init = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 16);
+        defer globals_needing_init.deinit(self.allocator);
+
+        for (declarations) |decl_idx| {
+            const kind = self.ast.getKind(decl_idx);
+            if (kind == .var_decl) {
+                try self.collectGlobalVar(decl_idx, &globals_needing_init);
+            }
+        }
+
+        // Phase 2: Generate __honey_init (always, for runtime startup compatibility)
+        try self.generateGlobalInit(globals_needing_init.items);
+
+        // Phase 3: Generate user functions
         for (declarations) |decl_idx| {
             try self.generateDeclaration(decl_idx);
         }
+    }
+
+    fn collectGlobalVar(self: *CodeGenContext, node_idx: NodeIndex, needs_init: *std.ArrayList(NodeIndex)) !void {
+        const var_decl = self.ast.getVarDecl(node_idx);
+        const name_ident = self.ast.getIdentifier(var_decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        const sym_idx = self.symbols.lookup(name) orelse return;
+        const type_id = self.symbols.getTypeId(sym_idx);
+        const width = typeIdToWidth(type_id);
+
+        // Try to evaluate initializer as a literal constant
+        const init_value = self.tryEvaluateLiteral(var_decl.value);
+
+        // Register global in MIR
+        _ = try self.mir.globals.add(
+            self.allocator,
+            name,
+            width,
+            init_value,
+            sym_idx,
+        );
+
+        // If needs runtime init, add to list
+        if (init_value == null) {
+            try needs_init.append(self.allocator, node_idx);
+        }
+    }
+
+    fn tryEvaluateLiteral(self: *CodeGenContext, node_idx: NodeIndex) ?i64 {
+        const kind = self.ast.getKind(node_idx);
+        if (kind != .literal) return null;
+
+        const lit = self.ast.getLiteral(node_idx);
+        const token = self.tokens.items[lit.token_idx];
+        const value_str = self.src.getSlice(token.start, token.start + token.len);
+
+        return switch (token.kind) {
+            .bool => if (std.mem.eql(u8, value_str, "true")) 1 else 0,
+            .number => std.fmt.parseInt(i64, value_str, 10) catch null,
+            else => null,
+        };
+    }
+
+    fn generateGlobalInit(self: *CodeGenContext, var_nodes: []const NodeIndex) !void {
+        // Create __honey_init function
+        self.current_func = try self.mir.addFunction("__honey_init", .c);
+        try self.current_func.?.emit(.prologue);
+
+        for (var_nodes) |node_idx| {
+            const var_decl = self.ast.getVarDecl(node_idx);
+            const name_ident = self.ast.getIdentifier(var_decl.name);
+            const name_token = self.tokens.items[name_ident.token_idx];
+            const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+            const global_idx = self.mir.globals.lookup(name) orelse continue;
+            const width = self.mir.globals.getWidth(global_idx);
+
+            // Evaluate initializer expression
+            const value_reg = try self.generateExpression(var_decl.value) orelse continue;
+
+            // Store to global
+            try self.current_func.?.emitStoreGlobal(value_reg, global_idx, width);
+        }
+
+        // Return void (emit ret with null value)
+        try self.current_func.?.emitRet(null, .w32);
+        self.current_func = null;
     }
 
     fn generateDeclaration(self: *CodeGenContext, node_idx: NodeIndex) !void {
@@ -280,8 +365,25 @@ pub const CodeGenContext = struct {
 
         return switch (kind) {
             .constant => self.generateConstLoad(sym_idx, type_id),
-            .variable => error.UnsupportedFeature,
+            .variable => self.generateVarLoad(name, type_id),
             .function => error.UnsupportedFeature,
+        };
+    }
+
+    fn generateVarLoad(self: *CodeGenContext, name: []const u8, type_id: TypeId) !?VReg {
+        const func = self.current_func.?;
+        const global_idx = self.mir.globals.lookup(name) orelse return null;
+        const width = typeIdToWidth(type_id);
+        return try func.emitLoadGlobal(global_idx, width);
+    }
+
+    fn typeIdToWidth(type_id: TypeId) Width {
+        return switch (type_id) {
+            .primitive => |prim| switch (prim) {
+                .i64, .u64, .f64 => .w64,
+                else => .w32,
+            },
+            else => .w32,
         };
     }
 

@@ -1,0 +1,6 @@
+a := 10
+mut b := a + 5
+
+main :: func() i32 {
+    return b
+}

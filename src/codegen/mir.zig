@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 
 const CallingConvention = @import("../parser/ast.zig").CallingConvention;
+const SymbolIndex = @import("../semantic/symbols.zig").SymbolIndex;
 
 /// Virtual register - unlimited during MIR generation,
 /// mapped to physical registers during lowering.
@@ -51,6 +52,9 @@ pub const CmpOp = enum {
     ge_u,
 };
 
+/// Index into global variable parallel arrays.
+pub const GlobalIndex = u16;
+
 /// Machine IR instruction - architecture independent.
 pub const MInst = union(enum) {
     /// Load immediate value into register.
@@ -88,6 +92,20 @@ pub const MInst = union(enum) {
     /// Return from function with optional value.
     ret: struct {
         value: ?VReg,
+        width: Width,
+    },
+
+    /// Load from global variable.
+    load_global: struct {
+        dst: VReg,
+        global_idx: GlobalIndex,
+        width: Width,
+    },
+
+    /// Store to global variable.
+    store_global: struct {
+        src: VReg,
+        global_idx: GlobalIndex,
         width: Width,
     },
 
@@ -157,16 +175,98 @@ pub const MIRFunction = struct {
     pub fn emitRet(self: *MIRFunction, value: ?VReg, width: Width) !void {
         try self.emit(.{ .ret = .{ .value = value, .width = width } });
     }
+
+    /// Emit a load from global variable and return the destination vreg.
+    pub fn emitLoadGlobal(self: *MIRFunction, global_idx: GlobalIndex, width: Width) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .load_global = .{ .dst = dst, .global_idx = global_idx, .width = width } });
+        return dst;
+    }
+
+    /// Emit a store to global variable.
+    pub fn emitStoreGlobal(self: *MIRFunction, src: VReg, global_idx: GlobalIndex, width: Width) !void {
+        try self.emit(.{ .store_global = .{ .src = src, .global_idx = global_idx, .width = width } });
+    }
+};
+
+/// Global variable storage (struct of arrays).
+pub const GlobalVars = struct {
+    names: std.ArrayListUnmanaged([]const u8),
+    widths: std.ArrayListUnmanaged(Width),
+    init_values: std.ArrayListUnmanaged(?i64), // null if needs runtime init
+    sym_indices: std.ArrayListUnmanaged(SymbolIndex),
+    name_map: std.StringHashMapUnmanaged(GlobalIndex),
+
+    pub fn init() GlobalVars {
+        return .{
+            .names = .{},
+            .widths = .{},
+            .init_values = .{},
+            .sym_indices = .{},
+            .name_map = .{},
+        };
+    }
+
+    pub fn deinit(self: *GlobalVars, allocator: mem.Allocator) void {
+        self.names.deinit(allocator);
+        self.widths.deinit(allocator);
+        self.init_values.deinit(allocator);
+        self.sym_indices.deinit(allocator);
+        self.name_map.deinit(allocator);
+    }
+
+    pub fn add(
+        self: *GlobalVars,
+        allocator: mem.Allocator,
+        name: []const u8,
+        width: Width,
+        init_value: ?i64,
+        sym_idx: SymbolIndex,
+    ) !GlobalIndex {
+        const idx: GlobalIndex = @intCast(self.names.items.len);
+        try self.names.append(allocator, name);
+        try self.widths.append(allocator, width);
+        try self.init_values.append(allocator, init_value);
+        try self.sym_indices.append(allocator, sym_idx);
+        try self.name_map.put(allocator, name, idx);
+        return idx;
+    }
+
+    pub fn lookup(self: *const GlobalVars, name: []const u8) ?GlobalIndex {
+        return self.name_map.get(name);
+    }
+
+    pub fn count(self: *const GlobalVars) usize {
+        return self.names.items.len;
+    }
+
+    pub fn getName(self: *const GlobalVars, idx: GlobalIndex) []const u8 {
+        return self.names.items[idx];
+    }
+
+    pub fn getWidth(self: *const GlobalVars, idx: GlobalIndex) Width {
+        return self.widths.items[idx];
+    }
+
+    pub fn getInitValue(self: *const GlobalVars, idx: GlobalIndex) ?i64 {
+        return self.init_values.items[idx];
+    }
+
+    pub fn needsRuntimeInit(self: *const GlobalVars, idx: GlobalIndex) bool {
+        return self.init_values.items[idx] == null;
+    }
 };
 
 /// Collection of MIR functions for a compilation unit.
 pub const MIRModule = struct {
     functions: std.ArrayListUnmanaged(MIRFunction),
+    globals: GlobalVars,
     allocator: mem.Allocator,
 
     pub fn init(allocator: mem.Allocator) MIRModule {
         return .{
             .functions = .{},
+            .globals = GlobalVars.init(),
             .allocator = allocator,
         };
     }
@@ -176,6 +276,7 @@ pub const MIRModule = struct {
             func.deinit();
         }
         self.functions.deinit(self.allocator);
+        self.globals.deinit(self.allocator);
     }
 
     pub fn addFunction(self: *MIRModule, name: []const u8, call_conv: CallingConvention) !*MIRFunction {

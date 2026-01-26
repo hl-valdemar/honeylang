@@ -130,6 +130,14 @@ fn lowerInst(emitter: *Emitter, inst: MInst, ssa_map: *SsaMap) !void {
         .prologue, .epilogue => {
             // LLVM handles prologue/epilogue automatically
         },
+
+        .load_global => |_| {
+            // TODO: implement global load
+        },
+
+        .store_global => |_| {
+            // TODO: implement global store
+        },
     }
 }
 

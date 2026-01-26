@@ -121,6 +121,20 @@ fn printInstruction(inst: *const MInst) void {
         .epilogue => {
             std.debug.print("epilogue", .{});
         },
+        .load_global => |g| {
+            std.debug.print("load.{s} v{d}, global[{d}]", .{
+                widthStr(g.width),
+                g.dst,
+                g.global_idx,
+            });
+        },
+        .store_global => |g| {
+            std.debug.print("store.{s} global[{d}], v{d}", .{
+                widthStr(g.width),
+                g.global_idx,
+                g.src,
+            });
+        },
     }
 }
 
