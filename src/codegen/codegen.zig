@@ -376,18 +376,33 @@ pub const CodeGenContext = struct {
         const deferred = self.ast.getExtra(block.deferred);
 
         for (statements) |stmt_idx| {
-            const kind = try self.generateStatement(stmt_idx);
-            has_return = has_return or (kind == .return_stmt);
+            const kind = self.ast.getKind(stmt_idx);
+
+            if (kind == .return_stmt) {
+                // Execute deferred statements BEFORE returning (LIFO order)
+                try self.generateDeferredStatements(deferred);
+                try self.generateReturn(stmt_idx);
+                has_return = true;
+            } else {
+                _ = try self.generateStatement(stmt_idx);
+            }
         }
 
-        // execute deferred statements in reverse order
+        // If no explicit return, still execute deferred at block end
+        if (!has_return and deferred.len > 0) {
+            try self.generateDeferredStatements(deferred);
+        }
+
+        return has_return;
+    }
+
+    /// Generate deferred statements in reverse order (LIFO)
+    fn generateDeferredStatements(self: *CodeGenContext, deferred: []const NodeIndex) !void {
         var i = deferred.len;
         while (i > 0) {
             i -= 1;
             _ = try self.generateStatement(deferred[i]);
         }
-
-        return has_return;
     }
 
     fn generateStatement(self: *CodeGenContext, node_idx: NodeIndex) !?NodeKind {

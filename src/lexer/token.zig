@@ -25,9 +25,6 @@ pub const Kind = enum {
     return_,
     mut,
 
-    // NOTE: calling conventions (c, cobol, fortran) are now handled
-    // contextually in the parser, not as token kinds
-
     // assignment
     colon,
     double_colon,
