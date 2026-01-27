@@ -149,6 +149,13 @@ fn printInstruction(inst: *const MInst) void {
                 l.src,
             });
         },
+        .store_arg => |s| {
+            std.debug.print("store_arg.{s} [fp{d}], arg{d}", .{
+                widthStr(s.width),
+                s.offset,
+                s.arg_idx,
+            });
+        },
         .call => |c| {
             if (c.dst) |dst| {
                 std.debug.print("call.{s} v{d} = {s}(", .{ widthStr(c.width), dst, c.func_name });

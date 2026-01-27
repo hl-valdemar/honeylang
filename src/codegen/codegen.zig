@@ -352,8 +352,37 @@ pub const CodeGenContext = struct {
         // create MIR function
         self.current_func = try self.mir.addFunction(func_name, call_conv);
 
-        // emit function prologue and body
+        // emit function prologue
         try self.current_func.?.emit(.prologue);
+
+        // register parameters as locals and spill to stack
+        const param_nodes = self.ast.getExtra(func.params);
+        var arg_idx: u8 = 0;
+        var i: usize = 0;
+        while (i < param_nodes.len) : ({
+            i += 2;
+            arg_idx += 1;
+        }) {
+            const param_name_idx = param_nodes[i];
+            // param_type_idx at param_nodes[i + 1]
+
+            // get parameter name
+            const param_ident = self.ast.getIdentifier(param_name_idx);
+            const param_token = self.tokens.items[param_ident.token_idx];
+            const param_name = self.src.getSlice(param_token.start, param_token.start + param_token.len);
+
+            // get parameter type from semantic analysis
+            const param_type = self.node_types.get(param_name_idx) orelse TypeId{ .primitive = .i32 };
+            const width = typeIdToWidth(param_type);
+
+            // add to locals (allocates stack slot)
+            const offset = try self.locals.add(self.allocator, param_name, width);
+
+            // emit store from argument register to stack
+            try self.current_func.?.emitStoreArg(arg_idx, offset, width);
+        }
+
+        // generate function body
         const has_return = try self.generateBlock(func.body.?);
 
         if (!has_return) {

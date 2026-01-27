@@ -123,6 +123,14 @@ pub const MInst = union(enum) {
         width: Width,
     },
 
+    /// Store function argument to stack slot.
+    /// Used at function entry to spill argument registers.
+    store_arg: struct {
+        arg_idx: u8, // argument index (0-7 for x0-x7)
+        offset: i16, // stack offset from fp
+        width: Width,
+    },
+
     /// Function prologue (save frame pointer, etc).
     prologue,
 
@@ -223,6 +231,11 @@ pub const MIRFunction = struct {
     /// Emit a store to local variable.
     pub fn emitStoreLocal(self: *MIRFunction, src: VReg, offset: i16, width: Width) !void {
         try self.emit(.{ .store_local = .{ .src = src, .offset = offset, .width = width } });
+    }
+
+    /// Emit a store from argument register to stack slot.
+    pub fn emitStoreArg(self: *MIRFunction, arg_idx: u8, offset: i16, width: Width) !void {
+        try self.emit(.{ .store_arg = .{ .arg_idx = arg_idx, .offset = offset, .width = width } });
     }
 
     /// Emit a function call and return the destination vreg (null for void).

@@ -147,6 +147,12 @@ fn lowerInst(emitter: *Emitter, inst: MInst, ssa_map: *SsaMap) !void {
             // TODO: implement local store with alloca
         },
 
+        .store_arg => |_| {
+            // In LLVM IR, parameters are already named %0, %1, etc.
+            // Full implementation would use alloca + store
+            // TODO: implement proper parameter handling with alloca
+        },
+
         .call => |op| {
             // Build argument list
             var args_str = try std.ArrayList(u8).initCapacity(emitter.allocator, 64);

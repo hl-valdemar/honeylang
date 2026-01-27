@@ -1,0 +1,7 @@
+double :: func(n: i32) i32 {
+    return n + n
+}
+
+main :: func() i32 {
+    return double(21)
+}

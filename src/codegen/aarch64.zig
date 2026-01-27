@@ -187,6 +187,15 @@ fn lowerInst(emitter: *Emitter, inst: MInst, reg_map: *RegMap, globals: *const G
             }
         },
 
+        .store_arg => |op| {
+            // store argument register to stack slot
+            // arguments are in x0-x7 (or w0-w7 for 32-bit)
+            switch (op.width) {
+                .w32 => try emitter.storeArgFp32(op.arg_idx, op.offset),
+                .w64 => try emitter.storeArgFp64(op.arg_idx, op.offset),
+            }
+        },
+
         .ret => |op| {
             if (op.value) |vreg| {
                 const src_preg = reg_map.get(vreg);
@@ -519,6 +528,26 @@ const Emitter = struct {
     fn storeFpOffset64(self: *Emitter, src: PReg, offset: i16) !void {
         var buf: [48]u8 = undefined;
         const instr = std.fmt.bufPrint(&buf, "str {s}, [x29, #{d}]\n", .{ regName64(src), offset }) catch unreachable;
+        try self.buffer.appendSlice(self.allocator, self.indent);
+        try self.buffer.appendSlice(self.allocator, instr);
+    }
+
+    fn storeArgFp32(self: *Emitter, arg_idx: u8, offset: i16) !void {
+        var buf: [48]u8 = undefined;
+        const instr = std.fmt.bufPrint(&buf, "str {s}, [x29, #{d}]\n", .{
+            regName32(@intCast(arg_idx)),
+            offset,
+        }) catch unreachable;
+        try self.buffer.appendSlice(self.allocator, self.indent);
+        try self.buffer.appendSlice(self.allocator, instr);
+    }
+
+    fn storeArgFp64(self: *Emitter, arg_idx: u8, offset: i16) !void {
+        var buf: [48]u8 = undefined;
+        const instr = std.fmt.bufPrint(&buf, "str {s}, [x29, #{d}]\n", .{
+            regName64(@intCast(arg_idx)),
+            offset,
+        }) catch unreachable;
         try self.buffer.appendSlice(self.allocator, self.indent);
         try self.buffer.appendSlice(self.allocator, instr);
     }
