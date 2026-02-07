@@ -1,6 +1,6 @@
 # Honey Language Documentation
 
-Specification v0.1.2
+Specification v0.1.3
 
 ## Compilation Philosophy
 
@@ -280,21 +280,59 @@ z := get_value()     # initialized from expression
 
 **Why** `undefined` instead of zero-initialization?
 
-Zero-initialization is *safe* in the sense of "no garbage memory," but it's *deceptive* — your program runs without crashing but may have a logic bug because you forgot to set something and zero happened to be wrong. `undefined` is honest. The compiler performs flow analysis to catch uses of potentially undefined variables:
+Zero-initialization is *safe* in the sense of "no garbage memory," but it's *deceptive* — your program runs without crashing but may have a logic bug because you forgot to set something and zero happened to be wrong. `undefined` is honest. It tells the compiler "I haven't initialized this yet — track it for me."
+
+### How `undefined` is checked
+
+Honey uses a layered approach to catch uses of uninitialized memory:
+
+**Layer 1 — Compile-time flow analysis:** For scalar locals and whole-variable assignments, the compiler tracks initialization across branches. If it cannot prove a variable is initialized at a use site, it emits an error and inserts a trap (per the always-compile philosophy):
 
 ```honey
 main :: func() void {
     x: i32 = undefined
-    
+
     if some_condition {
         x = 10
     }
-    
-    print(x)  # ERROR: x may be undefined here
+
+    print(x)  # ERROR: x may be undefined here (no else branch)
+              # trap inserted — will crash if reached at runtime
 }
 ```
 
-In debug builds, undefined memory is filled with poison values (e.g., 0xAA) so that if a use slips past the compiler, you get an obvious crash or clearly wrong data rather than a subtle bug.
+```honey
+main :: func() void {
+    x: i32 = undefined
+
+    if some_condition {
+        x = 10
+    } else {
+        x = 20
+    }
+
+    print(x)  # OK: x is proven initialized on all paths
+}
+```
+
+**Layer 2 — Debug poison values:** For cases the compiler cannot reason about — per-element buffer initialization, memory written through pointers by external functions — undefined memory is filled with poison values (e.g., 0xAA) in debug builds. This is a best-effort runtime safety net:
+
+```honey
+main :: func() void {
+    buffer: [4096]u8 = undefined   # filled with 0xAA in debug
+    bytes_read := read_into(&buffer)
+    process(buffer[0..bytes_read])  # compiler can't verify read_into filled the buffer
+                                    # if it didn't, debug poison makes bugs obvious
+}
+```
+
+**Layer 3 — Programmer responsibility:** In release builds, there are no poison values and no runtime checks. If undefined memory is read in a case the compiler couldn't catch, it is undefined behavior. This is the cost of maximum performance — the programmer is responsible for ensuring correctness in cases beyond the compiler's analysis.
+
+| Layer | Catches | Cost |
+| -- | -- | -- |
+| Flow analysis (compile time) | Scalars, whole-variable assignments, branching | Zero — compile-time only |
+| Poison values (debug runtime) | Buffer elements, memory behind pointers | Debug builds only |
+| Programmer (release runtime) | Everything else | None — UB if wrong |
 
 ## Control Flow
 
@@ -1525,6 +1563,16 @@ main :: func() void {
     print("processed {d} items, sum = {d}", {state.count, state.sum})
 }
 ```
+
+### Anonymous Functions
+
+For simple cases where naming a function adds noise, you can define a function inline as an expression. Anonymous functions cannot capture variables from their enclosing scope — they follow the same rules as named functions:
+
+```honey
+filtered := filter(data, &func(x: i32) bool { return x > 10 }, heap)
+```
+
+The `&func(...)` syntax creates a function and takes its address in one step — the same pattern as named functions, just without an intermediate name. For anything beyond a trivial expression, prefer a named function for readability.
 
 ### Idiomatic Patterns
 
