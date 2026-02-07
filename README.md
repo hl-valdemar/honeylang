@@ -1,6 +1,6 @@
 # Honey Language Documentation
 
-Specification v0.1.1
+Specification v0.1.2
 
 ## Compilation Philosophy
 
@@ -1217,7 +1217,7 @@ Functions can have parameters with default values. When calling such functions, 
 
 ```honey
 greet :: func(name: []u8, greeting: []u8 = "Hello", times: u32 = 1) void {
-    for _ in 0..times {
+    for 0..times |_| {
         print("{s}, {s}!", {greeting, name})
     }
 }
@@ -1503,7 +1503,7 @@ process_with_count :: func(
     state: @mut ProcessState,
     handler: @func(value: i32, state: @mut ProcessState) void,
 ) void {
-    for value in data {
+    for data |value| {
         handler(value, state)
     }
 }
@@ -1618,6 +1618,7 @@ Memory allocation in Honey is designed to be **explicit but not verbose**. We re
 │  3. Explicit override: custom allocators when needed        │
 │  4. Build-mode aware: different behavior for debug/release  │
 │  5. Immutable defaults: no "action at a distance" bugs      │
+│  6. Escaping allocations: caller provides allocator         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -1631,20 +1632,14 @@ Honey provides a **thread-local global heap allocator** that is:
 ```honey
 import "std/mem/heap"
 
-process :: func(input: []u8) []u8 {
-    # heap.alloc() is clear and explicit
-    result := heap.alloc(u8, size: input.len * 2)
-    
-    # ... work with result ...
-    
-    return result  # caller is responsible for heap.free()
-}
+process :: func(input: []u8) u64 {
+    # heap used for internal temporary work — does not escape
+    temp := heap.alloc(u8, size: input.len * 2)
+    defer heap.free(temp)
 
-main :: func() void {
-    data := process("hello")
-    defer heap.free(data)
-    
-    # use data...
+    # ... work with temp ...
+
+    return compute_hash(temp)  # only the result escapes, not the allocation
 }
 ```
 
@@ -1657,6 +1652,60 @@ The behavior of `heap` depends on build mode:
 | ReleaseSafe | Bounds-checking allocator |
 
 This is configured at compile time. You cannot change which allocator `heap` uses at runtime. This is intentional — it prevents bugs where memory allocated with one allocator is freed with another.
+
+### The Escaping Allocation Rule
+
+**If a function heap-allocates memory that escapes its scope — whether via the return value or via writes through mutable parameters — the function must accept an allocator parameter.** The presence of an allocator parameter is the contract that says "heap memory escapes here, and you're responsible for it."
+
+This rule makes ownership transfer visible at the function signature level. The caller never needs to read the function's implementation to know whether heap cleanup is involved:
+
+```honey
+import "std/mem"
+import "std/mem/heap"
+
+# Allocation escapes via return value — requires allocator
+duplicate :: func(input: []u8, allocator: @mem.Allocator) []u8 {
+    result := allocator.alloc(u8, size: input.len)
+    mem.copy(result, input)
+    return result  # caller manages this memory
+}
+
+# Allocation escapes via mutable parameter — requires allocator
+init :: func(obj: @mut MyStruct, allocator: @mem.Allocator) void {
+    obj.buffer = allocator.alloc(u8, size: 100)
+    # caller now knows heap memory was written into obj
+}
+
+# No allocation escapes — no allocator needed
+process :: func(input: []u8) u64 {
+    temp := heap.alloc(u8, size: input.len)
+    defer heap.free(temp)
+    # ... work with temp ...
+    return compute_hash(temp)
+}
+
+# No heap allocation at all — no allocator needed
+reset :: func(obj: @mut MyStruct) void {
+    obj.count = 0
+}
+
+main :: func() void {
+    data := duplicate("hello", heap)
+    defer heap.free(data)
+
+    mut obj := MyStruct{ ... }
+    init(&obj, heap)
+    defer heap.free(obj.buffer)
+}
+```
+
+**Why this matters:**
+
+* Without the rule, a function like `init(obj: @mut MyStruct) void` is ambiguous — did it heap-allocate into `obj`, or just set some fields to stack/static data? The caller has no way to know without reading the implementation.
+* With the rule, the allocator parameter is a clear signal: "this function produces heap memory that outlives its scope, and you are responsible for cleaning it up."
+* Internal allocations (temporary buffers, scratch space) use `heap` directly and are freed before the function returns. No allocator parameter needed, no burden on the caller.
+
+**The compiler enforces this rule.** If a function heap-allocates memory that escapes without accepting an allocator parameter, the compiler emits an error.
 
 ### Why Immutable Defaults?
 
@@ -1690,26 +1739,24 @@ For specialized needs, you create explicit allocator instances. These are not gl
 import "std/mem"
 import "std/mem/heap"
 
-process_file :: func(path: []u8) !Data {
-    # create arena backed by heap memory
-    backing := heap.alloc(u8, size: mem.megabytes(1))
-    defer heap.free(backing)
-    
-    arena := mem.Arena.init(backing)
-    
+process_file :: func(path: []u8, allocator: @mem.Allocator) !Data {
+    # arena manages its own backing memory via heap
+    arena := mem.Arena.init(heap, capacity: mem.megabytes(1))
+    defer arena.deinit()
+
     # all temporary allocations from arena (fast bump allocation)
     file_contents := arena.alloc(u8, size: file_size)
     parsed := arena.alloc(ParsedData)         # size defaults to 1
     tokens := arena.alloc(Token, size: 1000)
-    
+
     # ... process ...
-    
-    # copy result to heap for return
-    result := heap.create(Data)
+
+    # escaping allocation uses the caller's allocator
+    result := allocator.create(Data)
     mem.copy(result, parsed)
-    
+
     return result
-    # arena goes out of scope - no individual frees needed
+    # arena.deinit() frees all arena memory — no individual frees needed
 }
 ```
 
@@ -1717,14 +1764,15 @@ process_file :: func(path: []u8) !Data {
 
 ```honey
 import "std/mem"
+import "std/mem/heap"
 
 EntitySystem :: struct {
     pool: mem.Pool(Entity),
 }
 
-init_entities :: func() EntitySystem {
+init_entities :: func(allocator: @mem.Allocator) EntitySystem {
     return EntitySystem{
-        pool = mem.Pool(Entity).init(10_000),
+        pool = mem.Pool(Entity).init(allocator, capacity: 10_000),
     }
 }
 
@@ -1739,7 +1787,7 @@ despawn :: func(sys: @mut EntitySystem, entity: @Entity) void {
 
 ### Passing Allocators to Functions
 
-When a function needs to allocate memory with a caller-provided allocator, accept it as a parameter:
+As described in the escaping allocation rule, when a function heap-allocates memory that escapes its scope, it must accept an allocator parameter. The caller decides which allocator to use:
 
 ```honey
 import "std/mem"
@@ -1758,13 +1806,15 @@ parse :: func(input: []u8, allocator: @mem.Allocator) !ParseResult {
 # Caller decides which allocator to use
 main :: func() void {
     # use an arena for this parsing work
-    arena := mem.Arena.init(backing)
+    arena := mem.Arena.init(heap, capacity: mem.kilobytes(64))
+    defer arena.deinit()
     result := parse(input, &arena) catch |err| {
         # handle error
     }
-    
+
     # or use a pool
-    pool := mem.Pool(ParseResult).init(100)
+    pool := mem.Pool(ParseResult).init(capacity: 100)
+    defer pool.deinit()
     result := parse(input, &pool) catch |err| {
         # handle error
     }
@@ -1777,10 +1827,13 @@ main :: func() void {
 | -- | -- | -- |
 | `heap.alloc(T, size: n)` | Thread-local global | General purpose, 90% of cases |
 | `heap.create(T)` | Thread-local global | Allocate single item |
+| `allocator.alloc(T, size: n)` | Caller-provided | Escaping allocations (returned or written to caller's data) |
 | `arena.alloc(T, size: n)` | Explicit instance | Temporary/scoped work, bulk free |
 | `pool.alloc()` | Explicit instance | Many same-sized objects, O(1) |
 
-**The golden rule:** Allocate and free with the same allocator. The type system helps enforce this—memory from `heap` can only be freed with `heap`, memory from your arena can only be freed with that arena.
+Note that `heap` satisfies the `Allocator` interface, so callers can pass `heap` as the allocator argument when they don't need a specialized allocator — which is most of the time.
+
+**The golden rule:** Allocate and free with the same allocator. The type system helps enforce this — memory from `heap` can only be freed with `heap`, memory from your arena can only be freed with that arena. The escaping allocation rule ensures the caller always knows which allocator was used.
 
 ### Compared to Other Languages
 
@@ -1789,7 +1842,7 @@ main :: func() void {
 | C | Hidden malloc, easy to mismatch | Explicit allocator at call site |
 | C++ | Allocator templates, complex | Simple, no template complexity |
 | Rust | Explicit everywhere, verbose | Sensible defaults reduce noise |
-| Zig | Allocator parameter threading | Less verbose for common cases |
+| Zig | Allocator parameter threading | Only required for escaping allocations, not internal work |
 | Odin | Hidden context parameter | Fully transparent, nothing hidden |
 | Go | Hidden GC | Explicit control, no GC pauses |
 
@@ -2298,7 +2351,7 @@ Generic functions take implementation namespaces as comptime parameters:
 # I is a namespace that satisfies Collection
 sum_all :: func(comptime I: Collection, container: @I.Container) i64 {
     mut total: i64 = 0
-    for i in 0..I.len(container) {
+    for 0..I.len(container) |i| {
         if I.get(container, i) |val| {
             total += as!(val^, i64)
         }
@@ -2826,10 +2879,10 @@ data := read_file(path) catch |e| match e {
 | `if cond { }` | Conditional execution |
 | `if cond { } else { }` | Conditional with else branch |
 | `match val { pat: expr, ... }` | Pattern matching |
-| `for x in collection { }` | Iterate over elements |
-| `for x, i in collection { }` | Iterate with index |
-| `for i in 0..n { }` | Iterate over exclusive range |
-| `for i in 0..=n { }` | Iterate over inclusive range |
+| `for collection \|val\| { }` | Iterate over elements |
+| `for collection \|val, idx\| { }` | Iterate with index |
+| `for 0..n \|i\| { }` | Iterate over exclusive range |
+| `for 0..=n \|i\| { }` | Iterate over inclusive range |
 | `while cond { }` | While loop |
 | `while cond : cont_expr { }` | While loop with continue expression |
 | `break` | Exit innermost loop |
