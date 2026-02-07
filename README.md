@@ -2369,65 +2369,37 @@ main :: func() void {
 
 The implementation is always explicit at the call site. No hidden dispatch, no "which implementation wins?" questions.
 
-### Type Constraints with Function Requirements
+### Associated Namespaces
 
-When an associated type must satisfy another interface, use `is`:
+Interfaces can require associated namespaces that satisfy other interfaces. This lets you compose behavior from existing implementations:
 
 ```honey
 Comparable :: interface {
     Element: type,
     compare: func(a: @Element, b: @Element) Ordering,
 }
+
 SortedCollection :: interface {
     Container: type,
-    Element: type is Comparable,  # constraint
-    
+    Element: type,
+    Ops: Comparable,  # must be a namespace satisfying Comparable
+
     insert: func(c: @mut Container, value: Element) void,
     find: func(c: @Container, value: @Element) ?@Element,
 }
-```
 
-The constraint `Element: type is Comparable` means: "this namespace must also provide the functions from Comparable, specialized for Element."
-
-When implementing:
-
-```honey
-sorted_ints :: namespace {
-    impl SortedCollection
-    
-    Container :: struct { items: [256]i32, count: usize }
-    Element :: i32
-    
-    # Required by Comparable constraint
-    compare :: func(a: @Element, b: @Element) Ordering {
-        if a^ < b^ { return .less }
-        if a^ > b^ { return .greater }
-        return .equal
-    }
-    
-    # Required by SortedCollection
-    insert :: func(c: @mut Container, value: Element) void { ... }
-    find :: func(c: @Container, value: @Element) ?@Element { ... }
-}
-```
-
-### Associated Namespaces
-
-For reuse, interfaces can require associated namespaces instead of pulling in function requirements:
-
-```honey
 HashMap :: interface {
     Map: type,
     Key: type,
-    KeyOps: Comparable where .Element is Key,  # associated NAMESPACE
+    KeyOps: Comparable,  # associated namespace
     Value: type,
-    
+
     get: func(m: @Map, key: @Key) ?@Value,
     put: func(m: @mut Map, key: Key, value: Value) void,
 }
 ```
 
-Here `KeyOps` must be a namespace satisfying `Comparable`, with its `Element` type matching Key. This lets you delegate to existing implementations:
+The implementing namespace provides a concrete namespace for each associated namespace. The compiler verifies that the provided namespace satisfies the required interface:
 
 ```honey
 # Standard library provides canonical implementations
@@ -2503,9 +2475,9 @@ point_ops :: namespace {
 }
 ```
 
-### Multiple Constraints
+### Multiple Associated Namespaces
 
-Associated types can have multiple constraints:
+When a generic data structure needs multiple kinds of behavior for the same type, require multiple associated namespaces:
 
 ```honey
 Hashable :: interface {
@@ -2515,15 +2487,17 @@ Hashable :: interface {
 
 HashSet :: interface {
     Set: type,
-    Element: type is Comparable, Hashable,  # multiple constraints
-    
+    Element: type,
+    Cmp: Comparable,   # comparison behavior
+    Hash: Hashable,    # hashing behavior
+
     insert: func(s: @mut Set, value: Element) bool,
     contains: func(s: @Set, value: @Element) bool,
     remove: func(s: @mut Set, value: @Element) bool,
 }
 ```
 
-The implementing namespace must provide functions from both `Comparable` and `Hashable`.
+The implementing namespace provides a concrete namespace for each. The compiler catches type mismatches when the generic code uses them together:
 
 ### Comptime Functions Returning Namespaces
 
@@ -2574,9 +2548,9 @@ Combining all features for a fully generic hash map:
 import "std/ops"
 
 hash_map :: comptime func(
-    K: type, 
-    V: type, 
-    KOps: Comparable where .Element is K,
+    K: type,
+    V: type,
+    KOps: Comparable,
     capacity: usize = 256,
 ) namespace {
     return namespace {
@@ -2623,10 +2597,7 @@ main :: func() void {
 | -- | -- |
 | `interface { ... }` | Define an interface |
 | `Name: type` | Associated type |
-| `Name: type is X` | Associated type with constraint (pulls in X's functions) |
-| `Name: type is X, Y` | Associated type with multiple constraints |
 | `Name: Interface` | Associated namespace satisfying Interface |
-| `Name: Interface where .T is U` | Associated namespace with type constraint |
 | `impl InterfaceName` | Declare that this namespace satisfies the interface |
 | `comptime I: Interface` | Generic parameter requiring a satisfying namespace |
 | `I.TypeName` | Access associated type from implementation |
@@ -3006,10 +2977,7 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 | -- | -- |
 | `interface { ... }` | Define an interface |
 | `Name: type` | Associated type |
-| `Name: type is X` | Associated type with constraint (pulls in X's functions) |
-| `Name: type is X, Y` | Associated type with multiple constraints |
 | `Name: Interface` | Associated namespace satisfying Interface |
-| `Name: Interface where .T is U` | Associated namespace with type constraint |
 | `impl InterfaceName` | Declare that this namespace satisfies the interface |
 | `comptime I: Interface` | Generic parameter requiring a satisfying namespace |
 | `I.TypeName` | Access associated type from implementation |
