@@ -362,7 +362,7 @@ if (complex_expr and another_expr) {
 
 For optional unwrapping with `if`, see Optional Types.
 
-### Match Statements
+### Match Statements and Expressions
 
 Pattern matching on values:
 
@@ -470,6 +470,28 @@ match fetch_result() {
 ```
 
 For error handling patterns using match, see the Error Handling section.
+
+**Match as expression:** Match can produce a value when used in expression position. Single-expression arms yield their value implicitly. Multi-statement arms use explicit `yield`:
+
+```honey
+label := match priority {
+    .critical: "CRIT",
+    .high:     "HIGH",
+    .normal:   "NORM",
+    .low:      " LOW",
+}
+
+message := match code {
+    0: "success",
+    1: {
+        log("warning encountered")
+        yield "warning"
+    },
+    else: "unknown",
+}
+```
+
+This follows the same rule as `catch` and scoped blocks: single expressions yield implicitly, blocks require explicit `yield`.
 
 ### Ranges
 
@@ -588,15 +610,34 @@ In while loops with a continue expression, `continue` executes that expression b
 
 ### Yield
 
-Sometimes, it can be beneficial to open a nested scope for certain types of work. Typically, this work computes some result that is in turn used for something else. For this purpose, Honeylang supports yielding values from such a scope in assignment.
+The `yield` keyword provides a value from a block to its enclosing expression and **exits the block immediately** — just as `return` exits a function, `yield` exits the enclosing scope. Code after a `yield` is unreachable, and the compiler flags it. This makes `yield` part of a consistent set of scope-exiting control flow: `return` exits a function, `yield` exits a block, `break` exits a loop, and `continue` skips to the next iteration.
+
+It is used in scoped blocks, match arms, and catch handlers.
+
+**General rule:** When a block needs to produce a value, single expressions yield implicitly while multi-statement blocks require explicit `yield`. This rule applies uniformly across the language:
 
 ```honey
+# scoped block
 data := {
-    # ...
-    result := ...
-    yield result  # once done, yield the result
+    result := compute()
+    yield result
 }
-# `data` now holds the value from `result`
+
+# match arms
+label := match p {
+    .high: "HIGH",          # single expression: implicit yield
+    .low: {
+        log("low priority")
+        yield "LOW"         # block: explicit yield
+    },
+}
+
+# catch handlers
+data := read(path) catch default_data         # single expression: implicit
+data := read(path) catch |e| {
+    log(e)
+    yield fallback_data                       # block: explicit yield
+}
 ```
 
 ## Pointers
@@ -828,6 +869,17 @@ Slices are a pointer-length pair that reference a contiguous sequence of element
 ```honey
 arr: [4]u8 = {1, 2, 3, 4}
 slice: []u8 = &arr            # slice referencing the array
+```
+
+**Subranging:** Slices and arrays can be narrowed using range syntax:
+
+```honey
+arr: [4]u8 = {1, 2, 3, 4}
+first_two: []u8 = arr[0..2]      # elements 0, 1
+last_two: []u8 = arr[2..4]       # elements 2, 3
+
+data := allocator.alloc(u8, size: 100)
+filled := data[0..bytes_written]  # narrow to the filled portion
 ```
 
 ### Sentinel-Terminated Types
@@ -2823,7 +2875,7 @@ data := read_file(path) catch |e| {
 use(data)  # continues with data = empty_data
 ```
 
-The `yield` keyword provides a value from the catch block to the enclosing assignment. Execution continues after the statement.
+The `yield` keyword provides a value from a block to the enclosing expression. Execution continues after the statement. For single expressions, yield is implicit (e.g., `catch default_data`). For blocks, explicit `yield` is required. See the Yield section under Control Flow for the full rule.
 
 **Return from the function instead:**
 
@@ -2849,12 +2901,8 @@ data := read_file(path) catch |e| match e {
         print("timed out after {d}ms", {info.after_ms})
         yield retry(path)
     },
-    .PermissionDenied: {
-        panic("cannot recover from permission error")
-    },
-    .ConnectionReset: {
-        yield retry(path)
-    },
+    .PermissionDenied: panic("cannot recover from permission error"),
+    .ConnectionReset: retry(path),
 }
 ```
 
@@ -2870,7 +2918,7 @@ data := read_file(path) catch |e| match e {
 | `try expr` | Unwrap success or propagate error |
 | `expr catch fallback` | Provide fallback value on error |
 | `expr catch |e| { ... }` | Handle error with block |
-| `yield value` | Provide value from catch block, continue execution |
+| `yield value` | Provide value from block (catch, match arm, scoped block) |
 | `return` / `return value` | Exit function from within catch block |
 
 ## Summary of Syntax
@@ -2897,7 +2945,8 @@ data := read_file(path) catch |e| match e {
 | -- | -- |
 | `if cond { }` | Conditional execution |
 | `if cond { } else { }` | Conditional with else branch |
-| `match val { pat: expr, ... }` | Pattern matching |
+| `match val { pat: expr, ... }` | Pattern matching (statement or expression) |
+| `yield value` | Produce a value from a block (match arm, catch, scoped block) |
 | `for collection \|val\| { }` | Iterate over elements |
 | `for collection \|val, idx\| { }` | Iterate with index |
 | `for 0..n \|i\| { }` | Iterate over exclusive range |
@@ -3017,7 +3066,7 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 | `try expr` | Unwrap success or propagate error |
 | `expr catch fallback` | Provide fallback value on error |
 | `expr catch |e| { ... }` | Handle error with block |
-| `yield value` | Provide value from catch block, continue execution |
+| `yield value` | Provide value from block (catch, match arm, scoped block) |
 
 ### Interfaces
 
