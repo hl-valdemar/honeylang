@@ -12,3 +12,7 @@ pub const symbol_printer = @import("semantic/symbol-printer.zig");
 pub const type_printer = @import("semantic/type-printer.zig");
 pub const comptime_printer = @import("comptime/comptime-printer.zig");
 pub const mir_printer = @import("codegen/mir-printer.zig");
+
+test {
+    _ = @import("integration_tests.zig");
+}

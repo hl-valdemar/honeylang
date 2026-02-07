@@ -382,6 +382,10 @@ fn printNode(
             printNode(ast, tokens, src, ret.expr, child_prefix, true);
         },
 
+        .void_literal => {
+            std.debug.print("void\n", .{});
+        },
+
         .defer_stmt => {
             std.debug.print("defer:\n", .{});
             const def = ast.getDefer(idx);

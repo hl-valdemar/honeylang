@@ -370,7 +370,11 @@ pub const Parser = struct {
 
         try self.expectToken(.return_, .unexpected_token);
 
-        const expr = try self.parseExpression();
+        // bare return (void) — next token cannot start an expression
+        const expr = if (self.peek()) |token| switch (token.kind) {
+            .identifier, .number, .bool, .left_paren, .minus, .not => try self.parseExpression(),
+            else => try self.ast.addVoidLiteral(start_pos, self.previousEnd()),
+        } else try self.ast.addVoidLiteral(start_pos, self.previousEnd());
 
         const end_pos = self.previousEnd();
 

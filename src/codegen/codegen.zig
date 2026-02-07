@@ -473,6 +473,11 @@ pub const CodeGenContext = struct {
         const ret = self.ast.getReturn(node_idx);
         const func = self.current_func.?;
 
+        if (self.ast.getKind(ret.expr) == .void_literal) {
+            try func.emitRet(null, .w32);
+            return;
+        }
+
         const result_reg = try self.generateExpression(ret.expr);
 
         // TODO: determine width from return type

@@ -26,7 +26,7 @@ pub const SourceIndex = u32; // allows for more than 4m characters (in each file
 
 pub const SourceCode = struct {
     file_path: ?[]const u8 = null,
-    buffer: []u8,
+    buffer: []const u8,
     id: Id,
 
     pub fn get(self: *const SourceCode, idx: SourceIndex) ?u8 {

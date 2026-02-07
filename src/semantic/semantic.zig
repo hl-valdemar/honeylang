@@ -605,15 +605,27 @@ pub const SemanticContext = struct {
         // check value expression
         const value_type = try self.checkExpression(decl.value, .unresolved);
 
-        // if we have both explicit type and inferred type, verify compatibility
-        if (!expected_type.isUnresolved() and value_type != null and !value_type.?.isUnresolved()) {
-            if (!typesCompatible(expected_type, value_type.?)) {
-                const loc = self.ast.getLocation(node_idx);
-                try self.errors.add(.{
-                    .kind = .type_mismatch,
-                    .start = loc.start,
-                    .end = loc.end,
-                });
+        // verify that the expression type matches the declared type
+        if (!expected_type.isUnresolved()) {
+            if (value_type != null and !value_type.?.isUnresolved()) {
+                if (!typesCompatible(expected_type, value_type.?)) {
+                    const loc = self.ast.getLocation(node_idx);
+                    try self.errors.add(.{
+                        .kind = .type_mismatch,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
+            } else if (value_type == null) {
+                // expression type is unresolved (e.g., literals without anchors)
+                if (!self.isExprCompatibleWithType(decl.value, expected_type)) {
+                    const loc = self.ast.getLocation(node_idx);
+                    try self.errors.add(.{
+                        .kind = .type_mismatch,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
             }
         }
 
@@ -795,6 +807,7 @@ pub const SemanticContext = struct {
 
         return switch (kind) {
             .literal => try self.checkLiteral(node_idx, context_type),
+            .void_literal => TypeId.void,
             .identifier => try self.checkIdentifier(node_idx),
             .unary_op => try self.checkUnaryOp(node_idx),
             .binary_op => try self.checkBinaryOp(node_idx),

@@ -20,6 +20,7 @@ pub const NodeKind = enum {
     call_expr,
     identifier,
     literal,
+    void_literal,
 
     // statements
     block,
@@ -483,6 +484,21 @@ pub const Ast = struct {
         try self.ends.append(self.allocator, end);
         try self.data_indices.append(self.allocator, data_idx);
         try self.literals.append(self.allocator, .{ .token_idx = token_idx });
+
+        return node_idx;
+    }
+
+    pub fn addVoidLiteral(
+        self: *Ast,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+
+        try self.kinds.append(self.allocator, .void_literal);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, 0);
 
         return node_idx;
     }
