@@ -38,6 +38,7 @@ pub const SemanticResult = struct {
     symbols: SymbolTable,
     types: TypeRegistry,
     node_types: std.AutoHashMapUnmanaged(NodeIndex, TypeId),
+    skip_nodes: std.AutoHashMapUnmanaged(NodeIndex, void),
     errors: ErrorList,
 };
 
@@ -51,6 +52,7 @@ pub const SemanticContext = struct {
     symbols: SymbolTable,
     types: TypeRegistry,
     node_types: std.AutoHashMapUnmanaged(NodeIndex, TypeId),
+    skip_nodes: std.AutoHashMapUnmanaged(NodeIndex, void),
     scopes: std.ArrayList(Scope),
     errors: ErrorList,
 
@@ -70,6 +72,7 @@ pub const SemanticContext = struct {
             .symbols = try SymbolTable.init(allocator),
             .types = try TypeRegistry.init(allocator),
             .node_types = .{},
+            .skip_nodes = .{},
             .scopes = try std.ArrayList(Scope).initCapacity(allocator, 4),
             .errors = try ErrorList.init(allocator),
         };
@@ -88,6 +91,9 @@ pub const SemanticContext = struct {
         // 4. finalize (pending → unresolved)
         self.finalizeTypes();
 
+        // 5. check for unused and unresolved symbols
+        try self.checkUnusedSymbols();
+
         // cleanup
         for (self.scopes.items) |*scope| {
             scope.deinit();
@@ -99,8 +105,54 @@ pub const SemanticContext = struct {
             .symbols = self.symbols,
             .types = self.types,
             .node_types = self.node_types,
+            .skip_nodes = self.skip_nodes,
             .errors = self.errors,
         };
+    }
+
+    fn checkUnusedSymbols(self: *SemanticContext) !void {
+        const count = self.symbols.count();
+        for (0..count) |i| {
+            const idx: SymbolIndex = @intCast(i);
+            const kind = self.symbols.getKind(idx);
+
+            // main is always considered referenced (entry point)
+            if (kind == .function) {
+                const name = self.symbols.getName(idx, self.src);
+                if (std.mem.eql(u8, name, "main")) continue;
+            }
+
+            if (!self.symbols.isReferenced(idx)) {
+                const start = self.symbols.name_starts.items[idx];
+                const len = self.symbols.name_lengths.items[idx];
+                const err_kind: @import("error.zig").SemanticErrorKind = switch (kind) {
+                    .constant => .unused_constant,
+                    .variable => .unused_variable,
+                    .function => .unused_function,
+                };
+                try self.errors.add(.{
+                    .kind = err_kind,
+                    .start = start,
+                    .end = start + len,
+                });
+
+                // mark for skipping in codegen
+                const value_node = self.symbols.getValueNode(idx);
+                try self.skip_nodes.put(self.allocator, value_node, {});
+            } else {
+                // referenced but type unresolved — error
+                const type_id = self.symbols.getTypeId(idx);
+                if (type_id == .unresolved and kind != .function) {
+                    const start = self.symbols.name_starts.items[idx];
+                    const len = self.symbols.name_lengths.items[idx];
+                    try self.errors.add(.{
+                        .kind = .unresolved_type,
+                        .start = start,
+                        .end = start + len,
+                    });
+                }
+            }
+        }
     }
 
     fn collectSymbols(self: *SemanticContext) !void {
@@ -595,7 +647,7 @@ pub const SemanticContext = struct {
                 const param_type: TypeId = if (param_idx < param_types.len) param_types[param_idx] else .unresolved;
 
                 // params are immutable
-                try self.declareLocal(param_name, param_type, false);
+                try self.declareLocal(param_name, param_type, false, param_name_idx);
             }
         }
 
@@ -702,7 +754,7 @@ pub const SemanticContext = struct {
         const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
 
         // register in local scope
-        try self.declareLocal(name, type_id, decl.is_mutable);
+        try self.declareLocal(name, type_id, decl.is_mutable, node_idx);
     }
 
     fn checkAssignment(self: *SemanticContext, node_idx: NodeIndex) !void {
@@ -718,12 +770,14 @@ pub const SemanticContext = struct {
         var target_type: TypeId = .unresolved;
         var is_mutable = false;
 
-        if (self.lookupLocal(target_name)) |local| {
+        if (self.lookupLocalPtr(target_name)) |local| {
             target_type = local.type_id;
             is_mutable = local.is_mutable;
+            local.referenced = true;
         } else if (self.symbols.lookup(target_name)) |sym_idx| {
             target_type = self.symbols.getTypeId(sym_idx);
             is_mutable = self.symbols.isMutable(sym_idx);
+            self.symbols.markReferenced(sym_idx);
         } else {
             try self.errors.add(.{
                 .kind = .undefined_symbol,
@@ -825,7 +879,7 @@ pub const SemanticContext = struct {
         const result: ?TypeId = switch (kind) {
             .literal => try self.checkLiteral(node_idx, context_type),
             .void_literal => TypeId.void,
-            .identifier => try self.checkIdentifier(node_idx),
+            .identifier => try self.checkIdentifier(node_idx, context_type),
             .unary_op => try self.checkUnaryOp(node_idx),
             .binary_op => try self.checkBinaryOp(node_idx),
             .call_expr => try self.checkCallExpression(node_idx),
@@ -857,18 +911,24 @@ pub const SemanticContext = struct {
         return null;
     }
 
-    fn checkIdentifier(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
+    fn checkIdentifier(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
         const ident = self.ast.getIdentifier(node_idx);
         const token = self.tokens.items[ident.token_idx];
         const name = self.src.getSlice(token.start, token.start + token.len);
 
         // 1. check locals
-        if (self.lookupLocal(name)) |local| {
+        if (self.lookupLocalPtr(name)) |local| {
+            local.referenced = true;
+            // propagate type from context if local is still unresolved
+            if (local.type_id == .unresolved and !context_type.isUnresolved()) {
+                local.type_id = context_type;
+            }
             return local.type_id;
         }
 
         // 2. check globals
         if (self.symbols.lookup(name)) |sym_idx| {
+            self.symbols.markReferenced(sym_idx);
             return self.symbols.getTypeId(sym_idx);
         }
 
@@ -1054,6 +1114,8 @@ pub const SemanticContext = struct {
             return null;
         };
 
+        self.symbols.markReferenced(sym_idx);
+
         // verify it's a function
         if (self.symbols.getKind(sym_idx) != .function) {
             try self.errors.add(.{
@@ -1167,16 +1229,39 @@ pub const SemanticContext = struct {
     }
 
     fn popScope(self: *SemanticContext) void {
-        var scope = self.scopes.pop();
-        if (scope != null) scope.?.deinit();
+        var scope = self.scopes.pop() orelse return;
+        // check for unused/unresolved locals before destroying the scope
+        var it = scope.locals.iterator();
+        while (it.next()) |entry| {
+            const local = entry.value_ptr;
+            if (local.node_idx == 0) continue; // skip params without node info
+            if (!local.referenced) {
+                const loc = self.ast.getLocation(local.node_idx);
+                self.errors.add(.{
+                    .kind = .unused_variable,
+                    .start = loc.start,
+                    .end = loc.end,
+                }) catch {};
+                self.skip_nodes.put(self.allocator, local.node_idx, {}) catch {};
+            } else if (local.type_id == .unresolved) {
+                const loc = self.ast.getLocation(local.node_idx);
+                self.errors.add(.{
+                    .kind = .unresolved_type,
+                    .start = loc.start,
+                    .end = loc.end,
+                }) catch {};
+            }
+        }
+        scope.deinit();
     }
 
-    fn declareLocal(self: *SemanticContext, name: []const u8, type_id: TypeId, is_mutable: bool) !void {
+    fn declareLocal(self: *SemanticContext, name: []const u8, type_id: TypeId, is_mutable: bool, node_idx: NodeIndex) !void {
         if (self.scopes.items.len == 0) return; // no scope active
         var current = &self.scopes.items[self.scopes.items.len - 1];
         try current.locals.put(name, .{
             .type_id = type_id,
             .is_mutable = is_mutable,
+            .node_idx = node_idx,
         });
     }
 
@@ -1186,6 +1271,18 @@ pub const SemanticContext = struct {
         while (i > 0) {
             i -= 1;
             if (self.scopes.items[i].locals.get(name)) |sym| {
+                return sym;
+            }
+        }
+        return null;
+    }
+
+    fn lookupLocalPtr(self: *SemanticContext, name: []const u8) ?*LocalSymbol {
+        // search from innermost to outermost, return mutable pointer
+        var i = self.scopes.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.scopes.items[i].locals.getPtr(name)) |sym| {
                 return sym;
             }
         }

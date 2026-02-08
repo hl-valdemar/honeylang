@@ -12,6 +12,8 @@ const SourceIndex = @import("../source/source.zig").SourceIndex;
 pub const LocalSymbol = struct {
     type_id: TypeId,
     is_mutable: bool,
+    node_idx: NodeIndex = 0,
+    referenced: bool = false,
 };
 
 pub const Scope = struct {
@@ -43,6 +45,7 @@ pub const SymbolTable = struct {
     type_ids: std.ArrayList(TypeId),
     value_nodes: std.ArrayList(NodeIndex),
     mutabilities: std.ArrayList(bool),
+    referenced: std.ArrayList(bool),
 
     // name location in source code
     name_starts: std.ArrayList(SourceIndex),
@@ -60,6 +63,7 @@ pub const SymbolTable = struct {
             .type_ids = try std.ArrayList(TypeId).initCapacity(allocator, capacity),
             .value_nodes = try std.ArrayList(NodeIndex).initCapacity(allocator, capacity),
             .mutabilities = try std.ArrayList(bool).initCapacity(allocator, capacity),
+            .referenced = try std.ArrayList(bool).initCapacity(allocator, capacity),
             .name_starts = try std.ArrayList(SourceIndex).initCapacity(allocator, capacity),
             .name_lengths = try std.ArrayList(u16).initCapacity(allocator, capacity),
             .name_map = std.StringHashMap(SymbolIndex).init(allocator),
@@ -72,6 +76,7 @@ pub const SymbolTable = struct {
         self.type_ids.deinit(self.allocator);
         self.value_nodes.deinit(self.allocator);
         self.mutabilities.deinit(self.allocator);
+        self.referenced.deinit(self.allocator);
         self.name_starts.deinit(self.allocator);
         self.name_lengths.deinit(self.allocator);
         self.name_map.deinit();
@@ -98,6 +103,7 @@ pub const SymbolTable = struct {
         try self.type_ids.append(self.allocator, type_id);
         try self.value_nodes.append(self.allocator, value_node);
         try self.mutabilities.append(self.allocator, is_mutable);
+        try self.referenced.append(self.allocator, false);
         try self.name_starts.append(self.allocator, name_start);
         try self.name_lengths.append(self.allocator, @intCast(name.len));
         try self.name_map.put(name, idx);
@@ -142,5 +148,13 @@ pub const SymbolTable = struct {
     pub fn resolve(self: *SymbolTable, idx: SymbolIndex, type_id: TypeId) void {
         self.type_ids.items[idx] = type_id;
         self.type_states.items[idx] = .resolved;
+    }
+
+    pub fn markReferenced(self: *SymbolTable, idx: SymbolIndex) void {
+        self.referenced.items[idx] = true;
+    }
+
+    pub fn isReferenced(self: *const SymbolTable, idx: SymbolIndex) bool {
+        return self.referenced.items[idx];
     }
 };

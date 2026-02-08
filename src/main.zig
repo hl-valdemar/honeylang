@@ -149,9 +149,14 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     std.debug.print("\nGenerated type registry:\n\n", .{});
     honey.type_printer.print(&sem_result.types);
 
-    // print semantic errors if any
+    // print semantic diagnostics if any
     if (sem_result.errors.hasErrors()) {
         std.debug.print("\n{s}Reported {d} errors:{s}\n\n", .{ ansi.red(), sem_result.errors.count(), ansi.reset() });
+    }
+    if (sem_result.errors.hasWarnings()) {
+        std.debug.print("\n{s}Reported {d} warnings:{s}\n\n", .{ ansi.yellow(), sem_result.errors.warningCount(), ansi.reset() });
+    }
+    if (sem_result.errors.hasErrors() or sem_result.errors.hasWarnings()) {
         honey.semantic.error_printer.print(&sem_result.errors, &src, file_path);
     }
 
@@ -169,7 +174,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     var codegen_arena = std.heap.ArenaAllocator.init(gpa);
     defer codegen_arena.deinit();
 
-    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &sem_result.node_types, &parse_result.ast, &lexer_result.tokens, &src);
+    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &sem_result.node_types, &sem_result.skip_nodes, &parse_result.ast, &lexer_result.tokens, &src);
 
     // print generated MIR
     std.debug.print("\n\n{s}::[[ MIR Generation ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
@@ -233,9 +238,14 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
     defer semantic_arena.deinit();
     const sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &parse_result.ast, &lexer_result.tokens, &src);
 
-    // print semantic errors if any
+    // print semantic diagnostics if any
     if (sem_result.errors.hasErrors()) {
         std.debug.print("\n{s}Reported {d} errors:{s}\n\n", .{ ansi.red(), sem_result.errors.count(), ansi.reset() });
+    }
+    if (sem_result.errors.hasWarnings()) {
+        std.debug.print("\n{s}Reported {d} warnings:{s}\n\n", .{ ansi.yellow(), sem_result.errors.warningCount(), ansi.reset() });
+    }
+    if (sem_result.errors.hasErrors() or sem_result.errors.hasWarnings()) {
         honey.semantic.error_printer.print(&sem_result.errors, &src, file_path);
     }
 
@@ -248,7 +258,7 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
     var codegen_arena = std.heap.ArenaAllocator.init(gpa);
     defer codegen_arena.deinit();
 
-    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &sem_result.node_types, &parse_result.ast, &lexer_result.tokens, &src);
+    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &sem_result.node_types, &sem_result.skip_nodes, &parse_result.ast, &lexer_result.tokens, &src);
 
     // 7. link into executable
     const link_result = honey.codegen.linker.link(

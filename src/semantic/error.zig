@@ -4,6 +4,15 @@ const mem = @import("std").mem;
 const SourceIndex = @import("../source/source.zig").SourceIndex;
 const SourceCode = @import("../source/source.zig").SourceCode;
 
+pub const Severity = enum { err, warning };
+
+pub const ErrorInfo = struct {
+    code: []const u8,
+    message: []const u8,
+    help: []const u8,
+    severity: Severity = .err,
+};
+
 pub const SemanticErrorKind = enum {
     // symbol errors
     unknown_type,
@@ -23,7 +32,126 @@ pub const SemanticErrorKind = enum {
     assignment_to_immutable,
     condition_not_bool,
     not_callable,
+
+    // usage warnings
+    unused_variable,
+    unused_constant,
+    unused_function,
+
+    // type resolution errors
+    unresolved_type,
+
+    pub fn info(self: SemanticErrorKind) ErrorInfo {
+        return error_info.get(self);
+    }
+
+    pub fn isWarning(self: SemanticErrorKind) bool {
+        return error_info.get(self).severity == .warning;
+    }
 };
+
+/// Single source of truth for all error metadata.
+/// Compile-time checked to ensure all error kinds are covered.
+pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
+    .unknown_type = .{
+        .code = "S001",
+        .message = "unknown type",
+        .help = "type not found",
+    },
+    .duplicate_symbol = .{
+        .code = "S002",
+        .message = "duplicate symbol",
+        .help = "symbol already defined",
+    },
+    .undefined_symbol = .{
+        .code = "S003",
+        .message = "undefined symbol",
+        .help = "symbol not found in scope",
+    },
+    .type_mismatch = .{
+        .code = "S004",
+        .message = "type mismatch",
+        .help = "types are not compatible",
+    },
+    .invalid_operand_type = .{
+        .code = "S005",
+        .message = "invalid operand type",
+        .help = "operand has wrong type",
+    },
+    .cannot_negate_unsigned = .{
+        .code = "S006",
+        .message = "cannot negate unsigned integer",
+        .help = "negation requires signed type",
+    },
+    .logical_op_requires_bool = .{
+        .code = "S007",
+        .message = "logical operation requires boolean operands",
+        .help = "operands must be bool",
+    },
+    .arithmetic_op_requires_numeric = .{
+        .code = "S008",
+        .message = "arithmetic operation requires numeric operands",
+        .help = "operands must be numeric",
+    },
+    .comparison_requires_compatible = .{
+        .code = "S009",
+        .message = "comparison requires compatible types",
+        .help = "operands must have the same type",
+    },
+    .argument_count_mismatch = .{
+        .code = "S010",
+        .message = "argument count mismatch",
+        .help = "wrong number of arguments",
+    },
+    .argument_type_mismatch = .{
+        .code = "S011",
+        .message = "argument type mismatch",
+        .help = "argument has wrong type",
+    },
+    .return_type_mismatch = .{
+        .code = "S012",
+        .message = "return type mismatch",
+        .help = "returned value doesn't match function signature",
+    },
+    .assignment_to_immutable = .{
+        .code = "S013",
+        .message = "cannot assign to immutable variable",
+        .help = "use 'mut' to make variable mutable",
+    },
+    .condition_not_bool = .{
+        .code = "S014",
+        .message = "condition must be boolean",
+        .help = "expected bool expression",
+    },
+    .not_callable = .{
+        .code = "S015",
+        .message = "expression is not callable",
+        .help = "only functions can be called",
+    },
+    .unused_variable = .{
+        .code = "S016",
+        .message = "unused variable",
+        .help = "remove or use this variable",
+        .severity = .warning,
+    },
+    .unused_constant = .{
+        .code = "S017",
+        .message = "unused constant",
+        .help = "remove or use this constant",
+        .severity = .warning,
+    },
+    .unresolved_type = .{
+        .code = "S018",
+        .message = "cannot resolve type",
+        .help = "add a type annotation or use in a typed context",
+    },
+    .unused_function = .{
+        .code = "S019",
+        .message = "unused function",
+        .help = "remove or use this function",
+        .severity = .warning,
+    },
+});
 
 pub const SemanticError = struct {
     kind: SemanticErrorKind,
@@ -34,28 +162,42 @@ pub const SemanticError = struct {
 pub const ErrorList = struct {
     allocator: mem.Allocator,
     errors: std.ArrayList(SemanticError),
+    warnings: std.ArrayList(SemanticError),
 
     pub fn init(allocator: mem.Allocator) !ErrorList {
-        const capacity = 0;
         return .{
             .allocator = allocator,
-            .errors = try std.ArrayList(SemanticError).initCapacity(allocator, capacity),
+            .errors = try std.ArrayList(SemanticError).initCapacity(allocator, 0),
+            .warnings = try std.ArrayList(SemanticError).initCapacity(allocator, 0),
         };
     }
 
     pub fn deinit(self: *ErrorList) void {
         self.errors.deinit();
+        self.warnings.deinit();
     }
 
     pub fn add(self: *ErrorList, err: SemanticError) !void {
-        try self.errors.append(self.allocator, err);
+        if (err.kind.isWarning()) {
+            try self.warnings.append(self.allocator, err);
+        } else {
+            try self.errors.append(self.allocator, err);
+        }
     }
 
     pub fn hasErrors(self: *const ErrorList) bool {
         return self.errors.items.len > 0;
     }
 
+    pub fn hasWarnings(self: *const ErrorList) bool {
+        return self.warnings.items.len > 0;
+    }
+
     pub fn count(self: *const ErrorList) usize {
         return self.errors.items.len;
+    }
+
+    pub fn warningCount(self: *const ErrorList) usize {
+        return self.warnings.items.len;
     }
 };

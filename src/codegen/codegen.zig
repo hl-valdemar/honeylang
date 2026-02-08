@@ -131,6 +131,7 @@ pub fn generate(
     comptime_result: *const ComptimeResult,
     symbols: *const SymbolTable,
     node_types: *const std.AutoHashMapUnmanaged(NodeIndex, TypeId),
+    skip_nodes: *const std.AutoHashMapUnmanaged(NodeIndex, void),
     ast: *const Ast,
     tokens: *const TokenList,
     src: *const SourceCode,
@@ -141,6 +142,7 @@ pub fn generate(
         comptime_result,
         symbols,
         node_types,
+        skip_nodes,
         ast,
         tokens,
         src,
@@ -162,6 +164,7 @@ pub const CodeGenContext = struct {
     comptime_result: *const ComptimeResult,
     symbols: *const SymbolTable,
     node_types: *const std.AutoHashMapUnmanaged(NodeIndex, TypeId),
+    skip_nodes: *const std.AutoHashMapUnmanaged(NodeIndex, void),
     ast: *const Ast,
     tokens: *const TokenList,
     src: *const SourceCode,
@@ -174,6 +177,7 @@ pub const CodeGenContext = struct {
         comptime_result: *const ComptimeResult,
         symbols: *const SymbolTable,
         node_types: *const std.AutoHashMapUnmanaged(NodeIndex, TypeId),
+        skip_nodes: *const std.AutoHashMapUnmanaged(NodeIndex, void),
         ast: *const Ast,
         tokens: *const TokenList,
         src: *const SourceCode,
@@ -183,6 +187,7 @@ pub const CodeGenContext = struct {
             .comptime_result = comptime_result,
             .symbols = symbols,
             .node_types = node_types,
+            .skip_nodes = skip_nodes,
             .ast = ast,
             .tokens = tokens,
             .src = src,
@@ -222,6 +227,9 @@ pub const CodeGenContext = struct {
     }
 
     fn collectGlobalVar(self: *CodeGenContext, node_idx: NodeIndex, needs_init: *std.ArrayList(NodeIndex)) !void {
+        // skip unused global variables
+        if (self.skip_nodes.contains(node_idx)) return;
+
         const var_decl = self.ast.getVarDecl(node_idx);
         const name_ident = self.ast.getIdentifier(var_decl.name);
         const name_token = self.tokens.items[name_ident.token_idx];
@@ -291,6 +299,9 @@ pub const CodeGenContext = struct {
     }
 
     fn generateDeclaration(self: *CodeGenContext, node_idx: NodeIndex) !void {
+        // skip declarations marked as unused by semantic analysis
+        if (self.skip_nodes.contains(node_idx)) return;
+
         const kind = self.ast.getKind(node_idx);
 
         switch (kind) {
@@ -469,12 +480,17 @@ pub const CodeGenContext = struct {
     }
 
     fn generateLocalVarDecl(self: *CodeGenContext, node_idx: NodeIndex) !void {
+        // skip declarations marked as unused by semantic analysis
+        if (self.skip_nodes.contains(node_idx)) return;
+
         const var_decl = self.ast.getVarDecl(node_idx);
         const name_ident = self.ast.getIdentifier(var_decl.name);
         const name_token = self.tokens.items[name_ident.token_idx];
         const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
 
-        // Get resolved type from sema (unresolved types default to w32)
+        // Get resolved type from sema — .unresolved here means a used-but-unresolvable
+        // type (already reported as error S018). Use w32 as error recovery so the
+        // compiler can still produce an executable.
         const type_id = self.node_types.get(node_idx) orelse .unresolved;
         const width = typeIdToWidth(type_id);
 
@@ -564,12 +580,16 @@ pub const CodeGenContext = struct {
         return try func.emitLoadGlobal(global_idx, width);
     }
 
+    /// Map a resolved TypeId to a MIR operand width.
+    /// .unresolved reaching codegen means semantic analysis reported an error (S018)
+    /// but the compiler still produces an executable. w32 is used as error recovery.
     fn typeIdToWidth(type_id: TypeId) Width {
         return switch (type_id) {
             .primitive => |prim| switch (prim) {
                 .i64, .u64, .f64 => .w64,
                 else => .w32,
             },
+            .unresolved => .w32,
             else => .w32,
         };
     }
