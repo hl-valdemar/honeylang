@@ -147,19 +147,43 @@ pub const MInst = union(enum) {
     },
 };
 
+/// Function parameter metadata.
+pub const ParamInfo = struct {
+    name: []const u8,
+    width: Width,
+};
+
+/// External function declaration (no body).
+pub const ExternFunc = struct {
+    name: []const u8,
+    call_conv: CallingConvention,
+    return_width: ?Width, // null means void
+    param_widths: []const Width,
+};
+
 /// A function in MIR form.
 pub const MIRFunction = struct {
     name: []const u8,
     call_conv: CallingConvention,
+    return_width: ?Width, // null means void
+    params: []const ParamInfo,
     instructions: std.ArrayListUnmanaged(MInst),
     next_vreg: VReg,
     allocator: mem.Allocator,
     frame_size: u16 = 0, // stack frame size for locals (16-byte aligned)
 
-    pub fn init(allocator: mem.Allocator, name: []const u8, call_conv: CallingConvention) MIRFunction {
+    pub fn init(
+        allocator: mem.Allocator,
+        name: []const u8,
+        call_conv: CallingConvention,
+        return_width: ?Width,
+        params: []const ParamInfo,
+    ) MIRFunction {
         return .{
             .name = name,
             .call_conv = call_conv,
+            .return_width = return_width,
+            .params = params,
             .instructions = .{},
             .next_vreg = 0,
             .allocator = allocator,
@@ -330,12 +354,14 @@ pub const GlobalVars = struct {
 /// Collection of MIR functions for a compilation unit.
 pub const MIRModule = struct {
     functions: std.ArrayListUnmanaged(MIRFunction),
+    extern_functions: std.ArrayListUnmanaged(ExternFunc),
     globals: GlobalVars,
     allocator: mem.Allocator,
 
     pub fn init(allocator: mem.Allocator) MIRModule {
         return .{
             .functions = .{},
+            .extern_functions = .{},
             .globals = GlobalVars.init(),
             .allocator = allocator,
         };
@@ -346,11 +372,33 @@ pub const MIRModule = struct {
             func.deinit();
         }
         self.functions.deinit(self.allocator);
+        self.extern_functions.deinit(self.allocator);
         self.globals.deinit(self.allocator);
     }
 
-    pub fn addFunction(self: *MIRModule, name: []const u8, call_conv: CallingConvention) !*MIRFunction {
-        try self.functions.append(self.allocator, MIRFunction.init(self.allocator, name, call_conv));
+    pub fn addFunction(
+        self: *MIRModule,
+        name: []const u8,
+        call_conv: CallingConvention,
+        return_width: ?Width,
+        params: []const ParamInfo,
+    ) !*MIRFunction {
+        try self.functions.append(self.allocator, MIRFunction.init(self.allocator, name, call_conv, return_width, params));
         return &self.functions.items[self.functions.items.len - 1];
+    }
+
+    pub fn addExternFunction(
+        self: *MIRModule,
+        name: []const u8,
+        call_conv: CallingConvention,
+        return_width: ?Width,
+        param_widths: []const Width,
+    ) !void {
+        try self.extern_functions.append(self.allocator, .{
+            .name = name,
+            .call_conv = call_conv,
+            .return_width = return_width,
+            .param_widths = param_widths,
+        });
     }
 };

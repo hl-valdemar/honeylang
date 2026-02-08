@@ -142,6 +142,7 @@ fn getNodeInfo(
             const name = getIdentifierName(ast, tokens, src, call.func);
             break :blk std.fmt.bufPrint(&S.buf, "func: {s}, args: {d}", .{ name, call.args.len }) catch "?";
         },
+        .void_literal => "void",
         .err => blk: {
             const err = ast.getError(idx);
             break :blk std.fmt.bufPrint(&S.buf, "\"{s}\"", .{err.msg}) catch "?";

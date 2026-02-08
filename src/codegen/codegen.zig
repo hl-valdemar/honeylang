@@ -21,7 +21,6 @@ const Width = mir.Width;
 const BinOp = mir.BinOp;
 const GlobalIndex = mir.GlobalIndex;
 
-const arm64 = @import("aarch64.zig");
 const llvm = @import("llvm.zig");
 
 pub const linker = @import("linker.zig");
@@ -100,7 +99,6 @@ pub const LocalVars = struct {
 pub const Arch = enum {
     aarch64,
     x86_64,
-    llvm, // meta-target that defers to LLVM toolchain
 };
 
 pub const Os = enum {
@@ -114,33 +112,16 @@ pub const Target = struct {
 
     /// Get the LLVM target triple for this target.
     pub fn getLLVMTriple(self: Target) []const u8 {
-        const builtin = @import("builtin");
-
-        // For .llvm pseudo-arch, use the native CPU architecture
-        const effective_arch: Arch = if (self.arch == .llvm)
-            switch (builtin.cpu.arch) {
-                .aarch64 => .aarch64,
-                .x86_64 => .x86_64,
-                else => .x86_64, // fallback
-            }
-        else
-            self.arch;
-
         return switch (self.os) {
-            .darwin => switch (effective_arch) {
+            .darwin => switch (self.arch) {
                 .aarch64 => "arm64-apple-darwin",
-                .x86_64, .llvm => "x86_64-apple-darwin",
+                .x86_64 => "x86_64-apple-darwin",
             },
-            .linux => switch (effective_arch) {
+            .linux => switch (self.arch) {
                 .aarch64 => "aarch64-unknown-linux-gnu",
-                .x86_64, .llvm => "x86_64-unknown-linux-gnu",
+                .x86_64 => "x86_64-unknown-linux-gnu",
             },
         };
-    }
-
-    /// Check if this target requires LLVM (no native backend).
-    pub fn requiresLLVM(self: Target) bool {
-        return self.arch == .x86_64 or self.arch == .llvm;
     }
 };
 
@@ -167,21 +148,11 @@ pub fn generate(
 
     try ctx.generate();
 
-    // lower MIR to assembly/IR (architecture-specific)
-    const output = switch (target.arch) {
-        .aarch64 => LoweringResult{
-            .output = try arm64.lower(allocator, &ctx.mir, target.os),
-            .is_llvm_ir = false,
-        },
-        .x86_64, .llvm => LoweringResult{
-            .output = try llvm.lower(allocator, &ctx.mir, target),
-            .is_llvm_ir = true,
-        },
-    };
+    // lower MIR to LLVM IR
+    const output = try llvm.lower(allocator, &ctx.mir, target);
 
     return .{
-        .output = output.output,
-        .is_llvm_ir = output.is_llvm_ir,
+        .output = output,
         .mir = ctx.mir,
     };
 }
@@ -294,8 +265,8 @@ pub const CodeGenContext = struct {
     }
 
     fn generateGlobalInit(self: *CodeGenContext, var_nodes: []const NodeIndex) !void {
-        // Create __honey_init function
-        self.current_func = try self.mir.addFunction("__honey_init", .c);
+        // Create __honey_init function (void, no params)
+        self.current_func = try self.mir.addFunction("__honey_init", .c, null, &.{});
         try self.current_func.?.emit(.prologue);
 
         for (var_nodes) |node_idx| {
@@ -323,7 +294,15 @@ pub const CodeGenContext = struct {
         const kind = self.ast.getKind(node_idx);
 
         switch (kind) {
-            .func_decl => try self.generateFunction(node_idx),
+            .func_decl => {
+                const func = self.ast.getFuncDecl(node_idx);
+                if (func.body == null) {
+                    // extern function — collect as declaration
+                    try self.collectExternFunction(node_idx);
+                } else {
+                    try self.generateFunction(node_idx);
+                }
+            },
             .const_decl, .var_decl => {
                 // global constants/variables handled at data section
                 // for now, skip (comptime evaluates constants)
@@ -332,11 +311,40 @@ pub const CodeGenContext = struct {
         }
     }
 
-    fn generateFunction(self: *CodeGenContext, node_idx: NodeIndex) !void {
+    fn collectExternFunction(self: *CodeGenContext, node_idx: NodeIndex) !void {
         const func = self.ast.getFuncDecl(node_idx);
 
-        // skip external functions (no body)
-        if (func.body == null) return;
+        // get func name
+        const name_ident = self.ast.getIdentifier(func.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const func_name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        // resolve return type from node_types (stored by semantic analysis)
+        const return_width: ?Width = resolveReturnWidth(self.node_types, func.return_type);
+
+        // resolve parameter widths
+        const param_nodes = self.ast.getExtra(func.params);
+        const param_count = param_nodes.len / 2;
+        var param_widths = try std.ArrayList(Width).initCapacity(self.allocator, param_count);
+        defer param_widths.deinit(self.allocator);
+
+        var i: usize = 0;
+        while (i < param_nodes.len) : (i += 2) {
+            const param_name_idx = param_nodes[i];
+            const param_type = self.node_types.get(param_name_idx) orelse .unresolved;
+            try param_widths.append(self.allocator, typeIdToWidth(param_type));
+        }
+
+        try self.mir.addExternFunction(
+            func_name,
+            func.call_conv,
+            return_width,
+            try self.allocator.dupe(Width, param_widths.items),
+        );
+    }
+
+    fn generateFunction(self: *CodeGenContext, node_idx: NodeIndex) !void {
+        const func = self.ast.getFuncDecl(node_idx);
 
         // get func name
         const name_ident = self.ast.getIdentifier(func.name);
@@ -346,49 +354,60 @@ pub const CodeGenContext = struct {
         // calling conv should be c if main (for darwin)
         const call_conv = if (std.mem.eql(u8, func_name, "main")) .c else func.call_conv;
 
+        // resolve return type from node_types (stored by semantic analysis)
+        const return_width: ?Width = resolveReturnWidth(self.node_types, func.return_type);
+
+        // build parameter info
+        const param_nodes = self.ast.getExtra(func.params);
+        const param_count = param_nodes.len / 2;
+        var param_list = try std.ArrayList(mir.ParamInfo).initCapacity(self.allocator, param_count);
+        defer param_list.deinit(self.allocator);
+
+        {
+            var i: usize = 0;
+            while (i < param_nodes.len) : (i += 2) {
+                const param_name_idx = param_nodes[i];
+                const param_ident = self.ast.getIdentifier(param_name_idx);
+                const param_token = self.tokens.items[param_ident.token_idx];
+                const param_name = self.src.getSlice(param_token.start, param_token.start + param_token.len);
+                const param_type = self.node_types.get(param_name_idx) orelse .unresolved;
+                try param_list.append(self.allocator, .{ .name = param_name, .width = typeIdToWidth(param_type) });
+            }
+        }
+
         // reset locals for new function
         self.locals.reset();
 
         // create MIR function
-        self.current_func = try self.mir.addFunction(func_name, call_conv);
+        self.current_func = try self.mir.addFunction(
+            func_name,
+            call_conv,
+            return_width,
+            try self.allocator.dupe(mir.ParamInfo, param_list.items),
+        );
 
         // emit function prologue
         try self.current_func.?.emit(.prologue);
 
         // register parameters as locals and spill to stack
-        const param_nodes = self.ast.getExtra(func.params);
-        var arg_idx: u8 = 0;
-        var i: usize = 0;
-        while (i < param_nodes.len) : ({
-            i += 2;
-            arg_idx += 1;
-        }) {
-            const param_name_idx = param_nodes[i];
-            // param_type_idx at param_nodes[i + 1]
-
-            // get parameter name
-            const param_ident = self.ast.getIdentifier(param_name_idx);
-            const param_token = self.tokens.items[param_ident.token_idx];
-            const param_name = self.src.getSlice(param_token.start, param_token.start + param_token.len);
-
-            // get parameter type from semantic analysis
-            const param_type = self.node_types.get(param_name_idx) orelse TypeId{ .primitive = .i32 };
-            const width = typeIdToWidth(param_type);
-
-            // add to locals (allocates stack slot)
-            const offset = try self.locals.add(self.allocator, param_name, width);
-
-            // emit store from argument register to stack
-            try self.current_func.?.emitStoreArg(arg_idx, offset, width);
+        const func_params = self.current_func.?.params;
+        for (func_params, 0..) |param, arg_i| {
+            const offset = try self.locals.add(self.allocator, param.name, param.width);
+            try self.current_func.?.emitStoreArg(@intCast(arg_i), offset, param.width);
         }
 
         // generate function body
         const has_return = try self.generateBlock(func.body.?);
 
         if (!has_return) {
-            // implicit return 0 for main, void return otherwise
-            const zero = try self.current_func.?.emitMovImm(0, .w32);
-            try self.current_func.?.emitRet(zero, .w32);
+            if (return_width) |rw| {
+                // non-void function: implicit return 0
+                const zero = try self.current_func.?.emitMovImm(0, rw);
+                try self.current_func.?.emitRet(zero, rw);
+            } else {
+                // void function: implicit return void
+                try self.current_func.?.emitRet(null, .w32);
+            }
         }
 
         // set frame size for locals
@@ -455,8 +474,8 @@ pub const CodeGenContext = struct {
         const name_token = self.tokens.items[name_ident.token_idx];
         const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
 
-        // Get resolved type from sema (falls back to i32 if not found)
-        const type_id = self.node_types.get(node_idx) orelse TypeId{ .primitive = .i32 };
+        // Get resolved type from sema (unresolved types default to w32)
+        const type_id = self.node_types.get(node_idx) orelse .unresolved;
         const width = typeIdToWidth(type_id);
 
         // Allocate stack slot
@@ -472,16 +491,15 @@ pub const CodeGenContext = struct {
     fn generateReturn(self: *CodeGenContext, node_idx: NodeIndex) !void {
         const ret = self.ast.getReturn(node_idx);
         const func = self.current_func.?;
+        const ret_width = func.return_width orelse .w32;
 
         if (self.ast.getKind(ret.expr) == .void_literal) {
-            try func.emitRet(null, .w32);
+            try func.emitRet(null, ret_width);
             return;
         }
 
         const result_reg = try self.generateExpression(ret.expr);
-
-        // TODO: determine width from return type
-        try func.emitRet(result_reg, .w32);
+        try func.emitRet(result_reg, ret_width);
     }
 
     fn generateExpression(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {
@@ -501,15 +519,17 @@ pub const CodeGenContext = struct {
         const token = self.tokens.items[lit.token_idx];
         const value_str = self.src.getSlice(token.start, token.start + token.len);
 
+        // Resolve width from semantic analysis; bare unresolved literals default to w32
+        const width = if (self.node_types.get(node_idx)) |tid| typeIdToWidth(tid) else Width.w32;
+
         switch (token.kind) {
             .bool => {
                 const value: i64 = if (std.mem.eql(u8, value_str, "true")) 1 else 0;
-                return try func.emitMovImm(value, .w32);
+                return try func.emitMovImm(value, width);
             },
             .number => {
-                // FIXME: determine actual type from semantic analysis
                 const value = std.fmt.parseInt(i64, value_str, 10) catch 0;
-                return try func.emitMovImm(value, .w32);
+                return try func.emitMovImm(value, width);
             },
             else => return null,
         }
@@ -552,6 +572,17 @@ pub const CodeGenContext = struct {
             },
             else => .w32,
         };
+    }
+
+    /// Resolve the return width for a function from the return type node.
+    /// Returns null for void, w32/w64 for value types, w32 as fallback.
+    fn resolveReturnWidth(
+        node_types: *const std.AutoHashMapUnmanaged(NodeIndex, TypeId),
+        return_type_node: NodeIndex,
+    ) ?Width {
+        const ret_type = node_types.get(return_type_node) orelse return .w32;
+        if (ret_type == .primitive and ret_type.primitive == .void) return null;
+        return typeIdToWidth(ret_type);
     }
 
     fn generateConstLoad(self: *CodeGenContext, sym_idx: SymbolIndex, type_id: TypeId) !?VReg {
@@ -604,8 +635,9 @@ pub const CodeGenContext = struct {
             else => return error.UnsupportedFeature,
         };
 
-        // TODO: determine width from type
-        return try func.emitBinOp(mir_op, left_reg, right_reg, .w32);
+        // Resolve width from semantic analysis; default to w32
+        const width = if (self.node_types.get(node_idx)) |tid| typeIdToWidth(tid) else Width.w32;
+        return try func.emitBinOp(mir_op, left_reg, right_reg, width);
     }
 
     fn generateCallExpr(self: *CodeGenContext, node_idx: NodeIndex) !?VReg {
@@ -657,12 +689,6 @@ pub const CodeGenError = error{
 };
 
 pub const CodeGenResult = struct {
-    output: []const u8, // assembly or LLVM IR depending on target
-    is_llvm_ir: bool,
+    output: []const u8, // LLVM IR text
     mir: MIRModule,
-};
-
-const LoweringResult = struct {
-    output: []const u8,
-    is_llvm_ir: bool,
 };

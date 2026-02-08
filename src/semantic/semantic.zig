@@ -503,8 +503,8 @@ pub const SemanticContext = struct {
         const sym_idx = self.symbols.lookup(name) orelse return;
         const declared_type = self.symbols.getTypeId(sym_idx);
 
-        // infer type of value expression (no context)
-        const expr_type = try self.checkExpression(decl.value, .unresolved);
+        // infer type of value expression, passing declared type as context
+        const expr_type = try self.checkExpression(decl.value, declared_type);
 
         // verify that the expression type matches the declared type
         if (!declared_type.isUnresolved()) {
@@ -533,11 +533,6 @@ pub const SemanticContext = struct {
     fn checkFuncDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
         const decl = self.ast.getFuncDecl(node_idx);
 
-        // external functions (no body) don't need body checking
-        if (decl.body == null) {
-            return;
-        }
-
         // get function's type from symtable
         const name_ident = self.ast.getIdentifier(decl.name);
         const name_token = self.tokens.items[name_ident.token_idx];
@@ -546,8 +541,31 @@ pub const SemanticContext = struct {
         const sym_idx = self.symbols.lookup(name) orelse return;
         const func_type_id = self.symbols.getTypeId(sym_idx);
 
-        // get return type from function type
+        // get return type from function type and store for codegen
         const expected_return_type = self.types.getReturnType(func_type_id) orelse TypeId.void;
+        try self.node_types.put(self.allocator, decl.return_type, expected_return_type);
+
+        // store param types in node_types for codegen
+        const params = self.ast.getExtra(decl.params);
+        const param_types = self.types.getParamTypes(func_type_id) orelse &[_]TypeId{};
+
+        {
+            var i: usize = 0;
+            var param_idx: usize = 0;
+            while (i < params.len) : ({
+                i += 2;
+                param_idx += 1;
+            }) {
+                const param_name_idx = params[i];
+                const param_type: TypeId = if (param_idx < param_types.len) param_types[param_idx] else .unresolved;
+                try self.node_types.put(self.allocator, param_name_idx, param_type);
+            }
+        }
+
+        // external functions (no body) don't need body checking
+        if (decl.body == null) {
+            return;
+        }
 
         // store for return statement check
         const previous_ret_type = self.current_ret_type;
@@ -559,27 +577,26 @@ pub const SemanticContext = struct {
         defer self.popScope();
 
         // register params as locals
-        const params = self.ast.getExtra(decl.params);
-        const param_types = self.types.getParamTypes(func_type_id) orelse &[_]TypeId{};
+        {
+            var i: usize = 0;
+            var param_idx: usize = 0;
+            while (i < params.len) : ({
+                i += 2;
+                param_idx += 1;
+            }) {
+                const param_name_idx = params[i];
 
-        var i: usize = 0;
-        var param_idx: usize = 0;
-        while (i < params.len) : ({
-            i += 2;
-            param_idx += 1;
-        }) {
-            const param_name_idx = params[i];
+                // get param name
+                const param_ident = self.ast.getIdentifier(param_name_idx);
+                const param_token = self.tokens.items[param_ident.token_idx];
+                const param_name = self.src.getSlice(param_token.start, param_token.start + param_token.len);
 
-            // get param name
-            const param_ident = self.ast.getIdentifier(param_name_idx);
-            const param_token = self.tokens.items[param_ident.token_idx];
-            const param_name = self.src.getSlice(param_token.start, param_token.start + param_token.len);
+                // get param type from function signature
+                const param_type: TypeId = if (param_idx < param_types.len) param_types[param_idx] else .unresolved;
 
-            // get param type from function signature
-            const param_type: TypeId = if (param_idx < param_types.len) param_types[param_idx] else .unresolved;
-
-            // params are immutable
-            try self.declareLocal(param_name, param_type, false);
+                // params are immutable
+                try self.declareLocal(param_name, param_type, false);
+            }
         }
 
         // check function body
@@ -602,8 +619,8 @@ pub const SemanticContext = struct {
             }
         }
 
-        // check value expression
-        const value_type = try self.checkExpression(decl.value, .unresolved);
+        // check value expression, passing declared type as context so literals can resolve
+        const value_type = try self.checkExpression(decl.value, expected_type);
 
         // verify that the expression type matches the declared type
         if (!expected_type.isUnresolved()) {
@@ -805,7 +822,7 @@ pub const SemanticContext = struct {
     fn checkExpression(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) TypeError!?TypeId {
         const kind = self.ast.getKind(node_idx);
 
-        return switch (kind) {
+        const result: ?TypeId = switch (kind) {
             .literal => try self.checkLiteral(node_idx, context_type),
             .void_literal => TypeId.void,
             .identifier => try self.checkIdentifier(node_idx),
@@ -814,6 +831,13 @@ pub const SemanticContext = struct {
             .call_expr => try self.checkCallExpression(node_idx),
             else => null,
         };
+
+        // Store resolved type for codegen
+        if (result) |type_id| {
+            try self.node_types.put(self.allocator, node_idx, type_id);
+        }
+
+        return result;
     }
 
     fn checkLiteral(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
