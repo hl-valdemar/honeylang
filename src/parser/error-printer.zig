@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const ansi = @import("../utils/ansi.zig");
 const ErrorList = @import("error.zig").ErrorList;
 const ParseError = @import("error.zig").ParseError;
 const ParseErrorKind = @import("error.zig").ParseErrorKind;
@@ -214,8 +215,12 @@ fn writeError(
 
     try writer.writeByte(' ');
     for (0..indent) |_| try writer.writeByte(' ');
-    for (0..pointer_len) |_| try writer.writeByte('^');
-    try writer.print(" {s}\n\n", .{info.help});
+    { // red pointers
+        _ = try writer.write(ansi.red());
+        for (0..pointer_len) |_| try writer.writeByte('^');
+        _ = try writer.write(ansi.reset());
+    }
+    try writer.print(" {s}{s}{s}\n\n", .{ ansi.red(), info.help, ansi.reset() });
 }
 
 fn printGutter(writer: *std.io.Writer, width: u32, line_num: ?u32) !void {

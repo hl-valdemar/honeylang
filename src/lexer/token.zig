@@ -17,7 +17,7 @@ pub const Kind = enum {
     // literals
     identifier,
     number,
-    @"bool",
+    bool,
 
     // keywords
     func,
