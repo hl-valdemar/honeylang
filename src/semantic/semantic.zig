@@ -614,8 +614,16 @@ pub const SemanticContext = struct {
             }
         }
 
-        // external functions (no body) don't need body checking
+        // external functions (no body) — only allowed for foreign calling conventions
         if (decl.body == null) {
+            if (decl.call_conv == .honey) {
+                const loc = self.ast.getLocation(node_idx);
+                try self.errors.add(.{
+                    .kind = .missing_function_body,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
             return;
         }
 

@@ -13,16 +13,40 @@ pub fn print(error_list: *const ErrorList, src: *const SourceCode, file_path: []
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
     const writer = &stderr_writer.interface;
 
+    // print warnings
+    for (error_list.warnings.items) |warn| {
+        writeDiagnostic(warn, src, file_path, writer) catch {
+            std.fs.File.stderr().writeAll("error: failed to write diagnostic\n") catch {};
+        };
+    }
+
+    // print errors
     for (error_list.errors.items) |err| {
         writeDiagnostic(err, src, file_path, writer) catch {
             std.fs.File.stderr().writeAll("error: failed to write diagnostic\n") catch {};
         };
     }
 
-    for (error_list.warnings.items) |warn| {
-        writeDiagnostic(warn, src, file_path, writer) catch {
-            std.fs.File.stderr().writeAll("error: failed to write diagnostic\n") catch {};
-        };
+    // print status report
+    const err_count = error_list.errorCount();
+    const warn_count = error_list.warningCount();
+
+    if (err_count > 0 or warn_count > 0) {
+        writer.print("Reported ", .{}) catch {};
+
+        if (err_count > 0) {
+            writer.print("{s}{d} errors{s}", .{ ansi.red(), err_count, ansi.reset() }) catch {};
+        }
+
+        if (err_count > 0 and warn_count > 0) {
+            writer.print(", ", .{}) catch {};
+        }
+
+        if (warn_count > 0) {
+            writer.print("{s}{d} warnings{s}", .{ ansi.yellow(), warn_count, ansi.reset() }) catch {};
+        }
+
+        writer.print("\n\n", .{}) catch {};
     }
 
     writer.flush() catch {};
@@ -74,7 +98,8 @@ fn writeDiagnostic(
 
     // print diagnostic
     const severity_str: []const u8 = if (info.severity == .warning) "warning" else "error";
-    try writer.print("{s}{s}{s}[{s}]: {s}\n", .{ ansi.yellow(), severity_str, ansi.reset(), info.code, info.message });
+    const severity_col: []const u8 = if (info.severity == .warning) ansi.yellow() else ansi.red();
+    try writer.print("{s}{s}{s}[{s}]: {s}\n", .{ severity_col, severity_str, ansi.reset(), info.code, info.message });
     try writer.print("  --> {s}:{d}:{d}\n", .{ file_path, line, col });
 
     // empty gutter line

@@ -40,6 +40,7 @@ pub const SemanticErrorKind = enum {
 
     // type resolution errors
     unresolved_type,
+    missing_function_body,
 
     pub fn info(self: SemanticErrorKind) ErrorInfo {
         return error_info.get(self);
@@ -151,6 +152,11 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .help = "remove or use this function",
         .severity = .warning,
     },
+    .missing_function_body = .{
+        .code = "S020",
+        .message = "honey function must have a body",
+        .help = "only foreign-convention functions (c, cobol, fortran) can be externally defined",
+    },
 });
 
 pub const SemanticError = struct {
@@ -193,7 +199,7 @@ pub const ErrorList = struct {
         return self.warnings.items.len > 0;
     }
 
-    pub fn count(self: *const ErrorList) usize {
+    pub fn errorCount(self: *const ErrorList) usize {
         return self.errors.items.len;
     }
 

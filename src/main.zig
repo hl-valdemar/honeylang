@@ -150,12 +150,6 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     honey.type_printer.print(&sem_result.types);
 
     // print semantic diagnostics if any
-    if (sem_result.errors.hasErrors()) {
-        std.debug.print("\n{s}Reported {d} errors:{s}\n\n", .{ ansi.red(), sem_result.errors.count(), ansi.reset() });
-    }
-    if (sem_result.errors.hasWarnings()) {
-        std.debug.print("\n{s}Reported {d} warnings:{s}\n\n", .{ ansi.yellow(), sem_result.errors.warningCount(), ansi.reset() });
-    }
     if (sem_result.errors.hasErrors() or sem_result.errors.hasWarnings()) {
         honey.semantic.error_printer.print(&sem_result.errors, &src, file_path);
     }
@@ -239,12 +233,6 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
     const sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &parse_result.ast, &lexer_result.tokens, &src);
 
     // print semantic diagnostics if any
-    if (sem_result.errors.hasErrors()) {
-        std.debug.print("\n{s}Reported {d} errors:{s}\n\n", .{ ansi.red(), sem_result.errors.count(), ansi.reset() });
-    }
-    if (sem_result.errors.hasWarnings()) {
-        std.debug.print("\n{s}Reported {d} warnings:{s}\n\n", .{ ansi.yellow(), sem_result.errors.warningCount(), ansi.reset() });
-    }
     if (sem_result.errors.hasErrors() or sem_result.errors.hasWarnings()) {
         honey.semantic.error_printer.print(&sem_result.errors, &src, file_path);
     }
