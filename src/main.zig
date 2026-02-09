@@ -116,7 +116,11 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
 
     // print lexer errors if any
     if (lexer_result.errors.hasErrors()) {
-        std.debug.print("\n{s}Reported {d} lexer errors:{s}\n\n", .{ ansi.red(), lexer_result.errors.count(), ansi.reset() });
+        std.debug.print("\n{s}Reported {d} lexer errors:{s}\n\n", .{
+            ansi.red(),
+            lexer_result.errors.count(),
+            ansi.reset(),
+        });
         honey.lexer.error_printer.print(&lexer_result.errors, &src, file_path);
     }
 
@@ -132,14 +136,23 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
 
     // print parse errors if any
     if (parse_result.errors.hasErrors()) {
-        std.debug.print("\n{s}Reported {d} parse errors:{s}\n\n", .{ ansi.red(), parse_result.errors.count(), ansi.reset() });
+        std.debug.print("\n{s}Reported {d} parse errors:{s}\n\n", .{
+            ansi.red(),
+            parse_result.errors.count(),
+            ansi.reset(),
+        });
         honey.parser.error_printer.print(&parse_result.errors, &src, file_path);
     }
 
     // 4. analyze parse tree
     var semantic_arena = std.heap.ArenaAllocator.init(gpa);
     defer semantic_arena.deinit();
-    var sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &parse_result.ast, &lexer_result.tokens, &src);
+    var sem_result = try honey.semantic.analyze(
+        semantic_arena.allocator(),
+        &parse_result.ast,
+        &lexer_result.tokens,
+        &src,
+    );
 
     // check for missing entry point
     if (sem_result.symbols.lookup("main") == null) {
@@ -162,7 +175,13 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     // 5. comptime expression evaluation
     var comptime_arena = std.heap.ArenaAllocator.init(gpa);
     defer comptime_arena.deinit();
-    const comptime_result = try honey.comptime_.evaluate(comptime_arena.allocator(), &parse_result.ast, &lexer_result.tokens, &src, &sem_result.symbols);
+    const comptime_result = try honey.comptime_.evaluate(
+        comptime_arena.allocator(),
+        &parse_result.ast,
+        &lexer_result.tokens,
+        &src,
+        &sem_result.symbols,
+    );
 
     // print generated symbol table
     std.debug.print("\n\n{s}::[[ Comptime Evaluation ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
@@ -173,7 +192,18 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     var codegen_arena = std.heap.ArenaAllocator.init(gpa);
     defer codegen_arena.deinit();
 
-    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &sem_result.types, &sem_result.node_types, &sem_result.skip_nodes, &parse_result.ast, &lexer_result.tokens, &src);
+    const codegen_result = try honey.codegen.generate(
+        codegen_arena.allocator(),
+        target,
+        &comptime_result,
+        &sem_result.symbols,
+        &sem_result.types,
+        &sem_result.node_types,
+        &sem_result.skip_nodes,
+        &parse_result.ast,
+        &lexer_result.tokens,
+        &src,
+    );
 
     // print generated MIR
     std.debug.print("\n\n{s}::[[ MIR Generation ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
@@ -217,7 +247,11 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
 
     // print lexer errors if any
     if (lexer_result.errors.hasErrors()) {
-        std.debug.print("\n{s}Reported {d} lexer errors:{s}\n\n", .{ ansi.red(), lexer_result.errors.count(), ansi.reset() });
+        std.debug.print("\n{s}Reported {d} lexer errors:{s}\n\n", .{
+            ansi.red(),
+            lexer_result.errors.count(),
+            ansi.reset(),
+        });
         honey.lexer.error_printer.print(&lexer_result.errors, &src, file_path);
     }
 
@@ -228,14 +262,23 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
 
     // print parse errors if any
     if (parse_result.errors.hasErrors()) {
-        std.debug.print("\n{s}Reported {d} parse errors:{s}\n\n", .{ ansi.red(), parse_result.errors.count(), ansi.reset() });
+        std.debug.print("\n{s}Reported {d} parse errors:{s}\n\n", .{
+            ansi.red(),
+            parse_result.errors.count(),
+            ansi.reset(),
+        });
         honey.parser.error_printer.print(&parse_result.errors, &src, file_path);
     }
 
     // 4. analyze parse tree
     var semantic_arena = std.heap.ArenaAllocator.init(gpa);
     defer semantic_arena.deinit();
-    var sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &parse_result.ast, &lexer_result.tokens, &src);
+    var sem_result = try honey.semantic.analyze(
+        semantic_arena.allocator(),
+        &parse_result.ast,
+        &lexer_result.tokens,
+        &src,
+    );
 
     // check for missing entry point
     if (sem_result.symbols.lookup("main") == null) {
@@ -250,13 +293,30 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
     // 5. comptime expression evaluation
     var comptime_arena = std.heap.ArenaAllocator.init(gpa);
     defer comptime_arena.deinit();
-    const comptime_result = try honey.comptime_.evaluate(comptime_arena.allocator(), &parse_result.ast, &lexer_result.tokens, &src, &sem_result.symbols);
+    const comptime_result = try honey.comptime_.evaluate(
+        comptime_arena.allocator(),
+        &parse_result.ast,
+        &lexer_result.tokens,
+        &src,
+        &sem_result.symbols,
+    );
 
     // 6. code emission
     var codegen_arena = std.heap.ArenaAllocator.init(gpa);
     defer codegen_arena.deinit();
 
-    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &sem_result.types, &sem_result.node_types, &sem_result.skip_nodes, &parse_result.ast, &lexer_result.tokens, &src);
+    const codegen_result = try honey.codegen.generate(
+        codegen_arena.allocator(),
+        target,
+        &comptime_result,
+        &sem_result.symbols,
+        &sem_result.types,
+        &sem_result.node_types,
+        &sem_result.skip_nodes,
+        &parse_result.ast,
+        &lexer_result.tokens,
+        &src,
+    );
 
     // 7. link into executable
     const link_result = honey.codegen.linker.link(
@@ -269,6 +329,10 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
     if (link_result) |result| {
         std.debug.print("Created executable: {s}\n", .{result.executable_path});
     } else |err| {
-        std.debug.print("{s}Linking failed: {s}{s}\n", .{ ansi.red(), @errorName(err), ansi.reset() });
+        std.debug.print("{s}Linking failed: {s}{s}\n", .{
+            ansi.red(),
+            @errorName(err),
+            ansi.reset(),
+        });
     }
 }
