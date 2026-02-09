@@ -20,7 +20,7 @@ main :: func() i32 {
   p := TwoPoints{
     .p1 = Point{ .x = 3, .y = 4 },
     .p2 = Point{ .x = 1, .y = 2 },
-  },
+  }
 
   return get_y(p.p1)
 }

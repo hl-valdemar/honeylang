@@ -1193,3 +1193,51 @@ test "codegen struct literal emits alloca and GEP stores" {
     try r.expectLLVMContains("getelementptr inbounds %Point");
     try r.expectLLVMContains("store i32");
 }
+
+// ============================================================
+// nested structs
+// ============================================================
+
+test "nested struct inline type definition" {
+    var r = try compileTo(.codegen,
+        \\Vec2 :: c struct { x: i32, y: i32, }
+        \\Rect :: c struct { origin: Vec2, size: Vec2, }
+        \\
+        \\main :: func() i32 {
+        \\    r := Rect{
+        \\        .origin = Vec2{ .x = 1, .y = 2 },
+        \\        .size = Vec2{ .x = 3, .y = 4 },
+        \\    }
+        \\    return r.origin.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    // struct fields are inline, not pointers
+    try r.expectLLVMContains("%Rect = type { %Vec2, %Vec2 }");
+    // struct field store uses memcpy
+    try r.expectLLVMContains("@llvm.memcpy.p0.p0.i64");
+    // struct field access is GEP-only (no "load ptr")
+    try r.expectLLVMContains("getelementptr inbounds %Rect");
+    try r.expectLLVMContains("getelementptr inbounds %Vec2");
+}
+
+test "nested struct reverse declaration order" {
+    var r = try compileTo(.codegen,
+        \\Rect :: c struct { origin: Vec2, size: Vec2, }
+        \\Vec2 :: c struct { x: i32, y: i32, }
+        \\
+        \\main :: func() i32 {
+        \\    r := Rect{
+        \\        .origin = Vec2{ .x = 5, .y = 6 },
+        \\        .size = Vec2{ .x = 7, .y = 8 },
+        \\    }
+        \\    return r.size.y
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("%Rect = type { %Vec2, %Vec2 }");
+}

@@ -32,6 +32,12 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule, types: *const T
     // emit struct type definitions
     try emitStructTypes(&emitter, types);
 
+    // emit memcpy intrinsic if any struct types have struct fields
+    if (needsMemcpy(types)) {
+        try emitter.raw("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)");
+        try emitter.newline();
+    }
+
     // emit global variable declarations
     try emitGlobals(&emitter, &module.globals);
 
@@ -74,13 +80,27 @@ fn emitStructTypes(emitter: *Emitter, types: *const TypeRegistry) !void {
         try emitter.appendFmt("%{s} = type {{ ", .{st.name});
         for (st.fields, 0..) |field, i| {
             if (i > 0) try emitter.appendSlice(", ");
-            try emitter.appendSlice(typeIdToLLVMType(field.type_id));
+            if (field.type_id.isStruct()) {
+                const inner = types.struct_types.items[field.type_id.struct_type];
+                try emitter.appendFmt("%{s}", .{inner.name});
+            } else {
+                try emitter.appendSlice(typeIdToLLVMType(field.type_id));
+            }
         }
         try emitter.appendSlice(" }\n");
     }
     if (types.struct_types.items.len > 0) {
         try emitter.newline();
     }
+}
+
+fn needsMemcpy(types: *const TypeRegistry) bool {
+    for (types.struct_types.items) |st| {
+        for (st.fields) |field| {
+            if (field.type_id.isStruct()) return true;
+        }
+    }
+    return false;
 }
 
 fn emitGlobals(emitter: *Emitter, globals: *const GlobalVars) !void {
@@ -329,23 +349,28 @@ fn lowerInst(
 
         .load_field => |op| {
             const base_ssa = ssa_map.get(op.base);
-
-            // look up struct type name from registry
             const struct_type = types.struct_types.items[op.struct_idx];
-            const field_type_str = widthToLLVMType(op.width);
+            const field_type_id = struct_type.fields[op.field_idx].type_id;
 
-            // emit GEP to get pointer to field
-            const gep_ssa = ssa_map.next_ssa;
-            ssa_map.next_ssa += 1;
-            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds %{s}, ptr %{d}, i32 0, i32 {d}\n", .{
-                gep_ssa, struct_type.name, base_ssa, op.field_idx,
-            });
+            if (field_type_id.isStruct()) {
+                // struct field: GEP only — the pointer to the embedded struct IS the value
+                const dst_ssa = ssa_map.allocFor(op.dst);
+                try emitter.appendFmt("  %{d} = getelementptr inbounds %{s}, ptr %{d}, i32 0, i32 {d}\n", .{
+                    dst_ssa, struct_type.name, base_ssa, op.field_idx,
+                });
+            } else {
+                // primitive field: GEP + load
+                const gep_ssa = ssa_map.next_ssa;
+                ssa_map.next_ssa += 1;
+                try emitter.appendFmt("  %gep.{d} = getelementptr inbounds %{s}, ptr %{d}, i32 0, i32 {d}\n", .{
+                    gep_ssa, struct_type.name, base_ssa, op.field_idx,
+                });
 
-            // emit load from field pointer
-            const dst_ssa = ssa_map.allocFor(op.dst);
-            try emitter.appendFmt("  %{d} = load {s}, ptr %gep.{d}\n", .{
-                dst_ssa, field_type_str, gep_ssa,
-            });
+                const dst_ssa = ssa_map.allocFor(op.dst);
+                try emitter.appendFmt("  %{d} = load {s}, ptr %gep.{d}\n", .{
+                    dst_ssa, widthToLLVMType(op.width), gep_ssa,
+                });
+            }
         },
 
         .alloca_struct => |op| {
@@ -358,7 +383,7 @@ fn lowerInst(
             const base_ssa = ssa_map.get(op.base);
             const value_ssa = ssa_map.get(op.value);
             const struct_type = types.struct_types.items[op.struct_idx];
-            const field_type_str = widthToLLVMType(op.width);
+            const field_type_id = struct_type.fields[op.field_idx].type_id;
 
             // emit GEP to get pointer to field
             const gep_ssa = ssa_map.next_ssa;
@@ -367,10 +392,18 @@ fn lowerInst(
                 gep_ssa, struct_type.name, base_ssa, op.field_idx,
             });
 
-            // emit store to field pointer
-            try emitter.appendFmt("  store {s} %{d}, ptr %gep.{d}\n", .{
-                field_type_str, value_ssa, gep_ssa,
-            });
+            if (field_type_id.isStruct()) {
+                // struct field: memcpy the inline data
+                const inner = types.struct_types.items[field_type_id.struct_type];
+                try emitter.appendFmt("  call void @llvm.memcpy.p0.p0.i64(ptr %gep.{d}, ptr %{d}, i64 {d}, i1 false)\n", .{
+                    gep_ssa, value_ssa, inner.size,
+                });
+            } else {
+                // primitive field: direct store
+                try emitter.appendFmt("  store {s} %{d}, ptr %gep.{d}\n", .{
+                    widthToLLVMType(op.width), value_ssa, gep_ssa,
+                });
+            }
         },
     }
 }

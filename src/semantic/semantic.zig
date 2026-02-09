@@ -163,9 +163,187 @@ pub const SemanticContext = struct {
         const program = self.ast.getProgram(self.ast.root);
         const decls = self.ast.getExtra(program.declarations);
 
+        // Phase 1: Forward-declare all struct types so they can reference each other
         for (decls) |decl_idx| {
-            try self.collectDeclaration(decl_idx);
+            if (self.ast.getKind(decl_idx) == .struct_decl) {
+                try self.forwardDeclareStruct(decl_idx);
+            }
         }
+
+        // Phase 2: Finalize struct types in dependency order
+        try self.finalizeStructTypes(decls);
+
+        // Phase 3: Collect all non-struct declarations
+        for (decls) |decl_idx| {
+            const kind = self.ast.getKind(decl_idx);
+            if (kind != .struct_decl) {
+                try self.collectDeclaration(decl_idx);
+            }
+        }
+    }
+
+    fn forwardDeclareStruct(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const decl = self.ast.getStructDecl(node_idx);
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        // reserve a slot in the type registry
+        const type_id = try self.types.reserveStructType(name);
+
+        // register symbol so resolveTypeName can find it
+        const result = try self.symbols.register(
+            name,
+            name_token.start,
+            .type_,
+            .resolved,
+            type_id,
+            node_idx,
+            false,
+        );
+
+        if (result == null) {
+            try self.errors.add(.{
+                .kind = .duplicate_symbol,
+                .start = name_token.start,
+                .end = name_token.start + name_token.len,
+            });
+        }
+    }
+
+    /// Finalize struct types iteratively until all are done.
+    /// Each pass finalizes structs whose field types are already finalized.
+    fn finalizeStructTypes(self: *SemanticContext, decls: []const NodeIndex) !void {
+        // collect struct declaration nodes
+        var struct_decls = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
+        defer struct_decls.deinit(self.allocator);
+
+        for (decls) |decl_idx| {
+            if (self.ast.getKind(decl_idx) == .struct_decl) {
+                try struct_decls.append(self.allocator, decl_idx);
+            }
+        }
+
+        var finalized = try std.ArrayList(bool).initCapacity(self.allocator, struct_decls.items.len);
+        defer finalized.deinit(self.allocator);
+        for (0..struct_decls.items.len) |_| {
+            try finalized.append(self.allocator, false);
+        }
+
+        var remaining = struct_decls.items.len;
+        var prev_remaining = remaining + 1;
+
+        while (remaining > 0 and remaining < prev_remaining) {
+            prev_remaining = remaining;
+
+            for (struct_decls.items, 0..) |decl_idx, si| {
+                if (finalized.items[si]) continue;
+
+                if (self.canFinalizeStruct(decl_idx)) {
+                    try self.finalizeStruct(decl_idx);
+                    finalized.items[si] = true;
+                    remaining -= 1;
+                }
+            }
+        }
+
+        // any remaining structs have unresolvable field types (cycles or unknown types)
+        // finalizeStruct will report errors for those
+        for (struct_decls.items, 0..) |decl_idx, si| {
+            if (!finalized.items[si]) {
+                try self.finalizeStruct(decl_idx);
+            }
+        }
+    }
+
+    /// Check if all field types of a struct are finalized (have known sizes).
+    fn canFinalizeStruct(self: *SemanticContext, node_idx: NodeIndex) bool {
+        const decl = self.ast.getStructDecl(node_idx);
+        const field_data = self.ast.getExtra(decl.fields);
+
+        var i: usize = 0;
+        while (i < field_data.len) : (i += 2) {
+            const field_type_idx = field_data[i + 1];
+            const type_ident = self.ast.getIdentifier(field_type_idx);
+            const type_token = self.tokens.items[type_ident.token_idx];
+            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
+
+            if (self.resolveTypeName(type_name)) |tid| {
+                if (tid.isStruct()) {
+                    const st = self.types.struct_types.items[tid.struct_type];
+                    // reserved but not yet finalized (no fields)
+                    if (st.fields.len == 0 and st.size == 0) return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// Finalize a struct: resolve field types, compute layout, update registry.
+    fn finalizeStruct(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const decl = self.ast.getStructDecl(node_idx);
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        const sym_idx = self.symbols.lookup(name) orelse return;
+        const type_id = self.symbols.getTypeId(sym_idx);
+
+        // parse field pairs
+        const field_data = self.ast.getExtra(decl.fields);
+        const field_count = field_data.len / 2;
+
+        var field_names = try std.ArrayList([]const u8).initCapacity(self.allocator, field_count);
+        defer field_names.deinit(self.allocator);
+        var field_types = try std.ArrayList(TypeId).initCapacity(self.allocator, field_count);
+        defer field_types.deinit(self.allocator);
+
+        var seen_fields = std.StringHashMap(void).init(self.allocator);
+        defer seen_fields.deinit();
+
+        var i: usize = 0;
+        while (i < field_data.len) : (i += 2) {
+            const field_name_idx = field_data[i];
+            const field_type_idx = field_data[i + 1];
+
+            const field_ident = self.ast.getIdentifier(field_name_idx);
+            const field_token = self.tokens.items[field_ident.token_idx];
+            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+            if (seen_fields.contains(field_name)) {
+                try self.errors.add(.{
+                    .kind = .duplicate_field,
+                    .start = field_token.start,
+                    .end = field_token.start + field_token.len,
+                });
+            } else {
+                try seen_fields.put(field_name, {});
+            }
+
+            const type_ident = self.ast.getIdentifier(field_type_idx);
+            const type_token = self.tokens.items[type_ident.token_idx];
+            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
+
+            const field_type = self.resolveTypeName(type_name) orelse blk: {
+                try self.errors.add(.{
+                    .kind = .unknown_type,
+                    .start = type_token.start,
+                    .end = type_token.start + type_token.len,
+                });
+                break :blk TypeId.unresolved;
+            };
+
+            try field_names.append(self.allocator, field_name);
+            try field_types.append(self.allocator, field_type);
+        }
+
+        try self.types.finalizeStructType(
+            type_id,
+            field_names.items,
+            field_types.items,
+            decl.call_conv,
+        );
     }
 
     fn collectDeclaration(self: *SemanticContext, node_idx: NodeIndex) !void {
@@ -174,7 +352,7 @@ pub const SemanticContext = struct {
             .const_decl => try self.collectConstDecl(node_idx),
             .var_decl => try self.collectVarDecl(node_idx),
             .func_decl => try self.collectFuncDecl(node_idx),
-            .struct_decl => try self.collectStructDecl(node_idx),
+            .struct_decl => {}, // handled by forwardDeclareStruct + finalizeStruct
             .err => {}, // skip parse errors
             else => {}, // ignore
         }
@@ -332,93 +510,6 @@ pub const SemanticContext = struct {
             func_type,
             node_idx,
             false, // mutability doesn't apply to functions
-        );
-
-        if (result == null) {
-            try self.errors.add(.{
-                .kind = .duplicate_symbol,
-                .start = name_token.start,
-                .end = name_token.start + name_token.len,
-            });
-        }
-    }
-
-    fn collectStructDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
-        const decl = self.ast.getStructDecl(node_idx);
-
-        // get name
-        const name_ident = self.ast.getIdentifier(decl.name);
-        const name_token = self.tokens.items[name_ident.token_idx];
-        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
-
-        // parse field pairs from extra_data
-        const field_data = self.ast.getExtra(decl.fields);
-        const field_count = field_data.len / 2;
-
-        var field_names = try std.ArrayList([]const u8).initCapacity(self.allocator, field_count);
-        defer field_names.deinit(self.allocator);
-        var field_types = try std.ArrayList(TypeId).initCapacity(self.allocator, field_count);
-        defer field_types.deinit(self.allocator);
-
-        var seen_fields = std.StringHashMap(void).init(self.allocator);
-        defer seen_fields.deinit();
-
-        var i: usize = 0;
-        while (i < field_data.len) : (i += 2) {
-            const field_name_idx = field_data[i];
-            const field_type_idx = field_data[i + 1];
-
-            // get field name
-            const field_ident = self.ast.getIdentifier(field_name_idx);
-            const field_token = self.tokens.items[field_ident.token_idx];
-            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
-
-            // check for duplicate fields
-            if (seen_fields.contains(field_name)) {
-                try self.errors.add(.{
-                    .kind = .duplicate_field,
-                    .start = field_token.start,
-                    .end = field_token.start + field_token.len,
-                });
-            } else {
-                try seen_fields.put(field_name, {});
-            }
-
-            // resolve field type
-            const type_ident = self.ast.getIdentifier(field_type_idx);
-            const type_token = self.tokens.items[type_ident.token_idx];
-            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
-
-            const field_type = self.resolveTypeName(type_name) orelse blk: {
-                try self.errors.add(.{
-                    .kind = .unknown_type,
-                    .start = type_token.start,
-                    .end = type_token.start + type_token.len,
-                });
-                break :blk TypeId.unresolved;
-            };
-
-            try field_names.append(self.allocator, field_name);
-            try field_types.append(self.allocator, field_type);
-        }
-
-        // register struct type
-        const struct_type = try self.types.addStructType(
-            name,
-            field_names.items,
-            field_types.items,
-            decl.call_conv,
-        );
-
-        // register symbol as type
-        const result = try self.symbols.register(
-            name,
-            name_token.start,
-            .type_,
-            .resolved,
-            struct_type,
-            node_idx,
-            false,
         );
 
         if (result == null) {
@@ -685,7 +776,7 @@ pub const SemanticContext = struct {
             .var_decl => {
                 _ = try self.checkVarDecl(node_idx);
             },
-            .struct_decl => {}, // already handled in collectStructDecl
+            .struct_decl => {}, // handled by two-pass struct collection
             else => {}, // ignore
         }
     }

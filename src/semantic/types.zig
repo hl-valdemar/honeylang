@@ -241,8 +241,8 @@ pub const TypeRegistry = struct {
         var fields = try arena_alloc.alloc(StructField, field_names.len);
 
         for (field_names, field_types, 0..) |fname, ftype, i| {
-            const field_align = alignmentOf(ftype);
-            const field_size = sizeOf(ftype);
+            const field_align = alignmentOf(ftype, self);
+            const field_size = sizeOf(ftype, self);
             offset = alignUp(offset, field_align);
 
             fields[i] = .{
@@ -277,13 +277,69 @@ pub const TypeRegistry = struct {
         };
     }
 
+    /// Reserve a slot for a struct type (forward declaration).
+    /// Returns the TypeId that will refer to this struct once finalized.
+    pub fn reserveStructType(self: *TypeRegistry, name: []const u8) !TypeId {
+        const idx: StructTypeIndex = @intCast(self.struct_types.items.len);
+        try self.struct_types.append(self.allocator, .{
+            .name = name,
+            .fields = &.{},
+            .size = 0,
+            .alignment = 1,
+            .calling_conv = .c,
+        });
+        return .{ .struct_type = idx };
+    }
+
+    /// Finalize a previously reserved struct type with field data and layout.
+    pub fn finalizeStructType(
+        self: *TypeRegistry,
+        type_id: TypeId,
+        field_names: []const []const u8,
+        field_types: []const TypeId,
+        calling_conv: CallingConvention,
+    ) !void {
+        const arena_alloc = self.arena.allocator();
+        const idx = type_id.struct_type;
+
+        // compute C layout
+        var offset: u32 = 0;
+        var max_align: u32 = 1;
+        var fields = try arena_alloc.alloc(StructField, field_names.len);
+
+        for (field_names, field_types, 0..) |fname, ftype, i| {
+            const field_align = alignmentOf(ftype, self);
+            const field_size = sizeOf(ftype, self);
+            offset = alignUp(offset, field_align);
+
+            fields[i] = .{
+                .name = fname,
+                .type_id = ftype,
+                .offset = offset,
+            };
+
+            offset += field_size;
+            if (field_align > max_align) max_align = field_align;
+        }
+
+        const total_size = alignUp(offset, max_align);
+
+        self.struct_types.items[idx] = .{
+            .name = self.struct_types.items[idx].name,
+            .fields = fields,
+            .size = total_size,
+            .alignment = max_align,
+            .calling_conv = calling_conv,
+        };
+    }
+
     pub fn structTypeCount(self: *const TypeRegistry) usize {
         return self.struct_types.items.len;
     }
 };
 
 /// Size in bytes of a type (for C layout computation).
-pub fn sizeOf(type_id: TypeId) u32 {
+pub fn sizeOf(type_id: TypeId, types: *const TypeRegistry) u32 {
     return switch (type_id) {
         .primitive => |p| switch (p) {
             .void => 0,
@@ -294,12 +350,12 @@ pub fn sizeOf(type_id: TypeId) u32 {
         },
         .unresolved => 4, // fallback
         .function => 8, // pointer-sized
-        .struct_type => 0, // caller should use StructType.size
+        .struct_type => |idx| types.struct_types.items[idx].size,
     };
 }
 
 /// Alignment in bytes of a type (for C layout computation).
-pub fn alignmentOf(type_id: TypeId) u32 {
+pub fn alignmentOf(type_id: TypeId, types: *const TypeRegistry) u32 {
     return switch (type_id) {
         .primitive => |p| switch (p) {
             .void => 1,
@@ -310,7 +366,7 @@ pub fn alignmentOf(type_id: TypeId) u32 {
         },
         .unresolved => 4,
         .function => 8,
-        .struct_type => 1, // caller should use StructType.alignment
+        .struct_type => |idx| types.struct_types.items[idx].alignment,
     };
 }
 
