@@ -208,6 +208,32 @@ fn printInstruction(inst: *const MInst) void {
                 c.struct_idx,
             });
         },
+        .addr_of_local => |a| {
+            std.debug.print("addr_of_local v{d}, [fp{d}]", .{
+                a.dst,
+                a.offset,
+            });
+        },
+        .addr_of_global => |a| {
+            std.debug.print("addr_of_global v{d}, global[{d}]", .{
+                a.dst,
+                a.global_idx,
+            });
+        },
+        .load_ptr => |l| {
+            std.debug.print("load_ptr.{s} v{d}, v{d}", .{
+                widthStr(l.width),
+                l.dst,
+                l.ptr,
+            });
+        },
+        .store_ptr => |s| {
+            std.debug.print("store_ptr.{s} v{d}, v{d}", .{
+                widthStr(s.width),
+                s.ptr,
+                s.value,
+            });
+        },
     }
 }
 

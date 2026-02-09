@@ -110,5 +110,11 @@ fn formatTypeId(type_id: TypeId) []const u8 {
             };
             break :blk std.fmt.bufPrint(&S.buf, "struct#{d}", .{idx}) catch "struct#?";
         },
+        .pointer => |idx| blk: {
+            const S = struct {
+                var buf: [16]u8 = undefined;
+            };
+            break :blk std.fmt.bufPrint(&S.buf, "ptr#{d}", .{idx}) catch "ptr#?";
+        },
     };
 }

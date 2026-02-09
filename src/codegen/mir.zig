@@ -195,6 +195,32 @@ pub const MInst = union(enum) {
         src: VReg, // pointer to source struct
         struct_idx: u32, // index into TypeRegistry.struct_types (for size)
     },
+
+    /// Get address of a local variable (stack slot).
+    addr_of_local: struct {
+        dst: VReg,
+        offset: i16, // stack offset from fp
+    },
+
+    /// Get address of a global variable.
+    addr_of_global: struct {
+        dst: VReg,
+        global_idx: GlobalIndex,
+    },
+
+    /// Load a value through a pointer.
+    load_ptr: struct {
+        dst: VReg,
+        ptr: VReg,
+        width: Width,
+    },
+
+    /// Store a value through a pointer.
+    store_ptr: struct {
+        ptr: VReg,
+        value: VReg,
+        width: Width,
+    },
 };
 
 /// Function parameter metadata.
@@ -369,6 +395,32 @@ pub const MIRFunction = struct {
             .field_idx = field_idx,
             .width = width,
         } });
+    }
+
+    /// Emit an addr_of_local instruction and return the pointer vreg.
+    pub fn emitAddrOfLocal(self: *MIRFunction, offset: i16) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .addr_of_local = .{ .dst = dst, .offset = offset } });
+        return dst;
+    }
+
+    /// Emit an addr_of_global instruction and return the pointer vreg.
+    pub fn emitAddrOfGlobal(self: *MIRFunction, global_idx: GlobalIndex) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .addr_of_global = .{ .dst = dst, .global_idx = global_idx } });
+        return dst;
+    }
+
+    /// Emit a load_ptr instruction (load through pointer) and return the destination vreg.
+    pub fn emitLoadPtr(self: *MIRFunction, ptr_reg: VReg, width: Width) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .load_ptr = .{ .dst = dst, .ptr = ptr_reg, .width = width } });
+        return dst;
+    }
+
+    /// Emit a store_ptr instruction (store through pointer).
+    pub fn emitStorePtr(self: *MIRFunction, ptr_reg: VReg, value: VReg, width: Width) !void {
+        try self.emit(.{ .store_ptr = .{ .ptr = ptr_reg, .value = value, .width = width } });
     }
 
     /// Emit a copy_struct instruction (memcpy for struct data).

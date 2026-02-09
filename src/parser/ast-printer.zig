@@ -153,6 +153,9 @@ fn getNodeInfo(
                     getFieldAccessPath(ast, tokens, src, assign.target),
                 }) catch "?";
             }
+            if (ast.getKind(assign.target) == .deref) {
+                break :blk "target: deref";
+            }
             const name = getIdentifierName(ast, tokens, src, assign.target);
             break :blk std.fmt.bufPrint(&S.buf, "target: {s}", .{name}) catch "?";
         },
@@ -171,6 +174,13 @@ fn getNodeInfo(
             const name = getIdentifierName(ast, tokens, src, lit.type_name);
             const field_count = lit.fields.len / 2;
             break :blk std.fmt.bufPrint(&S.buf, "{s}{{ fields: {d} }}", .{ name, field_count }) catch "?";
+        },
+        .address_of => "address_of",
+        .deref => "deref",
+        .pointer_type => blk: {
+            const ptr = ast.getPointerType(idx);
+            const mut_str = if (ptr.is_mutable) "@mut" else "@";
+            break :blk std.fmt.bufPrint(&S.buf, "{s}", .{mut_str}) catch "?";
         },
         .void_literal => "void",
         .err => blk: {
@@ -279,7 +289,7 @@ fn printNode(
 
             if (decl.type_id) |type_idx| {
                 std.debug.print("{s}├─ type: ", .{child_prefix});
-                printIdentifierValue(ast, tokens, src, type_idx);
+                printTypeValue(ast, tokens, src, type_idx);
                 std.debug.print("\n", .{});
             } else {
                 std.debug.print("{s}├─ type: <inferred>\n", .{child_prefix});
@@ -313,10 +323,11 @@ fn printNode(
             var fi: usize = 0;
             while (fi < fields.len) : (fi += 2) {
                 const fname = getIdentifierName(ast, tokens, src, fields[fi]);
-                const ftype = getIdentifierName(ast, tokens, src, fields[fi + 1]);
                 const is_last_field = (fi + 2 >= fields.len);
                 const connector: []const u8 = if (is_last_field) "└" else "├";
-                std.debug.print("{s}    {s}─ {s}: {s}\n", .{ child_prefix, connector, fname, ftype });
+                std.debug.print("{s}    {s}─ {s}: ", .{ child_prefix, connector, fname });
+                printTypeValue(ast, tokens, src, fields[fi + 1]);
+                std.debug.print("\n", .{});
             }
         },
 
@@ -339,7 +350,7 @@ fn printNode(
             std.debug.print("{s}├─ convention: {s}\n", .{ child_prefix, @tagName(decl.call_conv) });
 
             std.debug.print("{s}├─ return: ", .{child_prefix});
-            printIdentifierValue(ast, tokens, src, decl.return_type);
+            printTypeValue(ast, tokens, src, decl.return_type);
             std.debug.print("\n", .{});
 
             // print parameters
@@ -364,7 +375,7 @@ fn printNode(
 
                     printIdentifierValue(ast, tokens, src, param_name);
                     std.debug.print(": ", .{});
-                    printIdentifierValue(ast, tokens, src, param_type);
+                    printTypeValue(ast, tokens, src, param_type);
                     std.debug.print("\n", .{});
                 }
             }
@@ -388,7 +399,7 @@ fn printNode(
 
             if (decl.type_id) |type_idx| {
                 std.debug.print("{s}├─ type: ", .{child_prefix});
-                printIdentifierValue(ast, tokens, src, type_idx);
+                printTypeValue(ast, tokens, src, type_idx);
                 std.debug.print("\n", .{});
             } else {
                 std.debug.print("{s}├─ type: <inferred>\n", .{child_prefix});
@@ -583,6 +594,10 @@ fn printNode(
                     child_prefix,
                     getFieldAccessPath(ast, tokens, src, assign.target),
                 });
+            } else if (ast.getKind(assign.target) == .deref) {
+                std.debug.print("{s}├─ target:\n", .{child_prefix});
+                const target_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+                printNode(ast, tokens, src, assign.target, target_prefix, true);
             } else {
                 std.debug.print("{s}├─ target: ", .{child_prefix});
                 printIdentifierValue(ast, tokens, src, assign.target);
@@ -594,10 +609,48 @@ fn printNode(
             printNode(ast, tokens, src, assign.value, value_prefix, true);
         },
 
+        .address_of => {
+            std.debug.print("address_of:\n", .{});
+            const addr = ast.getAddressOf(idx);
+            printNode(ast, tokens, src, addr.operand, child_prefix, true);
+        },
+
+        .deref => {
+            std.debug.print("deref:\n", .{});
+            const deref_node = ast.getDeref(idx);
+            printNode(ast, tokens, src, deref_node.operand, child_prefix, true);
+        },
+
+        .pointer_type => {
+            const ptr = ast.getPointerType(idx);
+            const mut_str = if (ptr.is_mutable) "@mut " else "@";
+            std.debug.print("pointer_type: {s}\n", .{mut_str});
+            printNode(ast, tokens, src, ptr.pointee, child_prefix, true);
+        },
+
         .err => {
             const err_data = ast.getError(idx);
             std.debug.print("error: {s}\n", .{err_data.msg});
         },
+    }
+}
+
+fn printTypeValue(
+    ast: *const Ast,
+    tokens: *const TokenList,
+    src: *const SourceCode,
+    idx: NodeIndex,
+) void {
+    if (ast.getKind(idx) == .pointer_type) {
+        const ptr = ast.getPointerType(idx);
+        if (ptr.is_mutable) {
+            std.debug.print("@mut ", .{});
+        } else {
+            std.debug.print("@", .{});
+        }
+        printTypeValue(ast, tokens, src, ptr.pointee);
+    } else {
+        printIdentifierValue(ast, tokens, src, idx);
     }
 }
 

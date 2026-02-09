@@ -116,11 +116,6 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
 
     // print lexer errors if any
     if (lexer_result.errors.hasErrors()) {
-        std.debug.print("\n{s}Reported {d} lexer errors:{s}\n\n", .{
-            ansi.red(),
-            lexer_result.errors.count(),
-            ansi.reset(),
-        });
         honey.lexer.error_printer.print(&lexer_result.errors, &src, file_path);
     }
 
@@ -136,11 +131,6 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
 
     // print parse errors if any
     if (parse_result.errors.hasErrors()) {
-        std.debug.print("\n{s}Reported {d} parse errors:{s}\n\n", .{
-            ansi.red(),
-            parse_result.errors.count(),
-            ansi.reset(),
-        });
         honey.parser.error_printer.print(&parse_result.errors, &src, file_path);
     }
 
@@ -247,11 +237,6 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
 
     // print lexer errors if any
     if (lexer_result.errors.hasErrors()) {
-        std.debug.print("\n{s}Reported {d} lexer errors:{s}\n\n", .{
-            ansi.red(),
-            lexer_result.errors.count(),
-            ansi.reset(),
-        });
         honey.lexer.error_printer.print(&lexer_result.errors, &src, file_path);
     }
 
@@ -262,11 +247,6 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
 
     // print parse errors if any
     if (parse_result.errors.hasErrors()) {
-        std.debug.print("\n{s}Reported {d} parse errors:{s}\n\n", .{
-            ansi.red(),
-            parse_result.errors.count(),
-            ansi.reset(),
-        });
         honey.parser.error_printer.print(&parse_result.errors, &src, file_path);
     }
 

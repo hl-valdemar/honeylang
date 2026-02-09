@@ -450,6 +450,32 @@ fn lowerInst(
                 dst_ssa, src_ssa, struct_type.size,
             });
         },
+
+        .addr_of_local => |op| {
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            const alloca_id = alloca_map.getOrCreate(op.offset);
+            try emitter.appendFmt("  %{d} = getelementptr i8, ptr %local.{d}, i32 0\n", .{ dst_ssa, alloca_id });
+        },
+
+        .addr_of_global => |op| {
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            const name = globals.getName(op.global_idx);
+            try emitter.appendFmt("  %{d} = getelementptr i8, ptr @{s}, i32 0\n", .{ dst_ssa, name });
+        },
+
+        .load_ptr => |op| {
+            const ptr_ssa = ssa_map.get(op.ptr);
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            const type_str = widthToLLVMType(op.width);
+            try emitter.appendFmt("  %{d} = load {s}, ptr %{d}\n", .{ dst_ssa, type_str, ptr_ssa });
+        },
+
+        .store_ptr => |op| {
+            const ptr_ssa = ssa_map.get(op.ptr);
+            const value_ssa = ssa_map.get(op.value);
+            const type_str = widthToLLVMType(op.width);
+            try emitter.appendFmt("  store {s} %{d}, ptr %{d}\n", .{ type_str, value_ssa, ptr_ssa });
+        },
     }
 }
 
@@ -484,6 +510,7 @@ fn typeIdToLLVMType(type_id: TypeId) []const u8 {
             .f64 => "double",
         },
         .struct_type => "ptr", // nested struct fields are pointers
+        .pointer => "ptr",
         .unresolved => "i32",
         .function => "ptr",
     };

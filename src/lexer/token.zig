@@ -67,5 +67,7 @@ pub const Kind = enum {
     comma,
     dot,
     at,
+    ampersand,
+    caret,
     eof,
 };

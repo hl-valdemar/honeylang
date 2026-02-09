@@ -24,6 +24,11 @@ pub const NodeKind = enum {
     identifier,
     literal,
     void_literal,
+    address_of,
+    deref,
+
+    // type expressions
+    pointer_type,
 
     // statements
     block,
@@ -217,6 +222,19 @@ pub const Assignment = struct {
     value: NodeIndex,
 };
 
+pub const AddressOf = struct {
+    operand: NodeIndex,
+};
+
+pub const Deref = struct {
+    operand: NodeIndex,
+};
+
+pub const PointerType = struct {
+    pointee: NodeIndex,
+    is_mutable: bool,
+};
+
 pub const Error = struct {
     msg: []const u8,
 };
@@ -248,6 +266,9 @@ pub const Ast = struct {
     defers: std.ArrayList(Defer),
     ifs: std.ArrayList(If),
     assignments: std.ArrayList(Assignment),
+    address_ofs: std.ArrayList(AddressOf),
+    derefs: std.ArrayList(Deref),
+    pointer_types: std.ArrayList(PointerType),
     errors: std.ArrayList(Error),
 
     // auxiliary storage for variable-length children
@@ -282,6 +303,9 @@ pub const Ast = struct {
             .defers = try std.ArrayList(Defer).initCapacity(allocator, capacity),
             .ifs = try std.ArrayList(If).initCapacity(allocator, capacity),
             .assignments = try std.ArrayList(Assignment).initCapacity(allocator, capacity),
+            .address_ofs = try std.ArrayList(AddressOf).initCapacity(allocator, capacity),
+            .derefs = try std.ArrayList(Deref).initCapacity(allocator, capacity),
+            .pointer_types = try std.ArrayList(PointerType).initCapacity(allocator, capacity),
             .errors = try std.ArrayList(Error).initCapacity(allocator, capacity),
 
             .extra_data = try std.ArrayList(NodeIndex).initCapacity(allocator, capacity),
@@ -311,6 +335,9 @@ pub const Ast = struct {
         self.defers.deinit(self.allocator);
         self.ifs.deinit(self.allocator);
         self.assignments.deinit(self.allocator);
+        self.address_ofs.deinit(self.allocator);
+        self.derefs.deinit(self.allocator);
+        self.pointer_types.deinit(self.allocator);
         self.errors.deinit(self.allocator);
 
         self.extra_data.deinit(self.allocator);
@@ -705,6 +732,64 @@ pub const Ast = struct {
         return node_idx;
     }
 
+    pub fn addAddressOf(
+        self: *Ast,
+        operand: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.address_ofs.items.len);
+
+        try self.kinds.append(self.allocator, .address_of);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.address_ofs.append(self.allocator, .{ .operand = operand });
+
+        return node_idx;
+    }
+
+    pub fn addDeref(
+        self: *Ast,
+        operand: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.derefs.items.len);
+
+        try self.kinds.append(self.allocator, .deref);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.derefs.append(self.allocator, .{ .operand = operand });
+
+        return node_idx;
+    }
+
+    pub fn addPointerType(
+        self: *Ast,
+        pointee: NodeIndex,
+        is_mutable: bool,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.pointer_types.items.len);
+
+        try self.kinds.append(self.allocator, .pointer_type);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.pointer_types.append(self.allocator, .{
+            .pointee = pointee,
+            .is_mutable = is_mutable,
+        });
+
+        return node_idx;
+    }
+
     pub fn addError(
         self: *Ast,
         msg: []const u8,
@@ -834,6 +919,24 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .assignment);
         const data_idx = self.data_indices.items[idx];
         return self.assignments.items[data_idx];
+    }
+
+    pub fn getAddressOf(self: *const Ast, idx: NodeIndex) AddressOf {
+        std.debug.assert(self.kinds.items[idx] == .address_of);
+        const data_idx = self.data_indices.items[idx];
+        return self.address_ofs.items[data_idx];
+    }
+
+    pub fn getDeref(self: *const Ast, idx: NodeIndex) Deref {
+        std.debug.assert(self.kinds.items[idx] == .deref);
+        const data_idx = self.data_indices.items[idx];
+        return self.derefs.items[data_idx];
+    }
+
+    pub fn getPointerType(self: *const Ast, idx: NodeIndex) PointerType {
+        std.debug.assert(self.kinds.items[idx] == .pointer_type);
+        const data_idx = self.data_indices.items[idx];
+        return self.pointer_types.items[data_idx];
     }
 
     pub fn getError(self: *const Ast, idx: NodeIndex) Error {

@@ -264,15 +264,12 @@ pub const SemanticContext = struct {
         var i: usize = 0;
         while (i < field_data.len) : (i += 2) {
             const field_type_idx = field_data[i + 1];
-            const type_ident = self.ast.getIdentifier(field_type_idx);
-            const type_token = self.tokens.items[type_ident.token_idx];
-            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
-
-            if (self.resolveTypeName(type_name)) |tid| {
+            if (self.resolveTypeNode(field_type_idx)) |tid| {
                 if (tid.isStruct()) {
                     const st = self.types.struct_types.items[tid.struct_type];
                     if (!st.finalized) return false;
                 }
+                // pointers have known size regardless of pointee finalization
             }
         }
 
@@ -320,15 +317,12 @@ pub const SemanticContext = struct {
                 try seen_fields.put(field_name, {});
             }
 
-            const type_ident = self.ast.getIdentifier(field_type_idx);
-            const type_token = self.tokens.items[type_ident.token_idx];
-            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
-
-            const field_type = self.resolveTypeName(type_name) orelse blk: {
+            const field_type = self.resolveTypeNode(field_type_idx) orelse blk: {
+                const field_loc = self.ast.getLocation(field_type_idx);
                 try self.errors.add(.{
                     .kind = .unknown_type,
-                    .start = type_token.start,
-                    .end = type_token.start + type_token.len,
+                    .start = field_loc.start,
+                    .end = field_loc.end,
                 });
                 break :blk TypeId.unresolved;
             };
@@ -370,20 +364,15 @@ pub const SemanticContext = struct {
         var type_id: TypeId = .unresolved;
 
         if (decl.type_id) |type_idx| {
-            // handle explicit type annotation
-            const type_ident = self.ast.getIdentifier(type_idx);
-            const type_token = self.tokens.items[type_ident.token_idx];
-            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
-
-            if (self.resolveTypeName(type_name)) |tid| {
+            if (self.resolveTypeNode(type_idx)) |tid| {
                 type_id = tid;
                 type_state = .resolved;
             } else {
-                // unknown type name: record error, leave as pending
+                const loc = self.ast.getLocation(type_idx);
                 try self.errors.add(.{
                     .kind = .unknown_type,
-                    .start = type_token.start,
-                    .end = type_token.start + type_token.len,
+                    .start = loc.start,
+                    .end = loc.end,
                 });
             }
         }
@@ -422,20 +411,15 @@ pub const SemanticContext = struct {
         var type_id: TypeId = .unresolved;
 
         if (decl.type_id) |type_idx| {
-            // handle explicit type annotation
-            const type_ident = self.ast.getIdentifier(type_idx);
-            const type_token = self.tokens.items[type_ident.token_idx];
-            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
-
-            if (self.resolveTypeName(type_name)) |tid| {
+            if (self.resolveTypeNode(type_idx)) |tid| {
                 type_id = tid;
                 type_state = .resolved;
             } else {
-                // unknown type name: record error, leave as pending
+                const loc = self.ast.getLocation(type_idx);
                 try self.errors.add(.{
                     .kind = .unknown_type,
-                    .start = type_token.start,
-                    .end = type_token.start + type_token.len,
+                    .start = loc.start,
+                    .end = loc.end,
                 });
             }
         }
@@ -470,10 +454,7 @@ pub const SemanticContext = struct {
         const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
 
         // get return type
-        const ret_ident = self.ast.getIdentifier(decl.return_type);
-        const ret_token = self.tokens.items[ret_ident.token_idx];
-        const ret_name = self.src.getSlice(ret_token.start, ret_token.start + ret_token.len);
-        const return_type = self.resolveTypeName(ret_name) orelse .unresolved;
+        const return_type = self.resolveTypeNode(decl.return_type) orelse .unresolved;
 
         // collect parameter types
         const params = self.ast.getExtra(decl.params);
@@ -485,11 +466,7 @@ pub const SemanticContext = struct {
         var i: usize = 0;
         while (i < params.len) : (i += 2) {
             const param_type_idx = params[i + 1]; // type is second in pair
-            const type_ident = self.ast.getIdentifier(param_type_idx);
-            const type_token = self.tokens.items[type_ident.token_idx];
-            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
-
-            const param_type = self.resolveTypeName(type_name) orelse .unresolved;
+            const param_type = self.resolveTypeNode(param_type_idx) orelse .unresolved;
             try param_types.append(self.allocator, param_type);
         }
 
@@ -518,6 +495,25 @@ pub const SemanticContext = struct {
                 .end = name_token.start + name_token.len,
             });
         }
+    }
+
+    /// Resolve a type AST node (identifier or pointer_type) to a TypeId.
+    fn resolveTypeNode(self: *SemanticContext, node_idx: NodeIndex) ?TypeId {
+        const kind = self.ast.getKind(node_idx);
+        return switch (kind) {
+            .identifier => {
+                const ident = self.ast.getIdentifier(node_idx);
+                const token = self.tokens.items[ident.token_idx];
+                const name = self.src.getSlice(token.start, token.start + token.len);
+                return self.resolveTypeName(name);
+            },
+            .pointer_type => {
+                const ptr = self.ast.getPointerType(node_idx);
+                const pointee = self.resolveTypeNode(ptr.pointee) orelse return null;
+                return self.types.addPointerType(pointee, ptr.is_mutable) catch return null;
+            },
+            else => null,
+        };
     }
 
     fn resolveTypeName(self: *const SemanticContext, name: []const u8) ?TypeId {
@@ -633,6 +629,20 @@ pub const SemanticContext = struct {
             .identifier => self.inferIdentifierType(node_idx),
             .binary_op => self.inferBinaryOpType(node_idx),
             .unary_op => self.inferUnaryOpType(node_idx),
+            .address_of => {
+                const addr = self.ast.getAddressOf(node_idx);
+                const operand_type = self.tryInferType(addr.operand) orelse return null;
+                // default to immutable pointer for inference
+                return self.types.addPointerType(operand_type, false) catch return null;
+            },
+            .deref => {
+                const deref = self.ast.getDeref(node_idx);
+                const operand_type = self.tryInferType(deref.operand) orelse return null;
+                if (self.types.getPointerType(operand_type)) |ptr_info| {
+                    return ptr_info.pointee;
+                }
+                return null;
+            },
             else => null,
         };
     }
@@ -798,7 +808,7 @@ pub const SemanticContext = struct {
         // verify that the expression type matches the declared type
         if (!declared_type.isUnresolved()) {
             if (expr_type) |et| {
-                if (!typesCompatible(declared_type, et)) {
+                if (!self.typesCompatible(declared_type, et)) {
                     try self.errors.add(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
@@ -907,11 +917,7 @@ pub const SemanticContext = struct {
         var expected_type: TypeId = .unresolved;
 
         if (decl.type_id) |type_idx| {
-            const type_ident = self.ast.getIdentifier(type_idx);
-            const type_token = self.tokens.items[type_ident.token_idx];
-            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
-
-            if (self.resolveTypeName(type_name)) |tid| {
+            if (self.resolveTypeNode(type_idx)) |tid| {
                 expected_type = tid;
             }
         }
@@ -922,7 +928,7 @@ pub const SemanticContext = struct {
         // verify that the expression type matches the declared type
         if (!expected_type.isUnresolved()) {
             if (value_type != null and !value_type.?.isUnresolved()) {
-                if (!typesCompatible(expected_type, value_type.?)) {
+                if (!self.typesCompatible(expected_type, value_type.?)) {
                     const loc = self.ast.getLocation(node_idx);
                     try self.errors.add(.{
                         .kind = .type_mismatch,
@@ -1010,7 +1016,32 @@ pub const SemanticContext = struct {
         var target_type: TypeId = .unresolved;
         var is_mutable = false;
 
-        if (target_kind == .field_access) {
+        if (target_kind == .deref) {
+            // pointer dereference assignment: p^ = 10
+            const deref = self.ast.getDeref(assign.target);
+
+            // type-check the deref to get target type
+            if (try self.checkExpression(assign.target, .unresolved)) |dt| {
+                target_type = dt;
+            }
+
+            // check the pointer is mutable
+            const ptr_type = try self.checkExpression(deref.operand, .unresolved);
+            if (ptr_type) |pt| {
+                if (pt.isPointer()) {
+                    if (self.types.getPointerType(pt)) |ptr_info| {
+                        is_mutable = ptr_info.is_mutable;
+                        if (!ptr_info.is_mutable) {
+                            try self.errors.add(.{
+                                .kind = .assign_through_immutable_ptr,
+                                .start = loc.start,
+                                .end = loc.end,
+                            });
+                        }
+                    }
+                }
+            }
+        } else if (target_kind == .field_access) {
             // field assignment: p.x = 10
             // type-check the field access expression (stores types for all intermediate nodes)
             if (try self.checkExpression(assign.target, .unresolved)) |ft| {
@@ -1074,7 +1105,7 @@ pub const SemanticContext = struct {
         // check value type
         const value_type = try self.checkExpression(assign.value, target_type);
         if (value_type) |vt| {
-            if (!typesCompatible(target_type, vt)) {
+            if (!self.typesCompatible(target_type, vt)) {
                 try self.errors.add(.{
                     .kind = .type_mismatch,
                     .start = loc.start,
@@ -1091,7 +1122,7 @@ pub const SemanticContext = struct {
         const expr_type = try self.checkExpression(ret.expr, self.current_ret_type);
 
         if (expr_type) |et| {
-            if (!typesCompatible(self.current_ret_type, et)) {
+            if (!self.typesCompatible(self.current_ret_type, et)) {
                 try self.errors.add(.{
                     .kind = .return_type_mismatch,
                     .start = loc.start,
@@ -1160,6 +1191,8 @@ pub const SemanticContext = struct {
             .call_expr => try self.checkCallExpression(node_idx),
             .field_access => try self.checkFieldAccess(node_idx),
             .struct_literal => try self.checkStructLiteral(node_idx),
+            .address_of => try self.checkAddressOf(node_idx, context_type),
+            .deref => try self.checkDeref(node_idx, context_type),
             else => null,
         };
 
@@ -1284,6 +1317,88 @@ pub const SemanticContext = struct {
         }
     }
 
+    fn checkAddressOf(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
+        const addr = self.ast.getAddressOf(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+        const operand_kind = self.ast.getKind(addr.operand);
+
+        // only variables and field accesses are addressable
+        if (operand_kind != .identifier and operand_kind != .field_access) {
+            try self.errors.add(.{
+                .kind = .cannot_take_address,
+                .start = loc.start,
+                .end = loc.end,
+            });
+            return null;
+        }
+
+        // determine pointee context type from outer pointer context
+        var pointee_context: TypeId = .unresolved;
+        if (!context_type.isUnresolved() and context_type.isPointer()) {
+            if (self.types.getPointerType(context_type)) |ptr_info| {
+                pointee_context = ptr_info.pointee;
+            }
+        }
+
+        // check operand type
+        const operand_type = try self.checkExpression(addr.operand, pointee_context) orelse return null;
+
+        // determine mutability from the target
+        var is_mutable = false;
+        if (operand_kind == .identifier) {
+            const ident = self.ast.getIdentifier(addr.operand);
+            const token = self.tokens.items[ident.token_idx];
+            const name = self.src.getSlice(token.start, token.start + token.len);
+            if (self.lookupLocalPtr(name)) |local| {
+                is_mutable = local.is_mutable;
+            } else if (self.symbols.lookup(name)) |sym_idx| {
+                is_mutable = self.symbols.isMutable(sym_idx);
+            }
+        } else if (operand_kind == .field_access) {
+            // walk to root identifier to check mutability
+            var current = addr.operand;
+            while (self.ast.getKind(current) == .field_access) {
+                const access = self.ast.getFieldAccess(current);
+                current = access.object;
+            }
+            if (self.ast.getKind(current) == .identifier) {
+                const ident = self.ast.getIdentifier(current);
+                const token = self.tokens.items[ident.token_idx];
+                const name = self.src.getSlice(token.start, token.start + token.len);
+                if (self.lookupLocalPtr(name)) |local| {
+                    is_mutable = local.is_mutable;
+                } else if (self.symbols.lookup(name)) |sym_idx| {
+                    is_mutable = self.symbols.isMutable(sym_idx);
+                }
+            }
+        }
+
+        return self.types.addPointerType(operand_type, is_mutable) catch return null;
+    }
+
+    fn checkDeref(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
+        const deref = self.ast.getDeref(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+        _ = context_type;
+
+        // check operand type
+        const operand_type = try self.checkExpression(deref.operand, .unresolved) orelse return null;
+
+        // verify it's a pointer
+        if (!operand_type.isPointer()) {
+            try self.errors.add(.{
+                .kind = .deref_non_pointer,
+                .start = loc.start,
+                .end = loc.end,
+            });
+            return null;
+        }
+
+        // return pointee type
+        const ptr_info = self.types.getPointerType(operand_type) orelse return null;
+        return ptr_info.pointee;
+    }
+
     fn checkBinaryOp(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
         const binary_op = self.ast.getBinaryOp(node_idx);
         const loc = self.ast.getLocation(node_idx);
@@ -1304,7 +1419,7 @@ pub const SemanticContext = struct {
                     });
                 }
                 if (left_type != null and right_type != null) {
-                    if (!typesCompatible(left_type.?, right_type.?)) {
+                    if (!self.typesCompatible(left_type.?, right_type.?)) {
                         try self.errors.add(.{
                             .kind = .type_mismatch,
                             .start = loc.start,
@@ -1324,7 +1439,7 @@ pub const SemanticContext = struct {
 
             // if both sides have resolved types, they must match
             if (left_type != null and right_type != null) {
-                if (!typesCompatible(left_type.?, right_type.?)) {
+                if (!self.typesCompatible(left_type.?, right_type.?)) {
                     try self.errors.add(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
@@ -1434,7 +1549,7 @@ pub const SemanticContext = struct {
             // check argument type (with expected type for context)
             const arg_type = try self.checkExpression(arg_idx, expected_type);
             if (arg_type) |at| {
-                if (!typesCompatible(expected_type, at)) {
+                if (!self.typesCompatible(expected_type, at)) {
                     const arg_loc = self.ast.getLocation(arg_idx);
                     try self.errors.add(.{
                         .kind = .argument_type_mismatch,
@@ -1560,7 +1675,7 @@ pub const SemanticContext = struct {
                     // check value type against field type
                     const value_type = try self.checkExpression(field_value_idx, field.type_id);
                     if (value_type) |vt| {
-                        if (!typesCompatible(field.type_id, vt)) {
+                        if (!self.typesCompatible(field.type_id, vt)) {
                             const val_loc = self.ast.getLocation(field_value_idx);
                             try self.errors.add(.{
                                 .kind = .type_mismatch,
@@ -1608,10 +1723,25 @@ pub const SemanticContext = struct {
         }
     }
 
-    fn typesCompatible(left: TypeId, right: TypeId) bool {
+    fn typesCompatible(self: *const SemanticContext, left: TypeId, right: TypeId) bool {
         // unresolved types are compatible with everything (errors caught at runtime)
         if (left.isUnresolved() or right.isUnresolved()) {
             return true;
+        }
+
+        // pointer types: structural comparison, @mut T is assignable to @T
+        if (left.isPointer() and right.isPointer()) {
+            const lp = self.types.getPointerType(left) orelse return false;
+            const rp = self.types.getPointerType(right) orelse return false;
+            // @mut T → @T is allowed (mutable to immutable)
+            // @T → @mut T is not allowed
+            if (!lp.is_mutable and rp.is_mutable) {
+                // expected immutable, got mutable — OK
+            } else if (lp.is_mutable and !rp.is_mutable) {
+                // expected mutable, got immutable — not OK
+                return false;
+            }
+            return self.typesCompatible(lp.pointee, rp.pointee);
         }
 
         // use structural equality

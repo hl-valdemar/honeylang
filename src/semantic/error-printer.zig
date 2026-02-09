@@ -35,7 +35,7 @@ pub fn print(error_list: *const ErrorList, src: *const SourceCode, file_path: []
         writer.print("Reported ", .{}) catch {};
 
         if (err_count > 0) {
-            writer.print("{s}{d} errors{s}", .{ ansi.red(), err_count, ansi.reset() }) catch {};
+            writer.print("{s}{d} error{s}{s}", .{ ansi.red(), err_count, if (err_count > 1) "s" else "", ansi.reset() }) catch {};
         }
 
         if (err_count > 0 and warn_count > 0) {
@@ -43,7 +43,7 @@ pub fn print(error_list: *const ErrorList, src: *const SourceCode, file_path: []
         }
 
         if (warn_count > 0) {
-            writer.print("{s}{d} warnings{s}", .{ ansi.yellow(), warn_count, ansi.reset() }) catch {};
+            writer.print("{s}{d} warning{s}{s}", .{ ansi.yellow(), warn_count, if (warn_count > 1) "s" else "", ansi.reset() }) catch {};
         }
 
         writer.print("\n\n", .{}) catch {};

@@ -46,6 +46,7 @@ pub const PrimitiveType = enum(u8) {
 
 pub const FunctionTypeIndex = u32;
 pub const StructTypeIndex = u32;
+pub const PointerTypeIndex = u32;
 
 pub const TypeId = union(enum) {
     /// Type could not be determined, will trap at runtime
@@ -59,6 +60,9 @@ pub const TypeId = union(enum) {
 
     /// Struct type, index into TypeRegistry.struct_types
     struct_type: StructTypeIndex,
+
+    /// Pointer type, index into TypeRegistry.pointer_types
+    pointer: PointerTypeIndex,
 
     pub const @"void": TypeId = .{ .primitive = .void };
     pub const @"bool": TypeId = .{ .primitive = .bool };
@@ -128,6 +132,10 @@ pub const TypeId = union(enum) {
         return self == .struct_type;
     }
 
+    pub fn isPointer(self: TypeId) bool {
+        return self == .pointer;
+    }
+
     pub fn eql(self: TypeId, other: TypeId) bool {
         return std.meta.eql(self, other);
     }
@@ -154,11 +162,17 @@ pub const StructType = struct {
     finalized: bool = false,
 };
 
+pub const PointerTypeInfo = struct {
+    pointee: TypeId,
+    is_mutable: bool,
+};
+
 /// Type Registry (Storage for Composite Types)
 pub const TypeRegistry = struct {
     allocator: mem.Allocator,
     function_types: std.ArrayList(FunctionType),
     struct_types: std.ArrayList(StructType),
+    pointer_types: std.ArrayList(PointerTypeInfo),
     arena: std.heap.ArenaAllocator,
 
     pub fn init(allocator: mem.Allocator) !TypeRegistry {
@@ -166,6 +180,7 @@ pub const TypeRegistry = struct {
             .allocator = allocator,
             .function_types = try std.ArrayList(FunctionType).initCapacity(allocator, 16),
             .struct_types = try std.ArrayList(StructType).initCapacity(allocator, 4),
+            .pointer_types = try std.ArrayList(PointerTypeInfo).initCapacity(allocator, 4),
             .arena = std.heap.ArenaAllocator.init(allocator),
         };
     }
@@ -173,6 +188,7 @@ pub const TypeRegistry = struct {
     pub fn deinit(self: *TypeRegistry) void {
         self.function_types.deinit(self.allocator);
         self.struct_types.deinit(self.allocator);
+        self.pointer_types.deinit(self.allocator);
         self.arena.deinit();
     }
 
@@ -347,6 +363,41 @@ pub const TypeRegistry = struct {
     pub fn structTypeCount(self: *const TypeRegistry) usize {
         return self.struct_types.items.len;
     }
+
+    /// Register a pointer type and return a TypeId for it.
+    /// Deduplicates: returns existing TypeId if an identical pointer type exists.
+    pub fn addPointerType(self: *TypeRegistry, pointee: TypeId, is_mutable: bool) !TypeId {
+        for (self.pointer_types.items, 0..) |existing, i| {
+            if (existing.is_mutable == is_mutable and existing.pointee.eql(pointee)) {
+                return .{ .pointer = @intCast(i) };
+            }
+        }
+        const idx: PointerTypeIndex = @intCast(self.pointer_types.items.len);
+        try self.pointer_types.append(self.allocator, .{
+            .pointee = pointee,
+            .is_mutable = is_mutable,
+        });
+        return .{ .pointer = idx };
+    }
+
+    /// Get the pointer type info for a given TypeId.
+    pub fn getPointerType(self: *const TypeRegistry, type_id: TypeId) ?PointerTypeInfo {
+        return switch (type_id) {
+            .pointer => |idx| self.pointer_types.items[idx],
+            else => null,
+        };
+    }
+
+    /// Structural comparison of pointer types (recursive).
+    pub fn pointerTypesEqual(self: *const TypeRegistry, a: TypeId, b: TypeId) bool {
+        const pa = self.getPointerType(a) orelse return false;
+        const pb = self.getPointerType(b) orelse return false;
+        if (pa.is_mutable != pb.is_mutable) return false;
+        if (pa.pointee.isPointer() and pb.pointee.isPointer()) {
+            return self.pointerTypesEqual(pa.pointee, pb.pointee);
+        }
+        return pa.pointee.eql(pb.pointee);
+    }
 };
 
 /// Size in bytes of a type (for C layout computation).
@@ -362,6 +413,7 @@ pub fn sizeOf(type_id: TypeId, types: *const TypeRegistry) u32 {
         .unresolved => 4, // fallback
         .function => 8, // pointer-sized
         .struct_type => |idx| types.struct_types.items[idx].size,
+        .pointer => 8, // pointer-sized
     };
 }
 
@@ -378,6 +430,7 @@ pub fn alignmentOf(type_id: TypeId, types: *const TypeRegistry) u32 {
         .unresolved => 4,
         .function => 8,
         .struct_type => |idx| types.struct_types.items[idx].alignment,
+        .pointer => 8,
     };
 }
 

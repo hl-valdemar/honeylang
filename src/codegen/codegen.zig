@@ -497,6 +497,9 @@ pub const CodeGenContext = struct {
                 _ = try self.generateStatement(defer_node.stmt);
             },
             .assignment => try self.generateAssignment(node_idx),
+            .call_expr => {
+                _ = try self.generateExpression(node_idx);
+            },
             .if_stmt => try self.generateIf(node_idx),
             else => return null,
         }
@@ -533,6 +536,12 @@ pub const CodeGenContext = struct {
 
         // Generate the value expression (for `x += 4` this is the desugared `x + 4`)
         const value_reg = try self.generateExpression(assign.value) orelse return;
+
+        // Check if target is a dereference (p^ = 10)
+        if (self.ast.getKind(assign.target) == .deref) {
+            try self.generateDerefAssignment(assign.target, value_reg);
+            return;
+        }
 
         // Check if target is a field access (p.x = 10)
         if (self.ast.getKind(assign.target) == .field_access) {
@@ -682,6 +691,8 @@ pub const CodeGenContext = struct {
             .call_expr => try self.generateCallExpr(node_idx),
             .field_access => try self.generateFieldAccess(node_idx),
             .struct_literal => try self.generateStructLiteral(node_idx),
+            .address_of => try self.generateAddressOf(node_idx),
+            .deref => try self.generateDeref(node_idx),
             else => null,
         };
     }
@@ -748,6 +759,7 @@ pub const CodeGenContext = struct {
                 else => .w32,
             },
             .struct_type => .ptr,
+            .pointer => .ptr,
             .unresolved => .w32,
             else => .w32,
         };
@@ -919,6 +931,74 @@ pub const CodeGenContext = struct {
         }
 
         return null;
+    }
+
+    fn generateAddressOf(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {
+        const addr = self.ast.getAddressOf(node_idx);
+        const operand_kind = self.ast.getKind(addr.operand);
+
+        if (operand_kind == .identifier) {
+            const ident = self.ast.getIdentifier(addr.operand);
+            const token = self.tokens.items[ident.token_idx];
+            const name = self.src.getSlice(token.start, token.start + token.len);
+
+            // get the operand's type to determine how to take its address
+            const operand_type = self.node_types.get(addr.operand) orelse .unresolved;
+
+            if (operand_type.isStruct()) {
+                // struct variables already store a pointer to the data
+                // &pt just returns that pointer
+                return try self.generateIdentifier(addr.operand);
+            }
+
+            // primitive variable — get address of stack slot or global
+            if (self.locals.lookup(name)) |local| {
+                return try self.current_func.?.emitAddrOfLocal(local.offset);
+            } else if (self.mir.globals.lookup(name)) |global_idx| {
+                return try self.current_func.?.emitAddrOfGlobal(global_idx);
+            }
+        }
+
+        return null;
+    }
+
+    fn generateDeref(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {
+        const deref = self.ast.getDeref(node_idx);
+
+        // generate the pointer expression
+        const ptr_reg = try self.generateExpression(deref.operand) orelse return null;
+
+        // get the result type (pointee type)
+        const result_type = self.node_types.get(node_idx) orelse .unresolved;
+
+        if (result_type.isStruct()) {
+            // struct: the pointer IS the value (structs are always by-pointer)
+            return ptr_reg;
+        }
+
+        // primitive: load through pointer
+        const width = typeIdToWidth(result_type);
+        return try self.current_func.?.emitLoadPtr(ptr_reg, width);
+    }
+
+    fn generateDerefAssignment(self: *CodeGenContext, target_node: NodeIndex, value_reg: VReg) CodeGenError!void {
+        const func = self.current_func.?;
+        const deref = self.ast.getDeref(target_node);
+
+        // generate the pointer expression
+        const ptr_reg = try self.generateExpression(deref.operand) orelse return;
+
+        // get the target type (pointee type)
+        const target_type = self.node_types.get(target_node) orelse .unresolved;
+
+        if (target_type.isStruct()) {
+            // struct: memcpy the data
+            try func.emitCopyStruct(ptr_reg, value_reg, target_type.struct_type);
+        } else {
+            // primitive: store through pointer
+            const width = typeIdToWidth(target_type);
+            try func.emitStorePtr(ptr_reg, value_reg, width);
+        }
     }
 
     fn generateStructLiteral(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {

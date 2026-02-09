@@ -195,7 +195,7 @@ pub const Parser = struct {
 
         // parse optional type annotation
         const type_node = if (self.match(.colon))
-            try self.parseIdentifier() // type is also an identifier
+            try self.parseType()
         else
             null;
 
@@ -235,7 +235,7 @@ pub const Parser = struct {
         try self.expectToken(.right_paren, .expected_right_paren);
 
         // parse return type
-        const return_type = try self.parseIdentifier();
+        const return_type = try self.parseType();
 
         // parse body (optional for external functions)
         const body: ?NodeIndex = if (self.check(.left_curly))
@@ -290,7 +290,7 @@ pub const Parser = struct {
             try self.expectToken(.colon, .expected_colon);
 
             // parse field type
-            const field_type = try self.parseIdentifier();
+            const field_type = try self.parseType();
             try fields.append(self.allocator, field_type);
 
             // handle optional comma
@@ -316,8 +316,8 @@ pub const Parser = struct {
             // expect :
             try self.expectToken(.colon, .expected_colon);
 
-            // parse parameter type (identifier)
-            const param_type = try self.parseIdentifier();
+            // parse parameter type
+            const param_type = try self.parseType();
             try params.append(self.allocator, param_type);
 
             // handle comma
@@ -415,8 +415,8 @@ pub const Parser = struct {
                     next.kind == .slash_equal)
                 {
                     break :blk try self.parseAssignment();
-                } else if (next.kind == .dot) {
-                    // could be field access expression or field assignment (p.x = 10)
+                } else if (next.kind == .dot or next.kind == .caret) {
+                    // could be field access, dereference, or assignment through either
                     break :blk try self.parseExpressionOrFieldAssignment();
                 } else {
                     // expression statement
@@ -435,7 +435,7 @@ pub const Parser = struct {
 
         // bare return (void) — next token cannot start an expression
         const expr = if (self.peek()) |token| switch (token.kind) {
-            .identifier, .number, .bool, .left_paren, .minus, .not => try self.parseExpression(),
+            .identifier, .number, .bool, .left_paren, .minus, .not, .ampersand => try self.parseExpression(),
             else => try self.ast.addVoidLiteral(start_pos, self.previousEnd()),
         } else try self.ast.addVoidLiteral(start_pos, self.previousEnd());
 
@@ -469,8 +469,8 @@ pub const Parser = struct {
         try self.expectToken(.colon, .expected_colon);
 
         // optional type
-        const type_node = if (self.check(.identifier))
-            try self.parseIdentifier()
+        const type_node = if (self.check(.identifier) or self.check(.at))
+            try self.parseType()
         else
             null;
 
@@ -772,6 +772,15 @@ pub const Parser = struct {
             return try self.ast.addUnaryOp(unary_op, operand, start_pos, end_pos);
         }
 
+        // address-of: &expr
+        if (token.kind == .ampersand) {
+            const start_pos = self.currentStart();
+            self.advance();
+            const operand = try self.parseUnary(); // right associative
+            const end_pos = self.previousEnd();
+            return try self.ast.addAddressOf(operand, start_pos, end_pos);
+        }
+
         return try self.parsePrimary();
     }
 
@@ -816,13 +825,20 @@ pub const Parser = struct {
             },
         };
 
-        // postfix: field access
-        while (self.check(.dot)) {
-            const start_pos = self.ast.getLocation(expr).start;
-            self.advance(); // consume dot
-            const field = try self.parseIdentifier();
-            const end_pos = self.previousEnd();
-            expr = try self.ast.addFieldAccess(expr, field, start_pos, end_pos);
+        // postfix: field access and dereference
+        while (self.check(.dot) or self.check(.caret)) {
+            if (self.check(.dot)) {
+                const start_pos = self.ast.getLocation(expr).start;
+                self.advance(); // consume dot
+                const field = try self.parseIdentifier();
+                const end_pos = self.previousEnd();
+                expr = try self.ast.addFieldAccess(expr, field, start_pos, end_pos);
+            } else {
+                const start_pos = self.ast.getLocation(expr).start;
+                self.advance(); // consume ^
+                const end_pos = self.previousEnd();
+                expr = try self.ast.addDeref(expr, start_pos, end_pos);
+            }
         }
 
         return expr;
@@ -847,6 +863,18 @@ pub const Parser = struct {
         const token_idx: TokenIndex = @intCast(self.pos - 1);
 
         return try self.ast.addIdentifier(token_idx, start_pos, end_pos);
+    }
+
+    fn parseType(self: *Parser) ParseError!NodeIndex {
+        if (self.check(.at)) {
+            const start_pos = self.currentStart();
+            self.advance(); // consume @
+            const is_mutable = self.match(.mut);
+            const inner = try self.parseType(); // recursive for @@T
+            const end_pos = self.previousEnd();
+            return try self.ast.addPointerType(inner, is_mutable, start_pos, end_pos);
+        }
+        return try self.parseIdentifier();
     }
 
     fn parseLiteral(self: *Parser) ParseError!NodeIndex {

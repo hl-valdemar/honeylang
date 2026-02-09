@@ -53,6 +53,11 @@ pub const SemanticErrorKind = enum {
     // usage warnings
     unused_type,
 
+    // pointer errors
+    cannot_take_address,
+    deref_non_pointer,
+    assign_through_immutable_ptr,
+
     pub fn info(self: SemanticErrorKind) ErrorInfo {
         return error_info.get(self);
     }
@@ -203,6 +208,21 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .code = "S027",
         .message = "duplicate field in struct literal",
         .help = "field already specified in this literal",
+    },
+    .cannot_take_address = .{
+        .code = "S028",
+        .message = "cannot take address of expression",
+        .help = "only variables and fields are addressable",
+    },
+    .deref_non_pointer = .{
+        .code = "S029",
+        .message = "dereference of non-pointer type",
+        .help = "only pointer types can be dereferenced with ^",
+    },
+    .assign_through_immutable_ptr = .{
+        .code = "S030",
+        .message = "cannot assign through immutable pointer",
+        .help = "use @mut to create a mutable pointer",
     },
 });
 
