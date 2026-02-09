@@ -12,11 +12,12 @@ pub const VReg = u16;
 pub const Width = enum {
     w32,
     w64,
+    ptr, // pointer type (for struct params passed by reference)
 
     pub fn bits(self: Width) u8 {
         return switch (self) {
             .w32 => 32,
-            .w64 => 64,
+            .w64, .ptr => 64,
         };
     }
 };
@@ -161,6 +162,15 @@ pub const MInst = union(enum) {
 
     /// Unconditional branch.
     br: LabelId,
+
+    /// Load a field from a struct pointer via GEP.
+    load_field: struct {
+        dst: VReg,
+        base: VReg, // pointer to struct
+        struct_idx: u32, // index into TypeRegistry.struct_types
+        field_idx: u32, // field index within the struct
+        width: Width, // width of the loaded field
+    },
 };
 
 /// Function parameter metadata.
@@ -300,6 +310,19 @@ pub const MIRFunction = struct {
     /// Emit an unconditional branch.
     pub fn emitBr(self: *MIRFunction, target: LabelId) !void {
         try self.emit(.{ .br = target });
+    }
+
+    /// Emit a load_field instruction (GEP + load from struct pointer).
+    pub fn emitLoadField(self: *MIRFunction, base: VReg, struct_idx: u32, field_idx: u32, width: Width) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .load_field = .{
+            .dst = dst,
+            .base = base,
+            .struct_idx = struct_idx,
+            .field_idx = field_idx,
+            .width = width,
+        } });
+        return dst;
     }
 
     /// Emit a function call and return the destination vreg (null for void).

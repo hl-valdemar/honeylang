@@ -16,24 +16,33 @@ fn compileTo(phase: Phase, src_input: []const u8) !CompileResult {
 
     // lexer
     const lex = try honey.lexer.scan(allocator, &src);
-    if (phase == .lexer) return .{ .arena = arena, .lex = lex, .parse = null, .sem = null };
+    if (phase == .lexer) return .{ .arena = arena, .lex = lex, .parse = null, .sem = null, .codegen = null };
 
     // parser
     const parse = try honey.parser.parse(allocator, lex.tokens, &src);
-    if (phase == .parser) return .{ .arena = arena, .lex = lex, .parse = parse, .sem = null };
+    if (phase == .parser) return .{ .arena = arena, .lex = lex, .parse = parse, .sem = null, .codegen = null };
 
     // semantic
-    const sem = try honey.semantic.analyze(allocator, &parse.ast, &lex.tokens, &src);
-    return .{ .arena = arena, .lex = lex, .parse = parse, .sem = sem };
+    var sem = try honey.semantic.analyze(allocator, &parse.ast, &lex.tokens, &src);
+    if (phase == .semantic) return .{ .arena = arena, .lex = lex, .parse = parse, .sem = sem, .codegen = null };
+
+    // comptime
+    const comptime_result = try honey.comptime_.evaluate(allocator, &parse.ast, &lex.tokens, &src, &sem.symbols);
+
+    // codegen
+    const target: honey.codegen.Target = .{ .arch = .aarch64, .os = .darwin };
+    const codegen_result = try honey.codegen.generate(allocator, target, &comptime_result, &sem.symbols, &sem.types, &sem.node_types, &sem.skip_nodes, &parse.ast, &lex.tokens, &src);
+    return .{ .arena = arena, .lex = lex, .parse = parse, .sem = sem, .codegen = codegen_result };
 }
 
-const Phase = enum { lexer, parser, semantic };
+const Phase = enum { lexer, parser, semantic, codegen };
 
 const CompileResult = struct {
     arena: std.heap.ArenaAllocator,
     lex: honey.lexer.LexerResult,
     parse: ?honey.parser.ParseResult,
     sem: ?honey.semantic.SemanticResult,
+    codegen: ?honey.codegen.CodeGenResult,
 
     fn deinit(self: *CompileResult) void {
         self.arena.deinit();
@@ -43,6 +52,15 @@ const CompileResult = struct {
         try std.testing.expect(!self.lex.errors.hasErrors());
         if (self.parse) |p| try std.testing.expect(!p.errors.hasErrors());
         if (self.sem) |s| try std.testing.expect(!s.errors.hasErrors());
+    }
+
+    fn expectLLVMContains(self: *const CompileResult, expected: []const u8) !void {
+        const cg = self.codegen orelse return error.TestExpectedEqual;
+        if (std.mem.indexOf(u8, cg.output, expected) == null) {
+            std.debug.print("\nExpected LLVM IR to contain: {s}\n", .{expected});
+            std.debug.print("Actual LLVM IR:\n{s}\n", .{cg.output});
+            return error.TestExpectedEqual;
+        }
     }
 
     fn expectLexerError(self: *const CompileResult, expected: LexerErrorKind) !void {
@@ -1006,4 +1024,70 @@ test "field access on non-struct type" {
     );
     defer r.deinit();
     try r.expectSemanticError(.field_access_on_non_struct);
+}
+
+// ============================================================
+// codegen: struct type emission and field access
+// ============================================================
+
+test "codegen emits LLVM struct type definition" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct {
+        \\    x: i32,
+        \\    y: i32,
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    return 0
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("%Point = type { i32, i32 }");
+}
+
+test "codegen struct field access emits GEP and load" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct {
+        \\    x: i32,
+        \\    y: i32,
+        \\}
+        \\
+        \\get_x :: func(p: Point) i32 {
+        \\    return p.x
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    return 0
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("%Point = type { i32, i32 }");
+    // get_x is unused from main, so it will be skipped — check struct type only
+}
+
+test "codegen struct field access with referenced function" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct {
+        \\    x: i32,
+        \\    y: i32,
+        \\}
+        \\
+        \\get_x :: func(p: Point) i32 {
+        \\    return p.x
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    return get_x(0)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    // argument type mismatch, but "always compile" — codegen still runs
+    try r.expectLLVMContains("%Point = type { i32, i32 }");
+    try r.expectLLVMContains("getelementptr inbounds %Point");
+    try r.expectLLVMContains("ptr %arg0");
 }

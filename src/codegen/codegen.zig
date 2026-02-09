@@ -6,6 +6,7 @@ const SymbolTable = @import("../semantic/symbols.zig").SymbolTable;
 const SymbolIndex = @import("../semantic/symbols.zig").SymbolIndex;
 const TypeId = @import("../semantic/types.zig").TypeId;
 const PrimitiveType = @import("../semantic/types.zig").PrimitiveType;
+const TypeRegistry = @import("../semantic/types.zig").TypeRegistry;
 const Ast = @import("../parser/ast.zig").Ast;
 const NodeIndex = @import("../parser/ast.zig").NodeIndex;
 const NodeKind = @import("../parser/ast.zig").NodeKind;
@@ -130,6 +131,7 @@ pub fn generate(
     target: Target,
     comptime_result: *const ComptimeResult,
     symbols: *const SymbolTable,
+    types: *const TypeRegistry,
     node_types: *const std.AutoHashMapUnmanaged(NodeIndex, TypeId),
     skip_nodes: *const std.AutoHashMapUnmanaged(NodeIndex, void),
     ast: *const Ast,
@@ -141,6 +143,7 @@ pub fn generate(
         allocator,
         comptime_result,
         symbols,
+        types,
         node_types,
         skip_nodes,
         ast,
@@ -151,7 +154,7 @@ pub fn generate(
     try ctx.generate();
 
     // lower MIR to LLVM IR
-    const output = try llvm.lower(allocator, &ctx.mir, target);
+    const output = try llvm.lower(allocator, &ctx.mir, types, target);
 
     return .{
         .output = output,
@@ -163,6 +166,7 @@ pub const CodeGenContext = struct {
     allocator: mem.Allocator,
     comptime_result: *const ComptimeResult,
     symbols: *const SymbolTable,
+    types: *const TypeRegistry,
     node_types: *const std.AutoHashMapUnmanaged(NodeIndex, TypeId),
     skip_nodes: *const std.AutoHashMapUnmanaged(NodeIndex, void),
     ast: *const Ast,
@@ -176,6 +180,7 @@ pub const CodeGenContext = struct {
         allocator: mem.Allocator,
         comptime_result: *const ComptimeResult,
         symbols: *const SymbolTable,
+        types: *const TypeRegistry,
         node_types: *const std.AutoHashMapUnmanaged(NodeIndex, TypeId),
         skip_nodes: *const std.AutoHashMapUnmanaged(NodeIndex, void),
         ast: *const Ast,
@@ -186,6 +191,7 @@ pub const CodeGenContext = struct {
             .allocator = allocator,
             .comptime_result = comptime_result,
             .symbols = symbols,
+            .types = types,
             .node_types = node_types,
             .skip_nodes = skip_nodes,
             .ast = ast,
@@ -317,6 +323,9 @@ pub const CodeGenContext = struct {
             .const_decl, .var_decl => {
                 // global constants/variables handled at data section
                 // for now, skip (comptime evaluates constants)
+            },
+            .struct_decl => {
+                // struct declarations are type definitions, handled at LLVM level
             },
             else => {},
         }
@@ -603,6 +612,7 @@ pub const CodeGenContext = struct {
             .identifier => try self.generateIdentifier(node_idx),
             .binary_op => try self.generateBinaryOp(node_idx),
             .call_expr => try self.generateCallExpr(node_idx),
+            .field_access => try self.generateFieldAccess(node_idx),
             else => null,
         };
     }
@@ -661,12 +671,14 @@ pub const CodeGenContext = struct {
     /// Map a resolved TypeId to a MIR operand width.
     /// .unresolved reaching codegen means semantic analysis reported an error (S018)
     /// but the compiler still produces an executable. w32 is used as error recovery.
+    /// Struct types are passed by pointer, so they use .ptr width.
     fn typeIdToWidth(type_id: TypeId) Width {
         return switch (type_id) {
             .primitive => |prim| switch (prim) {
                 .i64, .u64, .f64 => .w64,
                 else => .w32,
             },
+            .struct_type => .ptr,
             .unresolved => .w32,
             else => .w32,
         };
@@ -778,6 +790,36 @@ pub const CodeGenContext = struct {
 
         // 5. Emit call instruction
         return try func.emitCall(func_name, arg_regs.items, call_conv, return_width);
+    }
+
+    fn generateFieldAccess(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {
+        const func = self.current_func.?;
+        const access = self.ast.getFieldAccess(node_idx);
+
+        // generate the base object expression (produces a pointer for struct types)
+        const base_reg = try self.generateExpression(access.object) orelse return null;
+
+        // get the object's type from semantic analysis
+        const object_type = self.node_types.get(access.object) orelse return null;
+        if (object_type != .struct_type) return null;
+
+        const struct_idx = object_type.struct_type;
+        const struct_type = self.types.getStructType(object_type) orelse return null;
+
+        // get field name
+        const field_ident = self.ast.getIdentifier(access.field);
+        const field_token = self.tokens.items[field_ident.token_idx];
+        const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+        // find field index
+        for (struct_type.fields, 0..) |field, i| {
+            if (mem.eql(u8, field.name, field_name)) {
+                const field_width = typeIdToWidth(field.type_id);
+                return try func.emitLoadField(base_reg, struct_idx, @intCast(i), field_width);
+            }
+        }
+
+        return null;
     }
 };
 

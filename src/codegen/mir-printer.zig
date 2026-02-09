@@ -177,6 +177,15 @@ fn printInstruction(inst: *const MInst) void {
         .br => |target| {
             std.debug.print("br L{d}", .{target});
         },
+        .load_field => |f| {
+            std.debug.print("load_field.{s} v{d}, v{d}, struct[{d}].field[{d}]", .{
+                widthStr(f.width),
+                f.dst,
+                f.base,
+                f.struct_idx,
+                f.field_idx,
+            });
+        },
     }
 }
 
@@ -184,6 +193,7 @@ fn widthStr(w: Width) []const u8 {
     return switch (w) {
         .w32 => "w32",
         .w64 => "w64",
+        .ptr => "ptr",
     };
 }
 

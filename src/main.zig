@@ -173,7 +173,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     var codegen_arena = std.heap.ArenaAllocator.init(gpa);
     defer codegen_arena.deinit();
 
-    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &sem_result.node_types, &sem_result.skip_nodes, &parse_result.ast, &lexer_result.tokens, &src);
+    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &sem_result.types, &sem_result.node_types, &sem_result.skip_nodes, &parse_result.ast, &lexer_result.tokens, &src);
 
     // print generated MIR
     std.debug.print("\n\n{s}::[[ MIR Generation ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
@@ -256,7 +256,7 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
     var codegen_arena = std.heap.ArenaAllocator.init(gpa);
     defer codegen_arena.deinit();
 
-    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &sem_result.node_types, &sem_result.skip_nodes, &parse_result.ast, &lexer_result.tokens, &src);
+    const codegen_result = try honey.codegen.generate(codegen_arena.allocator(), target, &comptime_result, &sem_result.symbols, &sem_result.types, &sem_result.node_types, &sem_result.skip_nodes, &parse_result.ast, &lexer_result.tokens, &src);
 
     // 7. link into executable
     const link_result = honey.codegen.linker.link(

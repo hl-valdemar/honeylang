@@ -15,9 +15,11 @@ const codegen = @import("codegen.zig");
 const Target = codegen.Target;
 
 const CallingConvention = @import("../parser/ast.zig").CallingConvention;
+const TypeRegistry = @import("../semantic/types.zig").TypeRegistry;
+const TypeId = @import("../semantic/types.zig").TypeId;
 
 /// Lower MIR module to LLVM IR text format.
-pub fn lower(allocator: mem.Allocator, module: *const MIRModule, target: Target) ![]const u8 {
+pub fn lower(allocator: mem.Allocator, module: *const MIRModule, types: *const TypeRegistry, target: Target) ![]const u8 {
     var emitter = try Emitter.init(allocator, target);
     defer emitter.deinit();
 
@@ -26,6 +28,9 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule, target: Target)
     try emitter.raw("source_filename = \"honey\"");
     try emitter.appendFmt("target triple = \"{s}\"\n", .{target.getLLVMTriple()});
     try emitter.newline();
+
+    // emit struct type definitions
+    try emitStructTypes(&emitter, types);
 
     // emit global variable declarations
     try emitGlobals(&emitter, &module.globals);
@@ -42,7 +47,7 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule, target: Target)
     var has_main = false;
     for (module.functions.items) |*func| {
         if (std.mem.eql(u8, func.name, "main")) has_main = true;
-        try lowerFunction(&emitter, func, &module.globals);
+        try lowerFunction(&emitter, func, &module.globals, types);
     }
 
     // emit trap stub if no main function was defined
@@ -62,6 +67,20 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule, target: Target)
     try emitter.newline();
 
     return try allocator.dupe(u8, emitter.getOutput());
+}
+
+fn emitStructTypes(emitter: *Emitter, types: *const TypeRegistry) !void {
+    for (types.struct_types.items) |st| {
+        try emitter.appendFmt("%{s} = type {{ ", .{st.name});
+        for (st.fields, 0..) |field, i| {
+            if (i > 0) try emitter.appendSlice(", ");
+            try emitter.appendSlice(typeIdToLLVMType(field.type_id));
+        }
+        try emitter.appendSlice(" }\n");
+    }
+    if (types.struct_types.items.len > 0) {
+        try emitter.newline();
+    }
 }
 
 fn emitGlobals(emitter: *Emitter, globals: *const GlobalVars) !void {
@@ -98,7 +117,7 @@ fn emitExternDecl(emitter: *Emitter, ext: *const mir.ExternFunc) !void {
     try emitter.appendSlice(")\n");
 }
 
-fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const GlobalVars) !void {
+fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const GlobalVars, types: *const TypeRegistry) !void {
     const cc_attr = ccAttr(func.call_conv);
     const ret_str = if (func.return_width) |w| widthToLLVMType(w) else "void";
 
@@ -120,7 +139,7 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
     var alloca_map = AllocaMap{};
 
     for (func.instructions.items) |inst| {
-        try lowerInst(emitter, inst, &ssa_map, &alloca_map, func, globals);
+        try lowerInst(emitter, inst, &ssa_map, &alloca_map, func, globals, types);
     }
 
     // If the last instruction is not a terminator, add an implicit return
@@ -149,6 +168,7 @@ fn lowerInst(
     alloca_map: *AllocaMap,
     func: *const MIRFunction,
     globals: *const GlobalVars,
+    types: *const TypeRegistry,
 ) !void {
     switch (inst) {
         .mov_imm => |op| {
@@ -303,6 +323,27 @@ fn lowerInst(
                 });
             }
         },
+
+        .load_field => |op| {
+            const base_ssa = ssa_map.get(op.base);
+
+            // look up struct type name from registry
+            const struct_type = types.struct_types.items[op.struct_idx];
+            const field_type_str = widthToLLVMType(op.width);
+
+            // emit GEP to get pointer to field
+            const gep_ssa = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds %{s}, ptr %{d}, i32 0, i32 {d}\n", .{
+                gep_ssa, struct_type.name, base_ssa, op.field_idx,
+            });
+
+            // emit load from field pointer
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            try emitter.appendFmt("  %{d} = load {s}, ptr %gep.{d}\n", .{
+                dst_ssa, field_type_str, gep_ssa,
+            });
+        },
     }
 }
 
@@ -318,6 +359,27 @@ fn widthToLLVMType(width: Width) []const u8 {
     return switch (width) {
         .w32 => "i32",
         .w64 => "i64",
+        .ptr => "ptr",
+    };
+}
+
+/// Map a TypeId to an LLVM type string (for struct field types in type definitions).
+fn typeIdToLLVMType(type_id: TypeId) []const u8 {
+    return switch (type_id) {
+        .primitive => |p| switch (p) {
+            .void => "void",
+            .bool => "i1",
+            .u8, .i8 => "i8",
+            .u16, .i16 => "i16",
+            .f16 => "half",
+            .u32, .i32 => "i32",
+            .f32 => "float",
+            .u64, .i64 => "i64",
+            .f64 => "double",
+        },
+        .struct_type => "ptr", // nested struct fields are pointers
+        .unresolved => "i32",
+        .function => "ptr",
     };
 }
 
