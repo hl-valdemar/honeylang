@@ -139,7 +139,12 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     // 4. analyze parse tree
     var semantic_arena = std.heap.ArenaAllocator.init(gpa);
     defer semantic_arena.deinit();
-    const sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &parse_result.ast, &lexer_result.tokens, &src);
+    var sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &parse_result.ast, &lexer_result.tokens, &src);
+
+    // check for missing entry point
+    if (sem_result.symbols.lookup("main") == null) {
+        try sem_result.errors.add(.{ .kind = .missing_entry_point, .start = 0, .end = 0 });
+    }
 
     // print generated symbol table
     std.debug.print("\n\n{s}::[[ Semantic Analysis ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
@@ -230,7 +235,12 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
     // 4. analyze parse tree
     var semantic_arena = std.heap.ArenaAllocator.init(gpa);
     defer semantic_arena.deinit();
-    const sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &parse_result.ast, &lexer_result.tokens, &src);
+    var sem_result = try honey.semantic.analyze(semantic_arena.allocator(), &parse_result.ast, &lexer_result.tokens, &src);
+
+    // check for missing entry point
+    if (sem_result.symbols.lookup("main") == null) {
+        try sem_result.errors.add(.{ .kind = .missing_entry_point, .start = 0, .end = 0 });
+    }
 
     // print semantic diagnostics if any
     if (sem_result.errors.hasErrors() or sem_result.errors.hasWarnings()) {

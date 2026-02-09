@@ -41,6 +41,7 @@ pub const SemanticErrorKind = enum {
     // type resolution errors
     unresolved_type,
     missing_function_body,
+    missing_entry_point,
 
     pub fn info(self: SemanticErrorKind) ErrorInfo {
         return error_info.get(self);
@@ -156,6 +157,11 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .code = "S020",
         .message = "honey function must have a body",
         .help = "only foreign-convention functions (c, cobol, fortran) can be externally defined",
+    },
+    .missing_entry_point = .{
+        .code = "S021",
+        .message = "missing entry point",
+        .help = "program must define a 'main' function",
     },
 });
 

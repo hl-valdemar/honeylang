@@ -88,10 +88,13 @@ pub const SemanticContext = struct {
         // 3. check type compatibility
         try self.checkTypes();
 
-        // 4. finalize (pending → unresolved)
+        // 4. propagate resolved types back through value expressions
+        self.resolveFromContext();
+
+        // 5. finalize (pending → unresolved)
         self.finalizeTypes();
 
-        // 5. check for unused and unresolved symbols
+        // 6. check for unused and unresolved symbols
         try self.checkUnusedSymbols();
 
         // cleanup
@@ -531,6 +534,46 @@ pub const SemanticContext = struct {
         }
     }
 
+    /// Propagate resolved types backward through global value expressions.
+    /// When a global was resolved via context (e.g. return type), this pass
+    /// walks its value expression and resolves any .pending symbols it references.
+    fn resolveFromContext(self: *SemanticContext) void {
+        var changed = true;
+        while (changed) {
+            changed = false;
+
+            // count pending symbols before propagation
+            var pending_before: usize = 0;
+            for (self.symbols.type_states.items) |ts| {
+                if (ts == .pending) pending_before += 1;
+            }
+
+            // propagate resolved types through value expressions
+            for (0..self.symbols.count()) |i| {
+                const idx: SymbolIndex = @intCast(i);
+                const kind = self.symbols.getKind(idx);
+                if (kind == .function) continue;
+
+                if (self.symbols.getTypeState(idx) == .resolved) {
+                    const value_node = self.symbols.getValueNode(idx);
+                    if (value_node != 0) {
+                        self.propagateType(value_node, self.symbols.getTypeId(idx));
+                    }
+                }
+            }
+
+            // count pending symbols after propagation
+            var pending_after: usize = 0;
+            for (self.symbols.type_states.items) |ts| {
+                if (ts == .pending) pending_after += 1;
+            }
+
+            if (pending_after < pending_before) {
+                changed = true;
+            }
+        }
+    }
+
     fn checkDeclaration(self: *SemanticContext, node_idx: NodeIndex) !void {
         const kind = self.ast.getKind(node_idx);
         switch (kind) {
@@ -888,8 +931,8 @@ pub const SemanticContext = struct {
             .literal => try self.checkLiteral(node_idx, context_type),
             .void_literal => TypeId.void,
             .identifier => try self.checkIdentifier(node_idx, context_type),
-            .unary_op => try self.checkUnaryOp(node_idx),
-            .binary_op => try self.checkBinaryOp(node_idx),
+            .unary_op => try self.checkUnaryOp(node_idx, context_type),
+            .binary_op => try self.checkBinaryOp(node_idx, context_type),
             .call_expr => try self.checkCallExpression(node_idx),
             else => null,
         };
@@ -937,6 +980,10 @@ pub const SemanticContext = struct {
         // 2. check globals
         if (self.symbols.lookup(name)) |sym_idx| {
             self.symbols.markReferenced(sym_idx);
+            // propagate type from context if global is still pending
+            if (self.symbols.getTypeState(sym_idx) == .pending and !context_type.isUnresolved()) {
+                self.symbols.resolve(sym_idx, context_type);
+            }
             return self.symbols.getTypeId(sym_idx);
         }
 
@@ -950,7 +997,7 @@ pub const SemanticContext = struct {
         return null;
     }
 
-    fn checkUnaryOp(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
+    fn checkUnaryOp(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
         const unary_op = self.ast.getUnaryOp(node_idx);
         const loc = self.ast.getLocation(node_idx);
 
@@ -972,8 +1019,8 @@ pub const SemanticContext = struct {
                 return TypeId.bool;
             },
             .negate => {
-                // infer type of operand without context
-                const operand_type = try self.checkExpression(unary_op.operand, .unresolved);
+                // pass numeric context through to operand
+                const operand_type = try self.checkExpression(unary_op.operand, context_type);
 
                 // negation requires numeric type
                 if (operand_type) |t| {
@@ -1011,14 +1058,14 @@ pub const SemanticContext = struct {
         }
     }
 
-    fn checkBinaryOp(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
+    fn checkBinaryOp(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
         const binary_op = self.ast.getBinaryOp(node_idx);
         const loc = self.ast.getLocation(node_idx);
 
         if (binary_op.isArithmetic()) {
-            // infer operand types (no context)
-            const left_type = try self.checkExpression(binary_op.left, .unresolved);
-            const right_type = try self.checkExpression(binary_op.right, .unresolved);
+            // infer operand types, threading context for numeric propagation
+            const left_type = try self.checkExpression(binary_op.left, context_type);
+            const right_type = try self.checkExpression(binary_op.right, context_type);
 
             const operand_type = left_type orelse right_type;
 

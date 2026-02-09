@@ -39,8 +39,22 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule, target: Target)
     }
 
     // emit function definitions
+    var has_main = false;
     for (module.functions.items) |*func| {
+        if (std.mem.eql(u8, func.name, "main")) has_main = true;
         try lowerFunction(&emitter, func, &module.globals);
+    }
+
+    // emit trap stub if no main function was defined
+    if (!has_main) {
+        try emitter.raw("declare void @llvm.trap() noreturn nounwind");
+        try emitter.newline();
+        try emitter.raw("define i32 @main() {");
+        try emitter.raw("entry:");
+        try emitter.raw("  call void @llvm.trap()");
+        try emitter.raw("  unreachable");
+        try emitter.raw("}");
+        try emitter.newline();
     }
 
     // register __honey_init as a global constructor so it runs before main
