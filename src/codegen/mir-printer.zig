@@ -186,6 +186,21 @@ fn printInstruction(inst: *const MInst) void {
                 f.field_idx,
             });
         },
+        .alloca_struct => |a| {
+            std.debug.print("alloca_struct v{d}, struct[{d}]", .{
+                a.dst,
+                a.struct_idx,
+            });
+        },
+        .store_field => |f| {
+            std.debug.print("store_field.{s} v{d}, struct[{d}].field[{d}], v{d}", .{
+                widthStr(f.width),
+                f.base,
+                f.struct_idx,
+                f.field_idx,
+                f.value,
+            });
+        },
     }
 }
 

@@ -1091,3 +1091,105 @@ test "codegen struct field access with referenced function" {
     try r.expectLLVMContains("getelementptr inbounds %Point");
     try r.expectLLVMContains("ptr %arg0");
 }
+
+// ============================================================
+// correct programs: struct literals
+// ============================================================
+
+test "struct literal initialization" {
+    var r = try compileTo(.semantic,
+        \\Point :: c struct {
+        \\    x: i32,
+        \\    y: i32,
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    p := Point{ .x = 3, .y = 4 }
+        \\    return p.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+// ============================================================
+// semantic errors: struct literals
+// ============================================================
+
+test "struct literal missing field" {
+    var r = try compileTo(.semantic,
+        \\Point :: c struct {
+        \\    x: i32,
+        \\    y: i32,
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    p := Point{ .x = 3 }
+        \\    return p.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.missing_field);
+}
+
+test "struct literal duplicate field" {
+    var r = try compileTo(.semantic,
+        \\Point :: c struct {
+        \\    x: i32,
+        \\    y: i32,
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    p := Point{ .x = 3, .x = 4 }
+        \\    return p.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.duplicate_literal_field);
+}
+
+test "struct literal field type mismatch" {
+    var r = try compileTo(.semantic,
+        \\Point :: c struct {
+        \\    x: i32,
+        \\    y: i32,
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    flag: bool = true
+        \\    p := Point{ .x = 3, .y = flag }
+        \\    return p.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.type_mismatch);
+}
+
+// ============================================================
+// codegen: struct literals
+// ============================================================
+
+test "codegen struct literal emits alloca and GEP stores" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct {
+        \\    x: i32,
+        \\    y: i32,
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    p := Point{ .x = 3, .y = 4 }
+        \\    return p.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("%Point = type { i32, i32 }");
+    try r.expectLLVMContains("alloca %Point");
+    try r.expectLLVMContains("getelementptr inbounds %Point");
+    try r.expectLLVMContains("store i32");
+}

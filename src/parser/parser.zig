@@ -757,10 +757,18 @@ pub const Parser = struct {
 
         var expr = switch (token.kind) {
             .identifier => blk: {
-                // check if it's a call expression
                 if (self.peekOffset(1)) |next| {
                     if (next.kind == .left_paren) {
                         break :blk try self.parseCallExpr();
+                    }
+                    // struct literal: Identifier { .field = ... }
+                    // disambiguate from blocks by checking for dot after {
+                    if (next.kind == .left_curly) {
+                        if (self.peekOffset(2)) |after_curly| {
+                            if (after_curly.kind == .dot) {
+                                break :blk try self.parseStructLiteral();
+                            }
+                        }
                     }
                 }
                 break :blk try self.parseIdentifier();
@@ -854,6 +862,47 @@ pub const Parser = struct {
         const end_pos = self.previousEnd();
 
         return try self.ast.addCallExpr(func, args_range, start_pos, end_pos);
+    }
+
+    fn parseStructLiteral(self: *Parser) ParseError!NodeIndex {
+        const start_pos = self.currentStart();
+
+        // parse type name identifier
+        const type_name = try self.parseIdentifier();
+
+        // expect {
+        try self.expectToken(.left_curly, .expected_left_curly);
+
+        // parse .field = value pairs
+        var fields = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
+        defer fields.deinit(self.allocator);
+
+        while (!self.check(.right_curly) and !self.check(.eof)) {
+            // expect .
+            try self.expectToken(.dot, .unexpected_token);
+
+            // parse field name
+            const field_name = try self.parseIdentifier();
+            try fields.append(self.allocator, field_name);
+
+            // expect =
+            try self.expectToken(.equal, .expected_equal);
+
+            // parse value expression
+            const value = try self.parseExpression();
+            try fields.append(self.allocator, value);
+
+            // optional comma
+            if (!self.match(.comma)) break;
+        }
+
+        // expect }
+        try self.expectToken(.right_curly, .expected_right_curly);
+
+        const fields_range = try self.ast.addExtra(fields.items);
+        const end_pos = self.previousEnd();
+
+        return try self.ast.addStructLiteral(type_name, fields_range, start_pos, end_pos);
     }
 
     fn peek(self: *const Parser) ?Token {

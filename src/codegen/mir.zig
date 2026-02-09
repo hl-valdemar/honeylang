@@ -171,6 +171,21 @@ pub const MInst = union(enum) {
         field_idx: u32, // field index within the struct
         width: Width, // width of the loaded field
     },
+
+    /// Allocate a struct on the stack.
+    alloca_struct: struct {
+        dst: VReg, // pointer to allocated struct
+        struct_idx: u32, // index into TypeRegistry.struct_types
+    },
+
+    /// Store a value to a struct field via GEP.
+    store_field: struct {
+        base: VReg, // pointer to struct
+        value: VReg, // value to store
+        struct_idx: u32, // index into TypeRegistry.struct_types
+        field_idx: u32, // field index within the struct
+        width: Width, // width of the stored field
+    },
 };
 
 /// Function parameter metadata.
@@ -323,6 +338,27 @@ pub const MIRFunction = struct {
             .width = width,
         } });
         return dst;
+    }
+
+    /// Emit an alloca_struct instruction and return the pointer vreg.
+    pub fn emitAllocaStruct(self: *MIRFunction, struct_idx: u32) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .alloca_struct = .{
+            .dst = dst,
+            .struct_idx = struct_idx,
+        } });
+        return dst;
+    }
+
+    /// Emit a store_field instruction (GEP + store to struct field).
+    pub fn emitStoreField(self: *MIRFunction, base: VReg, value: VReg, struct_idx: u32, field_idx: u32, width: Width) !void {
+        try self.emit(.{ .store_field = .{
+            .base = base,
+            .value = value,
+            .struct_idx = struct_idx,
+            .field_idx = field_idx,
+            .width = width,
+        } });
     }
 
     /// Emit a function call and return the destination vreg (null for void).

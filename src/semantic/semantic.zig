@@ -1039,6 +1039,7 @@ pub const SemanticContext = struct {
             .binary_op => try self.checkBinaryOp(node_idx, context_type),
             .call_expr => try self.checkCallExpression(node_idx),
             .field_access => try self.checkFieldAccess(node_idx),
+            .struct_literal => try self.checkStructLiteral(node_idx),
             else => null,
         };
 
@@ -1369,6 +1370,111 @@ pub const SemanticContext = struct {
         }
 
         return null;
+    }
+
+    fn checkStructLiteral(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
+        const lit = self.ast.getStructLiteral(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+
+        // resolve type name to struct type
+        const type_ident = self.ast.getIdentifier(lit.type_name);
+        const type_token = self.tokens.items[type_ident.token_idx];
+        const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
+
+        const sym_idx = self.symbols.lookup(type_name) orelse {
+            try self.errors.add(.{
+                .kind = .undefined_symbol,
+                .start = type_token.start,
+                .end = type_token.start + type_token.len,
+            });
+            return null;
+        };
+
+        self.symbols.markReferenced(sym_idx);
+
+        if (self.symbols.getKind(sym_idx) != .type_) {
+            try self.errors.add(.{
+                .kind = .unknown_type,
+                .start = type_token.start,
+                .end = type_token.start + type_token.len,
+            });
+            return null;
+        }
+
+        const type_id = self.symbols.getTypeId(sym_idx);
+        const struct_type = self.types.getStructType(type_id) orelse return null;
+
+        // parse field pairs from extra_data
+        const field_data = self.ast.getExtra(lit.fields);
+
+        // track which fields have been set (for duplicate/missing detection)
+        var seen_fields = std.StringHashMap(void).init(self.allocator);
+        defer seen_fields.deinit();
+
+        var fi: usize = 0;
+        while (fi < field_data.len) : (fi += 2) {
+            const field_name_idx = field_data[fi];
+            const field_value_idx = field_data[fi + 1];
+
+            // get field name
+            const field_ident = self.ast.getIdentifier(field_name_idx);
+            const field_token = self.tokens.items[field_ident.token_idx];
+            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+            // check for duplicate fields
+            if (seen_fields.contains(field_name)) {
+                try self.errors.add(.{
+                    .kind = .duplicate_literal_field,
+                    .start = field_token.start,
+                    .end = field_token.start + field_token.len,
+                });
+            } else {
+                try seen_fields.put(field_name, {});
+            }
+
+            // find field in struct definition
+            var found = false;
+            for (struct_type.fields) |field| {
+                if (mem.eql(u8, field.name, field_name)) {
+                    found = true;
+                    // check value type against field type
+                    const value_type = try self.checkExpression(field_value_idx, field.type_id);
+                    if (value_type) |vt| {
+                        if (!typesCompatible(field.type_id, vt)) {
+                            const val_loc = self.ast.getLocation(field_value_idx);
+                            try self.errors.add(.{
+                                .kind = .type_mismatch,
+                                .start = val_loc.start,
+                                .end = val_loc.end,
+                            });
+                        }
+                    }
+                    break;
+                }
+            }
+
+            if (!found) {
+                try self.errors.add(.{
+                    .kind = .no_such_field,
+                    .start = field_token.start,
+                    .end = field_token.start + field_token.len,
+                });
+            }
+        }
+
+        // check all struct fields are initialized
+        for (struct_type.fields) |field| {
+            if (!seen_fields.contains(field.name)) {
+                try self.errors.add(.{
+                    .kind = .missing_field,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+                break; // one error is enough
+            }
+        }
+
+        return type_id;
     }
 
     fn finalizeTypes(self: *SemanticContext) void {

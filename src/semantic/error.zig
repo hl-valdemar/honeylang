@@ -46,6 +46,10 @@ pub const SemanticErrorKind = enum {
     no_such_field,
     field_access_on_non_struct,
 
+    // struct literal errors
+    missing_field,
+    duplicate_literal_field,
+
     // usage warnings
     unused_type,
 
@@ -189,6 +193,16 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .code = "S025",
         .message = "field access on non-struct type",
         .help = "dot access requires a struct type",
+    },
+    .missing_field = .{
+        .code = "S026",
+        .message = "missing field in struct literal",
+        .help = "all fields must be initialized",
+    },
+    .duplicate_literal_field = .{
+        .code = "S027",
+        .message = "duplicate field in struct literal",
+        .help = "field already specified in this literal",
     },
 });
 

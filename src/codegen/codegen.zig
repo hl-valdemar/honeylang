@@ -613,6 +613,7 @@ pub const CodeGenContext = struct {
             .binary_op => try self.generateBinaryOp(node_idx),
             .call_expr => try self.generateCallExpr(node_idx),
             .field_access => try self.generateFieldAccess(node_idx),
+            .struct_literal => try self.generateStructLiteral(node_idx),
             else => null,
         };
     }
@@ -820,6 +821,47 @@ pub const CodeGenContext = struct {
         }
 
         return null;
+    }
+
+    fn generateStructLiteral(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {
+        const func = self.current_func.?;
+        const lit = self.ast.getStructLiteral(node_idx);
+
+        // get struct type from semantic analysis
+        const type_id = self.node_types.get(node_idx) orelse return null;
+        if (type_id != .struct_type) return null;
+
+        const struct_idx = type_id.struct_type;
+        const struct_type = self.types.getStructType(type_id) orelse return null;
+
+        // allocate struct on stack
+        const base = try func.emitAllocaStruct(struct_idx);
+
+        // store each field value
+        const field_data = self.ast.getExtra(lit.fields);
+        var fi: usize = 0;
+        while (fi < field_data.len) : (fi += 2) {
+            const field_name_idx = field_data[fi];
+            const field_value_idx = field_data[fi + 1];
+
+            // get field name
+            const field_ident = self.ast.getIdentifier(field_name_idx);
+            const field_token = self.tokens.items[field_ident.token_idx];
+            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+            // find field index in struct definition
+            for (struct_type.fields, 0..) |field, i| {
+                if (mem.eql(u8, field.name, field_name)) {
+                    const value_reg = try self.generateExpression(field_value_idx) orelse continue;
+                    const field_width = typeIdToWidth(field.type_id);
+                    try func.emitStoreField(base, value_reg, struct_idx, @intCast(i), field_width);
+                    break;
+                }
+            }
+        }
+
+        // return pointer to the struct
+        return base;
     }
 };
 

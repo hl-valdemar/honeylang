@@ -344,6 +344,31 @@ fn lowerInst(
                 dst_ssa, field_type_str, gep_ssa,
             });
         },
+
+        .alloca_struct => |op| {
+            const struct_type = types.struct_types.items[op.struct_idx];
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            try emitter.appendFmt("  %{d} = alloca %{s}\n", .{ dst_ssa, struct_type.name });
+        },
+
+        .store_field => |op| {
+            const base_ssa = ssa_map.get(op.base);
+            const value_ssa = ssa_map.get(op.value);
+            const struct_type = types.struct_types.items[op.struct_idx];
+            const field_type_str = widthToLLVMType(op.width);
+
+            // emit GEP to get pointer to field
+            const gep_ssa = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds %{s}, ptr %{d}, i32 0, i32 {d}\n", .{
+                gep_ssa, struct_type.name, base_ssa, op.field_idx,
+            });
+
+            // emit store to field pointer
+            try emitter.appendFmt("  store {s} %{d}, ptr %gep.{d}\n", .{
+                field_type_str, value_ssa, gep_ssa,
+            });
+        },
     }
 }
 

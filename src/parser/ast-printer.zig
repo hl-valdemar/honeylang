@@ -161,6 +161,12 @@ fn getNodeInfo(
             const field_name = getIdentifierName(ast, tokens, src, access.field);
             break :blk std.fmt.bufPrint(&S.buf, ".{s}", .{field_name}) catch "?";
         },
+        .struct_literal => blk: {
+            const lit = ast.getStructLiteral(idx);
+            const name = getIdentifierName(ast, tokens, src, lit.type_name);
+            const field_count = lit.fields.len / 2;
+            break :blk std.fmt.bufPrint(&S.buf, "{s}{{ fields: {d} }}", .{ name, field_count }) catch "?";
+        },
         .void_literal => "void",
         .err => blk: {
             const err = ast.getError(idx);
@@ -398,6 +404,33 @@ fn printNode(
             std.debug.print("{s}└─ field: ", .{child_prefix});
             printIdentifierValue(ast, tokens, src, access.field);
             std.debug.print("\n", .{});
+        },
+
+        .struct_literal => {
+            const lit = ast.getStructLiteral(idx);
+            std.debug.print("struct_literal:\n", .{});
+
+            std.debug.print("{s}├─ type: ", .{child_prefix});
+            printIdentifierValue(ast, tokens, src, lit.type_name);
+            std.debug.print("\n", .{});
+
+            const field_data = ast.getExtra(lit.fields);
+            const field_count = field_data.len / 2;
+            std.debug.print("{s}└─ fields: {d}\n", .{ child_prefix, field_count });
+
+            var fi: usize = 0;
+            while (fi < field_data.len) : (fi += 2) {
+                const fname = getIdentifierName(ast, tokens, src, field_data[fi]);
+                const is_last_field = (fi + 2 >= field_data.len);
+                const connector: []const u8 = if (is_last_field) "└" else "├";
+                std.debug.print("{s}    {s}─ .{s} =\n", .{ child_prefix, connector, fname });
+
+                const val_prefix = if (is_last_field)
+                    std.fmt.allocPrint(std.heap.page_allocator, "{s}        ", .{child_prefix}) catch unreachable
+                else
+                    std.fmt.allocPrint(std.heap.page_allocator, "{s}    │   ", .{child_prefix}) catch unreachable;
+                printNode(ast, tokens, src, field_data[fi + 1], val_prefix, true);
+            }
         },
 
         .identifier => {
