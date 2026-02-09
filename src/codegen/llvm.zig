@@ -95,12 +95,7 @@ fn emitStructTypes(emitter: *Emitter, types: *const TypeRegistry) !void {
 }
 
 fn needsMemcpy(types: *const TypeRegistry) bool {
-    for (types.struct_types.items) |st| {
-        for (st.fields) |field| {
-            if (field.type_id.isStruct()) return true;
-        }
-    }
-    return false;
+    return types.struct_types.items.len > 0;
 }
 
 fn emitGlobals(emitter: *Emitter, globals: *const GlobalVars) !void {
@@ -139,17 +134,31 @@ fn emitExternDecl(emitter: *Emitter, ext: *const mir.ExternFunc) !void {
 
 fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const GlobalVars, types: *const TypeRegistry) !void {
     const cc_attr = ccAttr(func.call_conv);
-    const ret_str = if (func.return_width) |w| widthToLLVMType(w) else "void";
 
-    // function signature with parameters
-    try emitter.appendFmt("define {s}{s} @{s}(", .{ cc_attr, ret_str, func.name });
+    if (func.sret_struct_idx) |struct_idx| {
+        // sret function: returns void, first param is hidden sret pointer
+        const struct_type = types.struct_types.items[struct_idx];
+        try emitter.appendFmt("define {s}void @{s}(ptr sret(%{s}) %arg0", .{
+            cc_attr, func.name, struct_type.name,
+        });
+        // remaining params shifted by 1
+        for (func.params, 0..) |param, i| {
+            try emitter.appendFmt(", {s} %arg{d}", .{ widthToLLVMType(param.width), i + 1 });
+        }
+        try emitter.appendSlice(") {\n");
+    } else {
+        const ret_str = if (func.return_width) |w| widthToLLVMType(w) else "void";
 
-    for (func.params, 0..) |param, i| {
-        if (i > 0) try emitter.appendSlice(", ");
-        try emitter.appendFmt("{s} %arg{d}", .{ widthToLLVMType(param.width), i });
+        // function signature with parameters
+        try emitter.appendFmt("define {s}{s} @{s}(", .{ cc_attr, ret_str, func.name });
+
+        for (func.params, 0..) |param, i| {
+            if (i > 0) try emitter.appendSlice(", ");
+            try emitter.appendFmt("{s} %arg{d}", .{ widthToLLVMType(param.width), i });
+        }
+
+        try emitter.appendSlice(") {\n");
     }
-
-    try emitter.appendSlice(") {\n");
     try emitter.raw("entry:");
 
     // track SSA values: vreg -> LLVM SSA name
@@ -318,32 +327,60 @@ fn lowerInst(
 
         .call => |op| {
             std.debug.assert(op.args.len == op.arg_widths.len);
-
-            // build argument list
-            var args_str = try std.ArrayList(u8).initCapacity(emitter.allocator, 64);
-            defer args_str.deinit(emitter.allocator);
-
-            for (op.args, op.arg_widths, 0..) |arg_vreg, arg_width, i| {
-                if (i > 0) try args_str.appendSlice(emitter.allocator, ", ");
-                const arg_ssa = ssa_map.get(arg_vreg);
-                const arg_type = widthToLLVMType(arg_width);
-                var buf: [32]u8 = undefined;
-                const arg_fmt = std.fmt.bufPrint(&buf, "{s} %{d}", .{ arg_type, arg_ssa }) catch unreachable;
-                try args_str.appendSlice(emitter.allocator, arg_fmt);
-            }
-
             const call_cc = ccAttr(op.call_conv);
 
-            if (op.dst) |dst_vreg| {
-                const dst_ssa = ssa_map.allocFor(dst_vreg);
-                const ret_type = widthToLLVMType(op.width);
-                try emitter.appendFmt("  %{d} = call {s}{s} @{s}({s})\n", .{
-                    dst_ssa, call_cc, ret_type, op.func_name, args_str.items,
-                });
-            } else {
+            if (op.sret_struct_idx) |struct_idx| {
+                // sret call: first arg gets sret attribute, call returns void
+                const struct_type = types.struct_types.items[struct_idx];
+                var args_str = try std.ArrayList(u8).initCapacity(emitter.allocator, 128);
+                defer args_str.deinit(emitter.allocator);
+
+                // first arg: sret pointer
+                const first_ssa = ssa_map.get(op.args[0]);
+                var buf: [64]u8 = undefined;
+                const sret_fmt = std.fmt.bufPrint(&buf, "ptr sret(%{s}) %{d}", .{
+                    struct_type.name, first_ssa,
+                }) catch unreachable;
+                try args_str.appendSlice(emitter.allocator, sret_fmt);
+
+                // remaining args
+                for (op.args[1..], op.arg_widths[1..]) |arg_vreg, arg_width| {
+                    try args_str.appendSlice(emitter.allocator, ", ");
+                    const arg_ssa = ssa_map.get(arg_vreg);
+                    const arg_type = widthToLLVMType(arg_width);
+                    var abuf: [32]u8 = undefined;
+                    const arg_fmt = std.fmt.bufPrint(&abuf, "{s} %{d}", .{ arg_type, arg_ssa }) catch unreachable;
+                    try args_str.appendSlice(emitter.allocator, arg_fmt);
+                }
+
                 try emitter.appendFmt("  call {s}void @{s}({s})\n", .{
                     call_cc, op.func_name, args_str.items,
                 });
+            } else {
+                // normal call
+                var args_str = try std.ArrayList(u8).initCapacity(emitter.allocator, 64);
+                defer args_str.deinit(emitter.allocator);
+
+                for (op.args, op.arg_widths, 0..) |arg_vreg, arg_width, i| {
+                    if (i > 0) try args_str.appendSlice(emitter.allocator, ", ");
+                    const arg_ssa = ssa_map.get(arg_vreg);
+                    const arg_type = widthToLLVMType(arg_width);
+                    var buf: [32]u8 = undefined;
+                    const arg_fmt = std.fmt.bufPrint(&buf, "{s} %{d}", .{ arg_type, arg_ssa }) catch unreachable;
+                    try args_str.appendSlice(emitter.allocator, arg_fmt);
+                }
+
+                if (op.dst) |dst_vreg| {
+                    const dst_ssa = ssa_map.allocFor(dst_vreg);
+                    const ret_type = widthToLLVMType(op.width);
+                    try emitter.appendFmt("  %{d} = call {s}{s} @{s}({s})\n", .{
+                        dst_ssa, call_cc, ret_type, op.func_name, args_str.items,
+                    });
+                } else {
+                    try emitter.appendFmt("  call {s}void @{s}({s})\n", .{
+                        call_cc, op.func_name, args_str.items,
+                    });
+                }
             }
         },
 
@@ -404,6 +441,14 @@ fn lowerInst(
                     widthToLLVMType(op.width), value_ssa, gep_ssa,
                 });
             }
+        },
+        .copy_struct => |op| {
+            const dst_ssa = ssa_map.get(op.dst);
+            const src_ssa = ssa_map.get(op.src);
+            const struct_type = types.struct_types.items[op.struct_idx];
+            try emitter.appendFmt("  call void @llvm.memcpy.p0.p0.i64(ptr %{d}, ptr %{d}, i64 {d}, i1 false)\n", .{
+                dst_ssa, src_ssa, struct_type.size,
+            });
         },
     }
 }

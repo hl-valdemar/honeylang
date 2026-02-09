@@ -375,7 +375,9 @@ pub const CodeGenContext = struct {
         const call_conv = if (std.mem.eql(u8, func_name, "main")) .c else func.call_conv;
 
         // resolve return type from node_types (stored by semantic analysis)
-        const return_width: ?Width = resolveReturnWidth(self.node_types, func.return_type);
+        const ret_type = self.node_types.get(func.return_type) orelse .unresolved;
+        const sret_struct_idx: ?u32 = if (ret_type.isStruct()) ret_type.struct_type else null;
+        const return_width: ?Width = if (sret_struct_idx != null) null else resolveReturnWidth(self.node_types, func.return_type);
 
         // build parameter info
         const param_nodes = self.ast.getExtra(func.params);
@@ -405,22 +407,33 @@ pub const CodeGenContext = struct {
             return_width,
             try self.allocator.dupe(mir.ParamInfo, param_list.items),
         );
+        self.current_func.?.sret_struct_idx = sret_struct_idx;
 
         // emit function prologue
         try self.current_func.?.emit(.prologue);
+
+        // sret: register hidden first parameter as __sret local
+        const arg_offset: u8 = if (sret_struct_idx != null) 1 else 0;
+        if (sret_struct_idx != null) {
+            const sret_local_offset = try self.locals.add(self.allocator, "__sret", .ptr);
+            try self.current_func.?.emitStoreArg(0, sret_local_offset, .ptr);
+        }
 
         // register parameters as locals and spill to stack
         const func_params = self.current_func.?.params;
         for (func_params, 0..) |param, arg_i| {
             const offset = try self.locals.add(self.allocator, param.name, param.width);
-            try self.current_func.?.emitStoreArg(@intCast(arg_i), offset, param.width);
+            try self.current_func.?.emitStoreArg(@intCast(arg_i + arg_offset), offset, param.width);
         }
 
         // generate function body
         const has_return = try self.generateBlock(func.body.?);
 
         if (!has_return) {
-            if (return_width) |rw| {
+            if (sret_struct_idx != null) {
+                // sret function: implicit return void
+                try self.current_func.?.emitRet(null, .w32);
+            } else if (return_width) |rw| {
                 // non-void function: implicit return 0
                 const zero = try self.current_func.?.emitMovImm(0, rw);
                 try self.current_func.?.emitRet(zero, rw);
@@ -517,19 +530,63 @@ pub const CodeGenContext = struct {
 
     fn generateAssignment(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!void {
         const assign = self.ast.getAssignment(node_idx);
-        const target_ident = self.ast.getIdentifier(assign.target);
-        const target_token = self.tokens.items[target_ident.token_idx];
-        const name = self.src.getSlice(target_token.start, target_token.start + target_token.len);
 
         // Generate the value expression (for `x += 4` this is the desugared `x + 4`)
         const value_reg = try self.generateExpression(assign.value) orelse return;
 
+        // Check if target is a field access (p.x = 10)
+        if (self.ast.getKind(assign.target) == .field_access) {
+            try self.generateFieldAssignment(assign.target, value_reg);
+            return;
+        }
+
+        const target_ident = self.ast.getIdentifier(assign.target);
+        const target_token = self.tokens.items[target_ident.token_idx];
+        const name = self.src.getSlice(target_token.start, target_token.start + target_token.len);
+
         // Try local first, then global
         if (self.locals.lookup(name)) |local| {
+            // Check if this is a struct assignment (needs deep copy)
+            const target_type_id = self.node_types.get(assign.target) orelse .unresolved;
+            if (target_type_id.isStruct()) {
+                const func = self.current_func.?;
+                const dst_reg = try func.emitLoadLocal(local.offset, .ptr);
+                try func.emitCopyStruct(dst_reg, value_reg, target_type_id.struct_type);
+                return;
+            }
             try self.current_func.?.emitStoreLocal(value_reg, local.offset, local.width);
         } else if (self.mir.globals.lookup(name)) |global_idx| {
             const width = self.mir.globals.getWidth(global_idx);
             try self.current_func.?.emitStoreGlobal(value_reg, global_idx, width);
+        }
+    }
+
+    fn generateFieldAssignment(self: *CodeGenContext, target_node: NodeIndex, value_reg: VReg) CodeGenError!void {
+        const func = self.current_func.?;
+        const access = self.ast.getFieldAccess(target_node);
+
+        // Generate the base object expression (produces a pointer)
+        const base_reg = try self.generateExpression(access.object) orelse return;
+
+        // Get the object's type
+        const object_type = self.node_types.get(access.object) orelse return;
+        if (object_type != .struct_type) return;
+
+        const struct_idx = object_type.struct_type;
+        const struct_type = self.types.getStructType(object_type) orelse return;
+
+        // Get field name
+        const field_ident = self.ast.getIdentifier(access.field);
+        const field_token = self.tokens.items[field_ident.token_idx];
+        const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+        // Find field index and emit store
+        for (struct_type.fields, 0..) |field, i| {
+            if (mem.eql(u8, field.name, field_name)) {
+                const field_width = typeIdToWidth(field.type_id);
+                try func.emitStoreField(base_reg, value_reg, struct_idx, @intCast(i), field_width);
+                return;
+            }
         }
     }
 
@@ -602,7 +659,18 @@ pub const CodeGenContext = struct {
         }
 
         const result_reg = try self.generateExpression(ret.expr);
-        try func.emitRet(result_reg, ret_width);
+
+        if (func.sret_struct_idx) |struct_idx| {
+            // sret: copy result into the sret pointer and return void
+            if (result_reg) |src_reg| {
+                const sret_local = self.locals.lookup("__sret") orelse return;
+                const sret_ptr = try func.emitLoadLocal(sret_local.offset, .ptr);
+                try func.emitCopyStruct(sret_ptr, src_reg, struct_idx);
+            }
+            try func.emitRet(null, .w32);
+        } else {
+            try func.emitRet(result_reg, ret_width);
+        }
     }
 
     fn generateExpression(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {
@@ -787,16 +855,40 @@ pub const CodeGenContext = struct {
             try arg_widths.append(self.allocator, arg_width);
         }
 
-        // 4. Determine return width from type (default to w32)
+        // 4. Determine return type and check for sret
         const return_type = self.node_types.get(node_idx);
+        const callee_returns_struct = if (return_type) |rt| rt.isStruct() else false;
+
+        if (callee_returns_struct) {
+            // sret: allocate local struct, pass as hidden first argument
+            const struct_idx = return_type.?.struct_type;
+            const result_ptr = try func.emitAllocaStruct(struct_idx);
+
+            // prepend sret pointer to arguments
+            var sret_args = try std.ArrayList(VReg).initCapacity(self.allocator, arg_regs.items.len + 1);
+            defer sret_args.deinit(self.allocator);
+            try sret_args.append(self.allocator, result_ptr);
+            for (arg_regs.items) |a| try sret_args.append(self.allocator, a);
+
+            var sret_widths = try std.ArrayList(Width).initCapacity(self.allocator, arg_widths.items.len + 1);
+            defer sret_widths.deinit(self.allocator);
+            try sret_widths.append(self.allocator, .ptr);
+            for (arg_widths.items) |w| try sret_widths.append(self.allocator, w);
+
+            // call returns void; the struct is written via sret pointer
+            _ = try func.emitCall(func_name, sret_args.items, sret_widths.items, call_conv, null, struct_idx);
+
+            return result_ptr;
+        }
+
+        // 5. Non-sret call
         const return_width: ?Width = if (return_type) |rt| blk: {
             if (rt == .unresolved) break :blk .w32;
             if (rt == .primitive and rt.primitive == .void) break :blk null;
             break :blk typeIdToWidth(rt);
         } else .w32;
 
-        // 5. Emit call instruction
-        return try func.emitCall(func_name, arg_regs.items, arg_widths.items, call_conv, return_width);
+        return try func.emitCall(func_name, arg_regs.items, arg_widths.items, call_conv, return_width, null);
     }
 
     fn generateFieldAccess(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {

@@ -201,6 +201,13 @@ fn printInstruction(inst: *const MInst) void {
                 f.value,
             });
         },
+        .copy_struct => |c| {
+            std.debug.print("copy_struct v{d}, v{d}, struct[{d}]", .{
+                c.dst,
+                c.src,
+                c.struct_idx,
+            });
+        },
     }
 }
 

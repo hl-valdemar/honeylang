@@ -1005,31 +1005,61 @@ pub const SemanticContext = struct {
     fn checkAssignment(self: *SemanticContext, node_idx: NodeIndex) !void {
         const assign = self.ast.getAssignment(node_idx);
         const loc = self.ast.getLocation(node_idx);
+        const target_kind = self.ast.getKind(assign.target);
 
-        // get target name
-        const target_ident = self.ast.getIdentifier(assign.target);
-        const target_token = self.tokens.items[target_ident.token_idx];
-        const target_name = self.src.getSlice(target_token.start, target_token.start + target_token.len);
-
-        // look up target / check locals first, then globals
         var target_type: TypeId = .unresolved;
         var is_mutable = false;
 
-        if (self.lookupLocalPtr(target_name)) |local| {
-            target_type = local.type_id;
-            is_mutable = local.is_mutable;
-            local.referenced = true;
-        } else if (self.symbols.lookup(target_name)) |sym_idx| {
-            target_type = self.symbols.getTypeId(sym_idx);
-            is_mutable = self.symbols.isMutable(sym_idx);
-            self.symbols.markReferenced(sym_idx);
+        if (target_kind == .field_access) {
+            // field assignment: p.x = 10
+            // type-check the field access expression (stores types for all intermediate nodes)
+            if (try self.checkExpression(assign.target, .unresolved)) |ft| {
+                target_type = ft;
+            }
+
+            // walk to root identifier to check mutability
+            var current = assign.target;
+            while (self.ast.getKind(current) == .field_access) {
+                const access = self.ast.getFieldAccess(current);
+                current = access.object;
+            }
+            if (self.ast.getKind(current) == .identifier) {
+                const ident = self.ast.getIdentifier(current);
+                const token = self.tokens.items[ident.token_idx];
+                const name = self.src.getSlice(token.start, token.start + token.len);
+                if (self.lookupLocalPtr(name)) |local| {
+                    is_mutable = local.is_mutable;
+                    local.referenced = true;
+                } else if (self.symbols.lookup(name)) |sym_idx| {
+                    is_mutable = self.symbols.isMutable(sym_idx);
+                    self.symbols.markReferenced(sym_idx);
+                }
+            }
         } else {
-            try self.errors.add(.{
-                .kind = .undefined_symbol,
-                .start = loc.start,
-                .end = loc.end,
-            });
-            return;
+            // identifier assignment: x = 10
+            const target_ident = self.ast.getIdentifier(assign.target);
+            const target_token = self.tokens.items[target_ident.token_idx];
+            const target_name = self.src.getSlice(target_token.start, target_token.start + target_token.len);
+
+            if (self.lookupLocalPtr(target_name)) |local| {
+                target_type = local.type_id;
+                is_mutable = local.is_mutable;
+                local.referenced = true;
+            } else if (self.symbols.lookup(target_name)) |sym_idx| {
+                target_type = self.symbols.getTypeId(sym_idx);
+                is_mutable = self.symbols.isMutable(sym_idx);
+                self.symbols.markReferenced(sym_idx);
+            } else {
+                try self.errors.add(.{
+                    .kind = .undefined_symbol,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+                return;
+            }
+
+            // store target type for codegen
+            try self.node_types.put(self.allocator, assign.target, target_type);
         }
 
         // check mutability

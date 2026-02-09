@@ -401,7 +401,7 @@ pub const Parser = struct {
             .defer_ => try self.parseDefer(),
             .mut => try self.parseVarDecl(),
             .identifier => blk: {
-                // could be var decl or assignment
+                // could be var decl, assignment, field assignment, or expression
                 const next = self.peekOffset(1) orelse {
                     try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
                     return error.UnexpectedEof;
@@ -415,6 +415,9 @@ pub const Parser = struct {
                     next.kind == .slash_equal)
                 {
                     break :blk try self.parseAssignment();
+                } else if (next.kind == .dot) {
+                    // could be field access expression or field assignment (p.x = 10)
+                    break :blk try self.parseExpressionOrFieldAssignment();
                 } else {
                     // expression statement
                     break :blk try self.parseExpression();
@@ -534,6 +537,29 @@ pub const Parser = struct {
         const end_pos = self.previousEnd();
 
         return try self.ast.addAssignment(target, value, start_pos, end_pos);
+    }
+
+    /// Parse an expression that might turn out to be a field assignment.
+    /// Handles: `p.x = 10`, `r.origin.x = 10`, or just `p.x` as expression statement.
+    fn parseExpressionOrFieldAssignment(self: *Parser) ParseError!NodeIndex {
+        const start_pos = self.currentStart();
+
+        // Parse the full expression (handles field access chains via parsePrimary)
+        const expr = try self.parseExpression();
+
+        // Check if followed by assignment operator
+        const token = self.peek() orelse return expr;
+
+        if (token.kind == .equal) {
+            // field assignment: p.x = value
+            self.advance(); // consume '='
+            const value = try self.parseExpression();
+            const end_pos = self.previousEnd();
+            return try self.ast.addAssignment(expr, value, start_pos, end_pos);
+        }
+
+        // Not an assignment, just an expression statement
+        return expr;
     }
 
     fn parseIfStmt(self: *Parser) ParseError!NodeIndex {

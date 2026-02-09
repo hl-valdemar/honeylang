@@ -148,6 +148,11 @@ fn getNodeInfo(
         .if_stmt => "if",
         .assignment => blk: {
             const assign = ast.getAssignment(idx);
+            if (ast.getKind(assign.target) == .field_access) {
+                break :blk std.fmt.bufPrint(&S.buf, "target: {s}", .{
+                    getFieldAccessPath(ast, tokens, src, assign.target),
+                }) catch "?";
+            }
             const name = getIdentifierName(ast, tokens, src, assign.target);
             break :blk std.fmt.bufPrint(&S.buf, "target: {s}", .{name}) catch "?";
         },
@@ -173,6 +178,44 @@ fn getNodeInfo(
             break :blk std.fmt.bufPrint(&S.buf, "\"{s}\"", .{err.msg}) catch "?";
         },
     };
+}
+
+fn getFieldAccessPath(ast: *const Ast, tokens: *const TokenList, src: *const SourceCode, idx: NodeIndex) []const u8 {
+    const Path = struct {
+        var buf: [256]u8 = undefined;
+    };
+    var pos: usize = 0;
+
+    // collect path segments by walking the chain
+    var segments: [16][]const u8 = undefined;
+    var count: usize = 0;
+    var current = idx;
+    while (ast.getKind(current) == .field_access and count < 16) {
+        const access = ast.getFieldAccess(current);
+        segments[count] = getIdentifierName(ast, tokens, src, access.field);
+        count += 1;
+        current = access.object;
+    }
+    // current is the root identifier
+    if (ast.getKind(current) == .identifier) {
+        const root = getIdentifierName(ast, tokens, src, current);
+        if (pos + root.len < Path.buf.len) {
+            @memcpy(Path.buf[pos .. pos + root.len], root);
+            pos += root.len;
+        }
+    }
+    // append segments in reverse order
+    var i = count;
+    while (i > 0) {
+        i -= 1;
+        if (pos + 1 + segments[i].len < Path.buf.len) {
+            Path.buf[pos] = '.';
+            pos += 1;
+            @memcpy(Path.buf[pos .. pos + segments[i].len], segments[i]);
+            pos += segments[i].len;
+        }
+    }
+    return Path.buf[0..pos];
 }
 
 fn getIdentifierName(ast: *const Ast, tokens: *const TokenList, src: *const SourceCode, idx: NodeIndex) []const u8 {
@@ -535,9 +578,16 @@ fn printNode(
             std.debug.print("assignment:\n", .{});
             const assign = ast.getAssignment(idx);
 
-            std.debug.print("{s}├─ target: ", .{child_prefix});
-            printIdentifierValue(ast, tokens, src, assign.target);
-            std.debug.print("\n", .{});
+            if (ast.getKind(assign.target) == .field_access) {
+                std.debug.print("{s}├─ target: {s}\n", .{
+                    child_prefix,
+                    getFieldAccessPath(ast, tokens, src, assign.target),
+                });
+            } else {
+                std.debug.print("{s}├─ target: ", .{child_prefix});
+                printIdentifierValue(ast, tokens, src, assign.target);
+                std.debug.print("\n", .{});
+            }
 
             std.debug.print("{s}└─ value:\n", .{child_prefix});
             const value_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;

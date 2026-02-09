@@ -149,6 +149,7 @@ pub const MInst = union(enum) {
         arg_widths: []const Width, // argument types (parallel to args)
         call_conv: CallingConvention,
         width: Width, // return value width
+        sret_struct_idx: ?u32 = null, // non-null => first arg is sret pointer
     },
 
     /// Label (branch target).
@@ -187,6 +188,13 @@ pub const MInst = union(enum) {
         field_idx: u32, // field index within the struct
         width: Width, // width of the stored field
     },
+
+    /// Copy struct data from src pointer to dst pointer (memcpy).
+    copy_struct: struct {
+        dst: VReg, // pointer to destination struct
+        src: VReg, // pointer to source struct
+        struct_idx: u32, // index into TypeRegistry.struct_types (for size)
+    },
 };
 
 /// Function parameter metadata.
@@ -214,6 +222,7 @@ pub const MIRFunction = struct {
     next_label: LabelId = 0,
     allocator: mem.Allocator,
     frame_size: u16 = 0, // stack frame size for locals (16-byte aligned)
+    sret_struct_idx: ?u32 = null, // non-null => function uses sret (struct return)
 
     pub fn init(
         allocator: mem.Allocator,
@@ -362,6 +371,15 @@ pub const MIRFunction = struct {
         } });
     }
 
+    /// Emit a copy_struct instruction (memcpy for struct data).
+    pub fn emitCopyStruct(self: *MIRFunction, dst: VReg, src: VReg, struct_idx: u32) !void {
+        try self.emit(.{ .copy_struct = .{
+            .dst = dst,
+            .src = src,
+            .struct_idx = struct_idx,
+        } });
+    }
+
     /// Emit a function call and return the destination vreg (null for void).
     pub fn emitCall(
         self: *MIRFunction,
@@ -370,6 +388,7 @@ pub const MIRFunction = struct {
         arg_widths: []const Width,
         call_conv: CallingConvention,
         return_width: ?Width,
+        sret_struct_idx: ?u32,
     ) !?VReg {
         const dst: ?VReg = if (return_width != null) self.allocVReg() else null;
         const args_copy = try self.allocator.dupe(VReg, args);
@@ -381,6 +400,7 @@ pub const MIRFunction = struct {
             .arg_widths = widths_copy,
             .call_conv = call_conv,
             .width = return_width orelse .w32,
+            .sret_struct_idx = sret_struct_idx,
         } });
         return dst;
     }
