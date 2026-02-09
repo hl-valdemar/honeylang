@@ -151,6 +151,7 @@ pub const StructType = struct {
     size: u32, // total size in bytes
     alignment: u32, // required alignment
     calling_conv: CallingConvention,
+    finalized: bool = false,
 };
 
 /// Type Registry (Storage for Composite Types)
@@ -242,6 +243,7 @@ pub const TypeRegistry = struct {
             .size = layout.size,
             .alignment = layout.alignment,
             .calling_conv = calling_conv,
+            .finalized = true,
         });
 
         return .{ .struct_type = idx };
@@ -286,6 +288,7 @@ pub const TypeRegistry = struct {
             .size = layout.size,
             .alignment = layout.alignment,
             .calling_conv = calling_conv,
+            .finalized = true,
         };
     }
 

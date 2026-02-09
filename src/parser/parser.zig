@@ -765,7 +765,7 @@ pub const Parser = struct {
                     // disambiguate from blocks by checking for dot after {
                     if (next.kind == .left_curly) {
                         if (self.peekOffset(2)) |after_curly| {
-                            if (after_curly.kind == .dot) {
+                            if (after_curly.kind == .dot or after_curly.kind == .right_curly) {
                                 break :blk try self.parseStructLiteral();
                             }
                         }

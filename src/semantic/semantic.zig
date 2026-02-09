@@ -271,8 +271,7 @@ pub const SemanticContext = struct {
             if (self.resolveTypeName(type_name)) |tid| {
                 if (tid.isStruct()) {
                     const st = self.types.struct_types.items[tid.struct_type];
-                    // reserved but not yet finalized (no fields)
-                    if (st.fields.len == 0 and st.size == 0) return false;
+                    if (!st.finalized) return false;
                 }
             }
         }
