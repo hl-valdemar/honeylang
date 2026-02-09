@@ -755,7 +755,7 @@ pub const Parser = struct {
             return error.UnexpectedEof;
         };
 
-        return switch (token.kind) {
+        var expr = switch (token.kind) {
             .identifier => blk: {
                 // check if it's a call expression
                 if (self.peekOffset(1)) |next| {
@@ -769,18 +769,29 @@ pub const Parser = struct {
             .left_paren => blk: {
                 const paren_start = self.currentStart();
                 self.advance();
-                const expr = try self.parseExpression();
+                const inner = try self.parseExpression();
                 if (!self.check(.right_paren)) {
                     try self.addError(.unclosed_paren, paren_start, self.currentStart());
                 }
                 try self.expectToken(.right_paren, .expected_right_paren);
-                break :blk expr;
+                break :blk inner;
             },
             else => {
                 try self.addErrorWithFound(.expected_expression, token.kind, token.start, token.start + token.len);
                 return error.UnexpectedToken;
             },
         };
+
+        // postfix: field access
+        while (self.check(.dot)) {
+            const start_pos = self.ast.getLocation(expr).start;
+            self.advance(); // consume dot
+            const field = try self.parseIdentifier();
+            const end_pos = self.previousEnd();
+            expr = try self.ast.addFieldAccess(expr, field, start_pos, end_pos);
+        }
+
+        return expr;
     }
 
     fn parseIdentifier(self: *Parser) ParseError!NodeIndex {

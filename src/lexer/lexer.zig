@@ -91,6 +91,10 @@ const Lexer = struct {
                     self.advance();
                     try tokens.append(self.allocator, self.makeToken(.comma, start, self.pos));
                 },
+                '.' => {
+                    self.advance();
+                    try tokens.append(self.allocator, self.makeToken(.dot, start, self.pos));
+                },
                 '@' => {
                     self.advance();
                     try tokens.append(self.allocator, self.makeToken(.at, start, self.pos));

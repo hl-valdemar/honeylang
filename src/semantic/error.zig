@@ -43,6 +43,8 @@ pub const SemanticErrorKind = enum {
     missing_function_body,
     missing_entry_point,
     duplicate_field,
+    no_such_field,
+    field_access_on_non_struct,
 
     // usage warnings
     unused_type,
@@ -177,6 +179,16 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .message = "unused type",
         .help = "remove or use this type",
         .severity = .warning,
+    },
+    .no_such_field = .{
+        .code = "S024",
+        .message = "no such field",
+        .help = "field does not exist on this struct",
+    },
+    .field_access_on_non_struct = .{
+        .code = "S025",
+        .message = "field access on non-struct type",
+        .help = "dot access requires a struct type",
     },
 });
 

@@ -930,6 +930,45 @@ test "c struct used as function parameter type" {
 // semantic errors: structs
 // ============================================================
 
+test "struct field access" {
+    var r = try compileTo(.semantic,
+        \\Point :: c struct {
+        \\    x: i32,
+        \\    y: i32,
+        \\}
+        \\
+        \\get_x :: func(p: Point) i32 {
+        \\    return p.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "chained struct field access" {
+    var r = try compileTo(.semantic,
+        \\Inner :: c struct {
+        \\    value: i32,
+        \\}
+        \\
+        \\Outer :: c struct {
+        \\    inner: Inner,
+        \\}
+        \\
+        \\get_value :: func(o: Outer) i32 {
+        \\    return o.inner.value
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+// ============================================================
+// semantic errors: structs
+// ============================================================
+
 test "duplicate field in struct" {
     var r = try compileTo(.semantic,
         \\Bad :: c struct {
@@ -940,4 +979,31 @@ test "duplicate field in struct" {
     );
     defer r.deinit();
     try r.expectSemanticError(.duplicate_field);
+}
+
+test "no such field on struct" {
+    var r = try compileTo(.semantic,
+        \\Point :: c struct {
+        \\    x: i32,
+        \\    y: i32,
+        \\}
+        \\
+        \\bad :: func(p: Point) i32 {
+        \\    return p.z
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.no_such_field);
+}
+
+test "field access on non-struct type" {
+    var r = try compileTo(.semantic,
+        \\bad :: func(x: i32) i32 {
+        \\    return x.y
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.field_access_on_non_struct);
 }

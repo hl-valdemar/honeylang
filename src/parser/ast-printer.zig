@@ -156,6 +156,11 @@ fn getNodeInfo(
             const name = getIdentifierName(ast, tokens, src, call.func);
             break :blk std.fmt.bufPrint(&S.buf, "func: {s}, args: {d}", .{ name, call.args.len }) catch "?";
         },
+        .field_access => blk: {
+            const access = ast.getFieldAccess(idx);
+            const field_name = getIdentifierName(ast, tokens, src, access.field);
+            break :blk std.fmt.bufPrint(&S.buf, ".{s}", .{field_name}) catch "?";
+        },
         .void_literal => "void",
         .err => blk: {
             const err = ast.getError(idx);
@@ -380,6 +385,19 @@ fn printNode(
                     printNode(ast, tokens, src, arg, arg_prefix, is_last_arg);
                 }
             }
+        },
+
+        .field_access => {
+            const access = ast.getFieldAccess(idx);
+            std.debug.print("field_access:\n", .{});
+
+            std.debug.print("{s}├─ object:\n", .{child_prefix});
+            const obj_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+            printNode(ast, tokens, src, access.object, obj_prefix, true);
+
+            std.debug.print("{s}└─ field: ", .{child_prefix});
+            printIdentifierValue(ast, tokens, src, access.field);
+            std.debug.print("\n", .{});
         },
 
         .identifier => {

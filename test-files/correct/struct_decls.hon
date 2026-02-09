@@ -3,6 +3,10 @@ Point :: c struct {
     y: i32,
 }
 
+get_x :: func(p: Point) i32 {
+    return p.x
+}
+
 main :: func() i32 {
     return 0
 }

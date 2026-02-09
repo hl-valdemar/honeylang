@@ -1038,6 +1038,7 @@ pub const SemanticContext = struct {
             .unary_op => try self.checkUnaryOp(node_idx, context_type),
             .binary_op => try self.checkBinaryOp(node_idx, context_type),
             .call_expr => try self.checkCallExpression(node_idx),
+            .field_access => try self.checkFieldAccess(node_idx),
             else => null,
         };
 
@@ -1324,6 +1325,50 @@ pub const SemanticContext = struct {
         }
 
         return return_type;
+    }
+
+    fn checkFieldAccess(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
+        const access = self.ast.getFieldAccess(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+
+        // type-check the object expression
+        const object_type = try self.checkExpression(access.object, .unresolved);
+
+        if (object_type) |ot| {
+            if (ot.isStruct()) {
+                const struct_type = self.types.getStructType(ot) orelse return null;
+
+                // get field name
+                const field_ident = self.ast.getIdentifier(access.field);
+                const field_token = self.tokens.items[field_ident.token_idx];
+                const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+                // look up field
+                for (struct_type.fields) |field| {
+                    if (mem.eql(u8, field.name, field_name)) {
+                        return field.type_id;
+                    }
+                }
+
+                // field not found
+                try self.errors.add(.{
+                    .kind = .no_such_field,
+                    .start = field_token.start,
+                    .end = field_token.start + field_token.len,
+                });
+                return null;
+            } else if (!ot.isUnresolved()) {
+                // dot access on non-struct
+                try self.errors.add(.{
+                    .kind = .field_access_on_non_struct,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+                return null;
+            }
+        }
+
+        return null;
     }
 
     fn finalizeTypes(self: *SemanticContext) void {

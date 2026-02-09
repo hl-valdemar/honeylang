@@ -19,6 +19,7 @@ pub const NodeKind = enum {
     binary_op,
     unary_op,
     call_expr,
+    field_access,
     identifier,
     literal,
     void_literal,
@@ -150,6 +151,11 @@ pub const CallExpr = struct {
     args: Range,
 };
 
+pub const FieldAccess = struct {
+    object: NodeIndex, // expression being accessed
+    field: NodeIndex, // identifier node for the field name
+};
+
 pub const Identifier = struct {
     token_idx: u32,
 };
@@ -227,6 +233,7 @@ pub const Ast = struct {
     binary_ops: std.ArrayList(BinaryOp),
     unary_ops: std.ArrayList(UnaryOp),
     call_exprs: std.ArrayList(CallExpr),
+    field_accesses: std.ArrayList(FieldAccess),
     identifiers: std.ArrayList(Identifier),
     literals: std.ArrayList(Literal),
     blocks: std.ArrayList(Block),
@@ -259,6 +266,7 @@ pub const Ast = struct {
             .binary_ops = try std.ArrayList(BinaryOp).initCapacity(allocator, capacity),
             .unary_ops = try std.ArrayList(UnaryOp).initCapacity(allocator, capacity),
             .call_exprs = try std.ArrayList(CallExpr).initCapacity(allocator, capacity),
+            .field_accesses = try std.ArrayList(FieldAccess).initCapacity(allocator, capacity),
             .identifiers = try std.ArrayList(Identifier).initCapacity(allocator, capacity),
             .literals = try std.ArrayList(Literal).initCapacity(allocator, capacity),
             .blocks = try std.ArrayList(Block).initCapacity(allocator, capacity),
@@ -286,6 +294,7 @@ pub const Ast = struct {
         self.binary_ops.deinit(self.allocator);
         self.unary_ops.deinit(self.allocator);
         self.call_exprs.deinit(self.allocator);
+        self.field_accesses.deinit(self.allocator);
         self.identifiers.deinit(self.allocator);
         self.literals.deinit(self.allocator);
         self.blocks.deinit(self.allocator);
@@ -481,6 +490,28 @@ pub const Ast = struct {
         try self.call_exprs.append(self.allocator, .{
             .func = func,
             .args = args,
+        });
+
+        return node_idx;
+    }
+
+    pub fn addFieldAccess(
+        self: *Ast,
+        object: NodeIndex,
+        field: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.field_accesses.items.len);
+
+        try self.kinds.append(self.allocator, .field_access);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.field_accesses.append(self.allocator, .{
+            .object = object,
+            .field = field,
         });
 
         return node_idx;
@@ -718,6 +749,12 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .call_expr);
         const data_idx = self.data_indices.items[idx];
         return self.call_exprs.items[data_idx];
+    }
+
+    pub fn getFieldAccess(self: *const Ast, idx: NodeIndex) FieldAccess {
+        std.debug.assert(self.kinds.items[idx] == .field_access);
+        const data_idx = self.data_indices.items[idx];
+        return self.field_accesses.items[data_idx];
     }
 
     pub fn getIdentifier(self: *const Ast, idx: NodeIndex) Identifier {
