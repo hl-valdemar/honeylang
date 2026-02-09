@@ -146,6 +146,7 @@ pub const MInst = union(enum) {
         dst: ?VReg, // destination for return value (null for void)
         func_name: []const u8, // function name
         args: []const VReg, // argument registers (in order)
+        arg_widths: []const Width, // argument types (parallel to args)
         call_conv: CallingConvention,
         width: Width, // return value width
     },
@@ -366,15 +367,18 @@ pub const MIRFunction = struct {
         self: *MIRFunction,
         func_name: []const u8,
         args: []const VReg,
+        arg_widths: []const Width,
         call_conv: CallingConvention,
         return_width: ?Width,
     ) !?VReg {
         const dst: ?VReg = if (return_width != null) self.allocVReg() else null;
         const args_copy = try self.allocator.dupe(VReg, args);
+        const widths_copy = try self.allocator.dupe(Width, arg_widths);
         try self.emit(.{ .call = .{
             .dst = dst,
             .func_name = func_name,
             .args = args_copy,
+            .arg_widths = widths_copy,
             .call_conv = call_conv,
             .width = return_width orelse .w32,
         } });

@@ -1,12 +1,17 @@
 Point :: c struct {
-    x: i32,
-    y: i32,
+  x: i32,
+  y: i32,
 }
 
 get_x :: func(p: Point) i32 {
-    return p.x
+  return p.x
+}
+
+get_y :: func(p: Point) i32 {
+  return p.y
 }
 
 main :: func() i32 {
-    return get_x(0)
+  p := Point{ .x = 3, .y = 4 }
+  return get_y(p)
 }

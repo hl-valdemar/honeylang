@@ -770,15 +770,21 @@ pub const CodeGenContext = struct {
         const arg_nodes = self.ast.getExtra(call.args);
         var arg_regs = try std.ArrayList(VReg).initCapacity(self.allocator, arg_nodes.len);
         defer arg_regs.deinit(self.allocator);
+        var arg_widths = try std.ArrayList(Width).initCapacity(self.allocator, arg_nodes.len);
+        defer arg_widths.deinit(self.allocator);
 
         for (arg_nodes) |arg_idx| {
+            const arg_type = self.node_types.get(arg_idx) orelse .unresolved;
+            const arg_width = typeIdToWidth(arg_type);
             const arg_reg = try self.generateExpression(arg_idx) orelse {
                 // If arg generation fails, use 0 as placeholder
                 const zero = try func.emitMovImm(0, .w32);
                 try arg_regs.append(self.allocator, zero);
+                try arg_widths.append(self.allocator, .w32);
                 continue;
             };
             try arg_regs.append(self.allocator, arg_reg);
+            try arg_widths.append(self.allocator, arg_width);
         }
 
         // 4. Determine return width from type (default to w32)
@@ -790,7 +796,7 @@ pub const CodeGenContext = struct {
         } else .w32;
 
         // 5. Emit call instruction
-        return try func.emitCall(func_name, arg_regs.items, call_conv, return_width);
+        return try func.emitCall(func_name, arg_regs.items, arg_widths.items, call_conv, return_width);
     }
 
     fn generateFieldAccess(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {

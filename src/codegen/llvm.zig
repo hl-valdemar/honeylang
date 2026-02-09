@@ -297,15 +297,18 @@ fn lowerInst(
         },
 
         .call => |op| {
+            std.debug.assert(op.args.len == op.arg_widths.len);
+
             // build argument list
             var args_str = try std.ArrayList(u8).initCapacity(emitter.allocator, 64);
             defer args_str.deinit(emitter.allocator);
 
-            for (op.args, 0..) |arg_vreg, i| {
+            for (op.args, op.arg_widths, 0..) |arg_vreg, arg_width, i| {
                 if (i > 0) try args_str.appendSlice(emitter.allocator, ", ");
                 const arg_ssa = ssa_map.get(arg_vreg);
+                const arg_type = widthToLLVMType(arg_width);
                 var buf: [32]u8 = undefined;
-                const arg_fmt = std.fmt.bufPrint(&buf, "i32 %{d}", .{arg_ssa}) catch unreachable;
+                const arg_fmt = std.fmt.bufPrint(&buf, "{s} %{d}", .{ arg_type, arg_ssa }) catch unreachable;
                 try args_str.appendSlice(emitter.allocator, arg_fmt);
             }
 
