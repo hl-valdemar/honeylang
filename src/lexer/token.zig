@@ -21,6 +21,7 @@ pub const Kind = enum {
 
     // keywords
     func,
+    struct_,
     defer_,
     return_,
     mut,

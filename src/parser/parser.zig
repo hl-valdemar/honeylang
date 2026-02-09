@@ -137,14 +137,18 @@ pub const Parser = struct {
 
                 if (after.kind == .func) {
                     return try self.parseFuncDecl();
+                } else if (after.kind == .struct_) {
+                    return try self.parseStructDecl();
                 } else if (after.kind == .identifier and self.isCallingConvention(2)) {
-                    // check if calling convention is followed by func
+                    // check if calling convention is followed by func or struct
                     const after_cc = self.peekOffset(3) orelse {
                         try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
                         return error.UnexpectedEof;
                     };
                     if (after_cc.kind == .func) {
                         return try self.parseFuncDecl();
+                    } else if (after_cc.kind == .struct_) {
+                        return try self.parseStructDecl();
                     } else {
                         return try self.parseConstDecl();
                     }
@@ -242,6 +246,62 @@ pub const Parser = struct {
         const end_pos = self.previousEnd();
 
         return try self.ast.addFuncDecl(name, params, return_type, body, calling_conv, start_pos, end_pos);
+    }
+
+    fn parseStructDecl(self: *Parser) ParseError!NodeIndex {
+        const start_pos = self.currentStart();
+
+        // parse name
+        const name = try self.parseIdentifier();
+
+        // expect ::
+        try self.expectToken(.double_colon, .expected_double_colon);
+
+        // parse optional calling convention (c, cobol, fortran)
+        const calling_conv = self.matchCallingConvention();
+
+        // expect 'struct'
+        try self.expectToken(.struct_, .unexpected_token);
+
+        // expect {
+        try self.expectToken(.left_curly, .expected_left_curly);
+
+        // parse fields (same format as parameters: name: Type pairs)
+        const fields = try self.parseStructFields();
+
+        // expect }
+        try self.expectToken(.right_curly, .expected_right_curly);
+
+        const end_pos = self.previousEnd();
+
+        return try self.ast.addStructDecl(name, fields, calling_conv, start_pos, end_pos);
+    }
+
+    fn parseStructFields(self: *Parser) ParseError!ast.Range {
+        var fields = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
+        defer fields.deinit(self.allocator);
+
+        while (!self.check(.right_curly)) {
+            // parse field name
+            const field_name = try self.parseIdentifier();
+            try fields.append(self.allocator, field_name);
+
+            // expect :
+            try self.expectToken(.colon, .expected_colon);
+
+            // parse field type
+            const field_type = try self.parseIdentifier();
+            try fields.append(self.allocator, field_type);
+
+            // handle optional comma
+            if (self.check(.comma)) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        return try self.ast.addExtra(fields.items);
     }
 
     fn parseParameters(self: *Parser) ParseError!ast.Range {

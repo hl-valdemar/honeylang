@@ -42,6 +42,10 @@ pub const SemanticErrorKind = enum {
     unresolved_type,
     missing_function_body,
     missing_entry_point,
+    duplicate_field,
+
+    // usage warnings
+    unused_type,
 
     pub fn info(self: SemanticErrorKind) ErrorInfo {
         return error_info.get(self);
@@ -162,6 +166,17 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .code = "S021",
         .message = "missing entry point",
         .help = "program must define a 'main' function",
+    },
+    .duplicate_field = .{
+        .code = "S022",
+        .message = "duplicate field",
+        .help = "field name already defined in this struct",
+    },
+    .unused_type = .{
+        .code = "S023",
+        .message = "unused type",
+        .help = "remove or use this type",
+        .severity = .warning,
     },
 });
 

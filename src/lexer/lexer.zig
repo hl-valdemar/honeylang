@@ -18,6 +18,7 @@ pub const error_printer = @import("error-printer.zig");
 const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     // declaration-related
     .{ "func", .func },
+    .{ "struct", .struct_ },
 
     // statement-related
     .{ "mut", .mut },

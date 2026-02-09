@@ -83,6 +83,20 @@ fn getNodeInfo(
             const name = getIdentifierName(ast, tokens, src, decl.name);
             break :blk std.fmt.bufPrint(&S.buf, "name: {s}", .{name}) catch "?";
         },
+        .struct_decl => blk: {
+            const decl = ast.getStructDecl(idx);
+            const name = getIdentifierName(ast, tokens, src, decl.name);
+            const field_count = decl.fields.len / 2;
+            const cc_str = if (decl.call_conv == .c)
+                "c "
+            else if (decl.call_conv == .cobol)
+                "cobol "
+            else if (decl.call_conv == .fortran)
+                "fortran "
+            else
+                "";
+            break :blk std.fmt.bufPrint(&S.buf, "{s}struct {s}, fields: {d}", .{ cc_str, name, field_count }) catch "?";
+        },
         .func_decl => blk: {
             const decl = ast.getFuncDecl(idx);
             const name = getIdentifierName(ast, tokens, src, decl.name);
@@ -220,6 +234,36 @@ fn printNode(
             std.debug.print("{s}└─ value:\n", .{child_prefix});
             const value_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
             printNode(ast, tokens, src, decl.value, value_prefix, true);
+        },
+
+        .struct_decl => {
+            const decl = ast.getStructDecl(idx);
+            const cc_str = if (decl.call_conv == .c)
+                "c "
+            else if (decl.call_conv == .cobol)
+                "cobol "
+            else if (decl.call_conv == .fortran)
+                "fortran "
+            else
+                "";
+            std.debug.print("{s}struct_decl:\n", .{cc_str});
+
+            std.debug.print("{s}├─ name: ", .{child_prefix});
+            printIdentifierValue(ast, tokens, src, decl.name);
+            std.debug.print("\n", .{});
+
+            const fields = ast.getExtra(decl.fields);
+            const field_count = fields.len / 2;
+            std.debug.print("{s}└─ fields: {d}\n", .{ child_prefix, field_count });
+
+            var fi: usize = 0;
+            while (fi < fields.len) : (fi += 2) {
+                const fname = getIdentifierName(ast, tokens, src, fields[fi]);
+                const ftype = getIdentifierName(ast, tokens, src, fields[fi + 1]);
+                const is_last_field = (fi + 2 >= fields.len);
+                const connector: []const u8 = if (is_last_field) "└" else "├";
+                std.debug.print("{s}    {s}─ {s}: {s}\n", .{ child_prefix, connector, fname, ftype });
+            }
         },
 
         .func_decl => {

@@ -647,7 +647,7 @@ pub const CodeGenContext = struct {
         return switch (kind) {
             .constant => self.generateConstLoad(sym_idx, type_id),
             .variable => self.generateVarLoad(name, type_id),
-            .function => error.UnsupportedFeature,
+            .function, .type_ => error.UnsupportedFeature,
         };
     }
 

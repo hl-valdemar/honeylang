@@ -893,3 +893,51 @@ test "condition must be bool" {
     defer r.deinit();
     try r.expectSemanticError(.condition_not_bool);
 }
+
+// ============================================================
+// correct programs: struct declarations
+// ============================================================
+
+test "c struct declaration" {
+    var r = try compileTo(.semantic,
+        \\Point :: c struct {
+        \\    x: i32,
+        \\    y: i32,
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "c struct used as function parameter type" {
+    var r = try compileTo(.semantic,
+        \\Point :: c struct {
+        \\    x: i32,
+        \\    y: i32,
+        \\}
+        \\
+        \\get_x :: func(p: Point) i32 {
+        \\    return 0
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+// ============================================================
+// semantic errors: structs
+// ============================================================
+
+test "duplicate field in struct" {
+    var r = try compileTo(.semantic,
+        \\Bad :: c struct {
+        \\    x: i32,
+        \\    x: i32,
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.duplicate_field);
+}

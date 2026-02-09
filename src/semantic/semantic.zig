@@ -132,6 +132,7 @@ pub const SemanticContext = struct {
                     .constant => .unused_constant,
                     .variable => .unused_variable,
                     .function => .unused_function,
+                    .type_ => .unused_type,
                 };
                 try self.errors.add(.{
                     .kind = err_kind,
@@ -145,7 +146,7 @@ pub const SemanticContext = struct {
             } else {
                 // referenced but type unresolved — error
                 const type_id = self.symbols.getTypeId(idx);
-                if (type_id == .unresolved and kind != .function) {
+                if (type_id == .unresolved and kind != .function and kind != .type_) {
                     const start = self.symbols.name_starts.items[idx];
                     const len = self.symbols.name_lengths.items[idx];
                     try self.errors.add(.{
@@ -173,6 +174,7 @@ pub const SemanticContext = struct {
             .const_decl => try self.collectConstDecl(node_idx),
             .var_decl => try self.collectVarDecl(node_idx),
             .func_decl => try self.collectFuncDecl(node_idx),
+            .struct_decl => try self.collectStructDecl(node_idx),
             .err => {}, // skip parse errors
             else => {}, // ignore
         }
@@ -196,7 +198,7 @@ pub const SemanticContext = struct {
             const type_token = self.tokens.items[type_ident.token_idx];
             const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
 
-            if (resolvePrimitiveTypeName(type_name)) |tid| {
+            if (self.resolveTypeName(type_name)) |tid| {
                 type_id = tid;
                 type_state = .resolved;
             } else {
@@ -248,7 +250,7 @@ pub const SemanticContext = struct {
             const type_token = self.tokens.items[type_ident.token_idx];
             const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
 
-            if (resolvePrimitiveTypeName(type_name)) |tid| {
+            if (self.resolveTypeName(type_name)) |tid| {
                 type_id = tid;
                 type_state = .resolved;
             } else {
@@ -294,7 +296,7 @@ pub const SemanticContext = struct {
         const ret_ident = self.ast.getIdentifier(decl.return_type);
         const ret_token = self.tokens.items[ret_ident.token_idx];
         const ret_name = self.src.getSlice(ret_token.start, ret_token.start + ret_token.len);
-        const return_type = resolvePrimitiveTypeName(ret_name) orelse .unresolved;
+        const return_type = self.resolveTypeName(ret_name) orelse .unresolved;
 
         // collect parameter types
         const params = self.ast.getExtra(decl.params);
@@ -310,7 +312,7 @@ pub const SemanticContext = struct {
             const type_token = self.tokens.items[type_ident.token_idx];
             const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
 
-            const param_type = resolvePrimitiveTypeName(type_name) orelse .unresolved;
+            const param_type = self.resolveTypeName(type_name) orelse .unresolved;
             try param_types.append(self.allocator, param_type);
         }
 
@@ -339,6 +341,107 @@ pub const SemanticContext = struct {
                 .end = name_token.start + name_token.len,
             });
         }
+    }
+
+    fn collectStructDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const decl = self.ast.getStructDecl(node_idx);
+
+        // get name
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        // parse field pairs from extra_data
+        const field_data = self.ast.getExtra(decl.fields);
+        const field_count = field_data.len / 2;
+
+        var field_names = try std.ArrayList([]const u8).initCapacity(self.allocator, field_count);
+        defer field_names.deinit(self.allocator);
+        var field_types = try std.ArrayList(TypeId).initCapacity(self.allocator, field_count);
+        defer field_types.deinit(self.allocator);
+
+        var seen_fields = std.StringHashMap(void).init(self.allocator);
+        defer seen_fields.deinit();
+
+        var i: usize = 0;
+        while (i < field_data.len) : (i += 2) {
+            const field_name_idx = field_data[i];
+            const field_type_idx = field_data[i + 1];
+
+            // get field name
+            const field_ident = self.ast.getIdentifier(field_name_idx);
+            const field_token = self.tokens.items[field_ident.token_idx];
+            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+            // check for duplicate fields
+            if (seen_fields.contains(field_name)) {
+                try self.errors.add(.{
+                    .kind = .duplicate_field,
+                    .start = field_token.start,
+                    .end = field_token.start + field_token.len,
+                });
+            } else {
+                try seen_fields.put(field_name, {});
+            }
+
+            // resolve field type
+            const type_ident = self.ast.getIdentifier(field_type_idx);
+            const type_token = self.tokens.items[type_ident.token_idx];
+            const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
+
+            const field_type = self.resolveTypeName(type_name) orelse blk: {
+                try self.errors.add(.{
+                    .kind = .unknown_type,
+                    .start = type_token.start,
+                    .end = type_token.start + type_token.len,
+                });
+                break :blk TypeId.unresolved;
+            };
+
+            try field_names.append(self.allocator, field_name);
+            try field_types.append(self.allocator, field_type);
+        }
+
+        // register struct type
+        const struct_type = try self.types.addStructType(
+            name,
+            field_names.items,
+            field_types.items,
+            decl.call_conv,
+        );
+
+        // register symbol as type
+        const result = try self.symbols.register(
+            name,
+            name_token.start,
+            .type_,
+            .resolved,
+            struct_type,
+            node_idx,
+            false,
+        );
+
+        if (result == null) {
+            try self.errors.add(.{
+                .kind = .duplicate_symbol,
+                .start = name_token.start,
+                .end = name_token.start + name_token.len,
+            });
+        }
+    }
+
+    fn resolveTypeName(self: *const SemanticContext, name: []const u8) ?TypeId {
+        // try primitives first
+        if (resolvePrimitiveTypeName(name)) |tid| return tid;
+
+        // then check symbol table for struct types
+        if (self.symbols.lookup(name)) |sym_idx| {
+            if (self.symbols.getKind(sym_idx) == .type_) {
+                return self.symbols.getTypeId(sym_idx);
+            }
+        }
+
+        return null;
     }
 
     fn resolvePrimitiveTypeName(name: []const u8) ?TypeId {
@@ -552,7 +655,7 @@ pub const SemanticContext = struct {
             for (0..self.symbols.count()) |i| {
                 const idx: SymbolIndex = @intCast(i);
                 const kind = self.symbols.getKind(idx);
-                if (kind == .function) continue;
+                if (kind == .function or kind == .type_) continue;
 
                 if (self.symbols.getTypeState(idx) == .resolved) {
                     const value_node = self.symbols.getValueNode(idx);
@@ -582,6 +685,7 @@ pub const SemanticContext = struct {
             .var_decl => {
                 _ = try self.checkVarDecl(node_idx);
             },
+            .struct_decl => {}, // already handled in collectStructDecl
             else => {}, // ignore
         }
     }
@@ -717,7 +821,7 @@ pub const SemanticContext = struct {
             const type_token = self.tokens.items[type_ident.token_idx];
             const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
 
-            if (resolvePrimitiveTypeName(type_name)) |tid| {
+            if (self.resolveTypeName(type_name)) |tid| {
                 expected_type = tid;
             }
         }

@@ -1,0 +1,8 @@
+Point :: c struct {
+    x: i32,
+    y: i32,
+}
+
+main :: func() i32 {
+    return 0
+}

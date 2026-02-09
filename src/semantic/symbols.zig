@@ -34,6 +34,7 @@ pub const SymbolKind = enum(u8) {
     constant, // comptime constant (`X :: expr`, can be typed)
     variable, // runtime global (`x := expr` or `mut x := expr`, can be typed)
     function,
+    type_, // type declaration (e.g. `Point :: c struct { ... }`)
 };
 
 pub const SymbolTable = struct {

@@ -70,6 +70,7 @@ fn printSymbol(
         .constant => "const",
         .variable => "var",
         .function => "func",
+        .type_ => "type",
     };
 
     const state_str = switch (eval_state) {

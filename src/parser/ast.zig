@@ -13,6 +13,7 @@ pub const NodeKind = enum {
     const_decl,
     func_decl,
     var_decl,
+    struct_decl,
 
     // expressions
     binary_op,
@@ -79,6 +80,12 @@ pub const VarDecl = struct {
     type_id: ?NodeIndex,
     value: NodeIndex,
     is_mutable: bool,
+};
+
+pub const StructDecl = struct {
+    name: NodeIndex,
+    fields: Range, // pairs of (name_ident, type_ident) in extra_data
+    call_conv: CallingConvention,
 };
 
 pub const BinaryOp = struct {
@@ -216,6 +223,7 @@ pub const Ast = struct {
     const_decls: std.ArrayList(ConstDecl),
     func_decls: std.ArrayList(FuncDecl),
     var_decls: std.ArrayList(VarDecl),
+    struct_decls: std.ArrayList(StructDecl),
     binary_ops: std.ArrayList(BinaryOp),
     unary_ops: std.ArrayList(UnaryOp),
     call_exprs: std.ArrayList(CallExpr),
@@ -247,6 +255,7 @@ pub const Ast = struct {
             .const_decls = try std.ArrayList(ConstDecl).initCapacity(allocator, capacity),
             .func_decls = try std.ArrayList(FuncDecl).initCapacity(allocator, capacity),
             .var_decls = try std.ArrayList(VarDecl).initCapacity(allocator, capacity),
+            .struct_decls = try std.ArrayList(StructDecl).initCapacity(allocator, capacity),
             .binary_ops = try std.ArrayList(BinaryOp).initCapacity(allocator, capacity),
             .unary_ops = try std.ArrayList(UnaryOp).initCapacity(allocator, capacity),
             .call_exprs = try std.ArrayList(CallExpr).initCapacity(allocator, capacity),
@@ -273,6 +282,7 @@ pub const Ast = struct {
         self.const_decls.deinit(self.allocator);
         self.func_decls.deinit(self.allocator);
         self.var_decls.deinit(self.allocator);
+        self.struct_decls.deinit(self.allocator);
         self.binary_ops.deinit(self.allocator);
         self.unary_ops.deinit(self.allocator);
         self.call_exprs.deinit(self.allocator);
@@ -379,6 +389,30 @@ pub const Ast = struct {
             .type_id = type_id,
             .value = value,
             .is_mutable = is_mutable,
+        });
+
+        return node_idx;
+    }
+
+    pub fn addStructDecl(
+        self: *Ast,
+        name: NodeIndex,
+        fields: Range,
+        calling_conv: CallingConvention,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.struct_decls.items.len);
+
+        try self.kinds.append(self.allocator, .struct_decl);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.struct_decls.append(self.allocator, .{
+            .name = name,
+            .fields = fields,
+            .call_conv = calling_conv,
         });
 
         return node_idx;
@@ -660,6 +694,12 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .var_decl);
         const data_idx = self.data_indices.items[idx];
         return self.var_decls.items[data_idx];
+    }
+
+    pub fn getStructDecl(self: *const Ast, idx: NodeIndex) StructDecl {
+        std.debug.assert(self.kinds.items[idx] == .struct_decl);
+        const data_idx = self.data_indices.items[idx];
+        return self.struct_decls.items[data_idx];
     }
 
     pub fn getBinaryOp(self: *const Ast, idx: NodeIndex) BinaryOp {
