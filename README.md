@@ -1,6 +1,6 @@
 # Honey Language Documentation
 
-Specification v0.1.3
+Specification v0.1.4
 
 ## Compilation Philosophy
 
@@ -1657,6 +1657,10 @@ Reserve function-in-struct patterns for cases where the behavior truly needs to 
 
 ## Imports
 
+### Importing Modules
+
+To import standard Honey namespaces, the `import` keyword can be used.
+
 ```honey
 import "std/mem"
 import "std/mem/heap"
@@ -1670,7 +1674,7 @@ main :: func() void {
 }
 ```
 
-Or with local aliasing:
+Namespace aliasing can be used to achieve the same result.
 
 ```honey
 import "std/mem"
@@ -1685,7 +1689,7 @@ main :: func() void {
 }
 ```
 
-Or using fully qualified paths:
+Alternatively, the fully qualified paths can also be used.
 
 ```honey
 import "std/mem"
@@ -1700,6 +1704,30 @@ some_func :: func() bool {
 
 main :: func() void {
     _ = some_func()
+}
+```
+
+### Importing Source Code
+
+To import source code directly, the relative path to the file can be used.
+
+```hon
+import "path/to/file.hon"
+```
+
+To import external source code (be it C, Fortran, Cobol, etc.), an external import can be used. Taking C as example:
+
+```hon
+c import include "path/to/file.h"
+```
+
+To define a macro for the namespace generated from the C header file, the `define` keyword can be used.
+
+```hon
+c import {
+  include "path/to/file.h"
+  define "WHATEVER"
+  define "SOME_CONST 2.72"
 }
 ```
 
