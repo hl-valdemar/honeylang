@@ -123,6 +123,21 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
         try lowerInst(emitter, inst, &ssa_map, &alloca_map, func, globals);
     }
 
+    // If the last instruction is not a terminator, add an implicit return
+    // to keep LLVM happy (e.g. a label at the end with no further code).
+    const last = func.instructions.items[func.instructions.items.len - 1];
+    const needs_ret = switch (last) {
+        .ret, .br, .br_cond => false,
+        else => true,
+    };
+    if (needs_ret) {
+        if (func.return_width) |w| {
+            try emitter.appendFmt("  ret {s} 0\n", .{widthToLLVMType(w)});
+        } else {
+            try emitter.appendSlice("  ret void\n");
+        }
+    }
+
     try emitter.raw("}");
     try emitter.newline();
 }
@@ -240,6 +255,25 @@ fn lowerInst(
             const name = globals.getName(op.global_idx);
 
             try emitter.appendFmt("  %{d} = load {s}, ptr @{s}\n", .{ dst_ssa, type_str, name });
+        },
+
+        .label => |id| {
+            try emitter.appendFmt("lbl.{d}:\n", .{id});
+        },
+
+        .br_cond => |op| {
+            const cond_ssa = ssa_map.get(op.cond);
+            // truncate i32 condition to i1 for LLVM br
+            const cmp_id = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("  %cond.{d} = icmp ne i32 %{d}, 0\n", .{ cmp_id, cond_ssa });
+            try emitter.appendFmt("  br i1 %cond.{d}, label %lbl.{d}, label %lbl.{d}\n", .{
+                cmp_id, op.true_label, op.false_label,
+            });
+        },
+
+        .br => |target| {
+            try emitter.appendFmt("  br label %lbl.{d}\n", .{target});
         },
 
         .call => |op| {

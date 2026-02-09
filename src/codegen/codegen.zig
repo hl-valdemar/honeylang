@@ -427,7 +427,7 @@ pub const CodeGenContext = struct {
         self.current_func = null;
     }
 
-    fn generateBlock(self: *CodeGenContext, node_idx: NodeIndex) !bool {
+    fn generateBlock(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!bool {
         var has_return = false;
 
         const block = self.ast.getBlock(node_idx);
@@ -456,7 +456,7 @@ pub const CodeGenContext = struct {
     }
 
     /// Generate deferred statements in reverse order (LIFO)
-    fn generateDeferredStatements(self: *CodeGenContext, deferred: []const NodeIndex) !void {
+    fn generateDeferredStatements(self: *CodeGenContext, deferred: []const NodeIndex) CodeGenError!void {
         var i = deferred.len;
         while (i > 0) {
             i -= 1;
@@ -464,7 +464,7 @@ pub const CodeGenContext = struct {
         }
     }
 
-    fn generateStatement(self: *CodeGenContext, node_idx: NodeIndex) !?NodeKind {
+    fn generateStatement(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?NodeKind {
         const kind = self.ast.getKind(node_idx);
         switch (kind) {
             .return_stmt => try self.generateReturn(node_idx),
@@ -474,12 +474,14 @@ pub const CodeGenContext = struct {
                 const defer_node = self.ast.getDefer(node_idx);
                 _ = try self.generateStatement(defer_node.stmt);
             },
+            .assignment => try self.generateAssignment(node_idx),
+            .if_stmt => try self.generateIf(node_idx),
             else => return null,
         }
         return kind;
     }
 
-    fn generateLocalVarDecl(self: *CodeGenContext, node_idx: NodeIndex) !void {
+    fn generateLocalVarDecl(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!void {
         // skip declarations marked as unused by semantic analysis
         if (self.skip_nodes.contains(node_idx)) return;
 
@@ -504,7 +506,83 @@ pub const CodeGenContext = struct {
         try self.current_func.?.emitStoreLocal(value_reg, offset, width);
     }
 
-    fn generateReturn(self: *CodeGenContext, node_idx: NodeIndex) !void {
+    fn generateAssignment(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!void {
+        const assign = self.ast.getAssignment(node_idx);
+        const target_ident = self.ast.getIdentifier(assign.target);
+        const target_token = self.tokens.items[target_ident.token_idx];
+        const name = self.src.getSlice(target_token.start, target_token.start + target_token.len);
+
+        // Generate the value expression (for `x += 4` this is the desugared `x + 4`)
+        const value_reg = try self.generateExpression(assign.value) orelse return;
+
+        // Try local first, then global
+        if (self.locals.lookup(name)) |local| {
+            try self.current_func.?.emitStoreLocal(value_reg, local.offset, local.width);
+        } else if (self.mir.globals.lookup(name)) |global_idx| {
+            const width = self.mir.globals.getWidth(global_idx);
+            try self.current_func.?.emitStoreGlobal(value_reg, global_idx, width);
+        }
+    }
+
+    fn generateIf(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!void {
+        const if_node = self.ast.getIf(node_idx);
+        const func = self.current_func.?;
+
+        const end_label = func.allocLabel();
+
+        // Generate the if guard
+        const guard_reg = try self.generateExpression(if_node.if_guard) orelse return;
+
+        const then_label = func.allocLabel();
+        // Determine where to jump on false: first else-if, else block, or end
+        const else_if_count = if_node.elseIfCount();
+        const first_false_label = func.allocLabel();
+
+        try func.emitBrCond(guard_reg, then_label, first_false_label);
+
+        // Then block
+        try func.emitLabel(then_label);
+        const then_has_return = try self.generateBlock(if_node.if_block);
+        if (!then_has_return) {
+            try func.emitBr(end_label);
+        }
+
+        // Else-if chains
+        var next_false_label = first_false_label;
+        for (0..else_if_count) |i| {
+            try func.emitLabel(next_false_label);
+
+            const pair = if_node.getElseIf(self.ast, i) orelse continue;
+            const elif_guard_reg = try self.generateExpression(pair.guard) orelse continue;
+
+            const elif_then_label = func.allocLabel();
+            next_false_label = func.allocLabel();
+
+            try func.emitBrCond(elif_guard_reg, elif_then_label, next_false_label);
+
+            try func.emitLabel(elif_then_label);
+            const elif_has_return = try self.generateBlock(pair.block);
+            if (!elif_has_return) {
+                try func.emitBr(end_label);
+            }
+        }
+
+        // Else block or fall-through
+        try func.emitLabel(if (else_if_count > 0) next_false_label else first_false_label);
+        if (if_node.else_block) |else_block| {
+            const else_has_return = try self.generateBlock(else_block);
+            if (!else_has_return) {
+                try func.emitBr(end_label);
+            }
+        } else {
+            try func.emitBr(end_label);
+        }
+
+        // End label — code after the if continues here
+        try func.emitLabel(end_label);
+    }
+
+    fn generateReturn(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!void {
         const ret = self.ast.getReturn(node_idx);
         const func = self.current_func.?;
         const ret_width = func.return_width orelse .w32;

@@ -11,6 +11,13 @@ add :: func(a: i32, b: i32) i32 {
   return a + b
 }
 
+sub :: func(
+  a: i32,
+  b: i32,
+) i32 {
+  return a - b
+}
+
 main :: func() i32 {
   defer y := 10  # executed after return
 
@@ -21,5 +28,5 @@ main :: func() i32 {
   mut x := 3
   x += 4
 
-  return add(add(x, 3), 3)
+  return add(sub(x, 3), 3)
 }

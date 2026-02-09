@@ -168,6 +168,15 @@ fn printInstruction(inst: *const MInst) void {
             }
             std.debug.print(")", .{});
         },
+        .label => |id| {
+            std.debug.print("L{d}:", .{id});
+        },
+        .br_cond => |b| {
+            std.debug.print("br_cond v{d}, L{d}, L{d}", .{ b.cond, b.true_label, b.false_label });
+        },
+        .br => |target| {
+            std.debug.print("br L{d}", .{target});
+        },
     }
 }
 

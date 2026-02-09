@@ -55,6 +55,9 @@ pub const CmpOp = enum {
 /// Index into global variable parallel arrays.
 pub const GlobalIndex = u16;
 
+/// Label identifier for branch targets.
+pub const LabelId = u16;
+
 /// Machine IR instruction - architecture independent.
 pub const MInst = union(enum) {
     /// Load immediate value into register.
@@ -145,6 +148,19 @@ pub const MInst = union(enum) {
         call_conv: CallingConvention,
         width: Width, // return value width
     },
+
+    /// Label (branch target).
+    label: LabelId,
+
+    /// Conditional branch: if vreg != 0 goto true_label, else goto false_label.
+    br_cond: struct {
+        cond: VReg,
+        true_label: LabelId,
+        false_label: LabelId,
+    },
+
+    /// Unconditional branch.
+    br: LabelId,
 };
 
 /// Function parameter metadata.
@@ -169,6 +185,7 @@ pub const MIRFunction = struct {
     params: []const ParamInfo,
     instructions: std.ArrayListUnmanaged(MInst),
     next_vreg: VReg,
+    next_label: LabelId = 0,
     allocator: mem.Allocator,
     frame_size: u16 = 0, // stack frame size for locals (16-byte aligned)
 
@@ -186,6 +203,7 @@ pub const MIRFunction = struct {
             .params = params,
             .instructions = .{},
             .next_vreg = 0,
+            .next_label = 0,
             .allocator = allocator,
             .frame_size = 0,
         };
@@ -260,6 +278,28 @@ pub const MIRFunction = struct {
     /// Emit a store from argument register to stack slot.
     pub fn emitStoreArg(self: *MIRFunction, arg_idx: u8, offset: i16, width: Width) !void {
         try self.emit(.{ .store_arg = .{ .arg_idx = arg_idx, .offset = offset, .width = width } });
+    }
+
+    /// Allocate a new label ID.
+    pub fn allocLabel(self: *MIRFunction) LabelId {
+        const id = self.next_label;
+        self.next_label += 1;
+        return id;
+    }
+
+    /// Emit a label.
+    pub fn emitLabel(self: *MIRFunction, id: LabelId) !void {
+        try self.emit(.{ .label = id });
+    }
+
+    /// Emit a conditional branch.
+    pub fn emitBrCond(self: *MIRFunction, cond: VReg, true_label: LabelId, false_label: LabelId) !void {
+        try self.emit(.{ .br_cond = .{ .cond = cond, .true_label = true_label, .false_label = false_label } });
+    }
+
+    /// Emit an unconditional branch.
+    pub fn emitBr(self: *MIRFunction, target: LabelId) !void {
+        try self.emit(.{ .br = target });
     }
 
     /// Emit a function call and return the destination vreg (null for void).
