@@ -225,7 +225,7 @@ pub const TypeRegistry = struct {
         return self.function_types.items.len;
     }
 
-    /// Register a struct type with C-compatible layout and return a TypeId for it.
+    /// Register a struct type and return a TypeId for it.
     pub fn addStructType(
         self: *TypeRegistry,
         name: []const u8,
@@ -233,36 +233,14 @@ pub const TypeRegistry = struct {
         field_types: []const TypeId,
         calling_conv: CallingConvention,
     ) !TypeId {
-        const arena_alloc = self.arena.allocator();
-
-        // compute C layout
-        var offset: u32 = 0;
-        var max_align: u32 = 1;
-        var fields = try arena_alloc.alloc(StructField, field_names.len);
-
-        for (field_names, field_types, 0..) |fname, ftype, i| {
-            const field_align = alignmentOf(ftype, self);
-            const field_size = sizeOf(ftype, self);
-            offset = alignUp(offset, field_align);
-
-            fields[i] = .{
-                .name = fname,
-                .type_id = ftype,
-                .offset = offset,
-            };
-
-            offset += field_size;
-            if (field_align > max_align) max_align = field_align;
-        }
-
-        const total_size = alignUp(offset, max_align);
+        const layout = try self.computeStructLayout(field_names, field_types, calling_conv);
 
         const idx: StructTypeIndex = @intCast(self.struct_types.items.len);
         try self.struct_types.append(self.allocator, .{
             .name = name,
-            .fields = fields,
-            .size = total_size,
-            .alignment = max_align,
+            .fields = layout.fields,
+            .size = layout.size,
+            .alignment = layout.alignment,
             .calling_conv = calling_conv,
         });
 
@@ -299,10 +277,44 @@ pub const TypeRegistry = struct {
         field_types: []const TypeId,
         calling_conv: CallingConvention,
     ) !void {
-        const arena_alloc = self.arena.allocator();
         const idx = type_id.struct_type;
+        const layout = try self.computeStructLayout(field_names, field_types, calling_conv);
 
-        // compute C layout
+        self.struct_types.items[idx] = .{
+            .name = self.struct_types.items[idx].name,
+            .fields = layout.fields,
+            .size = layout.size,
+            .alignment = layout.alignment,
+            .calling_conv = calling_conv,
+        };
+    }
+
+    const StructLayout = struct {
+        fields: []StructField,
+        size: u32,
+        alignment: u32,
+    };
+
+    fn computeStructLayout(
+        self: *TypeRegistry,
+        field_names: []const []const u8,
+        field_types: []const TypeId,
+        calling_conv: CallingConvention,
+    ) !StructLayout {
+        // all conventions currently use C layout
+        // TODO: implement native honey struct layout
+        return switch (calling_conv) {
+            .honey, .c, .cobol, .fortran => try self.computeCLayout(field_names, field_types),
+        };
+    }
+
+    fn computeCLayout(
+        self: *TypeRegistry,
+        field_names: []const []const u8,
+        field_types: []const TypeId,
+    ) !StructLayout {
+        const arena_alloc = self.arena.allocator();
+
         var offset: u32 = 0;
         var max_align: u32 = 1;
         var fields = try arena_alloc.alloc(StructField, field_names.len);
@@ -322,14 +334,10 @@ pub const TypeRegistry = struct {
             if (field_align > max_align) max_align = field_align;
         }
 
-        const total_size = alignUp(offset, max_align);
-
-        self.struct_types.items[idx] = .{
-            .name = self.struct_types.items[idx].name,
+        return .{
             .fields = fields,
-            .size = total_size,
+            .size = alignUp(offset, max_align),
             .alignment = max_align,
-            .calling_conv = calling_conv,
         };
     }
 
