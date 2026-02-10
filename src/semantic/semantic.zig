@@ -626,6 +626,7 @@ pub const SemanticContext = struct {
         const kind = self.ast.getKind(node_idx);
         return switch (kind) {
             .literal => self.inferLiteralType(node_idx),
+            .struct_literal => self.inferStructLiteral(node_idx),
             .identifier => self.inferIdentifierType(node_idx),
             .binary_op => self.inferBinaryOpType(node_idx),
             .unary_op => self.inferUnaryOpType(node_idx),
@@ -658,6 +659,21 @@ pub const SemanticContext = struct {
 
         // numeric literals cannot be inferred without context
         // (they need to be anchored by an explicitly typed value)
+        return null;
+    }
+
+    fn inferStructLiteral(self: *SemanticContext, node_idx: NodeIndex) ?TypeId {
+        const lit = self.ast.getStructLiteral(node_idx);
+        const ident = self.ast.getIdentifier(lit.type_name);
+        const token = self.tokens.items[ident.token_idx];
+        const name = self.src.getSlice(token.start, token.start + token.len);
+
+        if (self.symbols.lookup(name)) |sym_idx| {
+            if (self.symbols.getTypeState(sym_idx) == .resolved) {
+                return self.symbols.getTypeId(sym_idx);
+            }
+        }
+
         return null;
     }
 
