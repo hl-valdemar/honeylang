@@ -808,6 +808,31 @@ pub const Ast = struct {
         return node_idx;
     }
 
+    /// Recursively duplicate an expression node tree. Only supports node kinds
+    /// that can appear as assignment targets (identifier, deref, field_access).
+    pub fn duplicateExpr(self: *Ast, idx: NodeIndex) !NodeIndex {
+        const start = self.getLocation(idx).start;
+        const end = self.getLocation(idx).end;
+        return switch (self.getKind(idx)) {
+            .identifier => {
+                const ident = self.getIdentifier(idx);
+                return try self.addIdentifier(ident.token_idx, start, end);
+            },
+            .deref => {
+                const deref = self.getDeref(idx);
+                const dup_operand = try self.duplicateExpr(deref.operand);
+                return try self.addDeref(dup_operand, start, end);
+            },
+            .field_access => {
+                const fa = self.getFieldAccess(idx);
+                const dup_object = try self.duplicateExpr(fa.object);
+                const dup_field = try self.duplicateExpr(fa.field);
+                return try self.addFieldAccess(dup_object, dup_field, start, end);
+            },
+            else => idx, // fallback: return original (shouldn't happen for assignment targets)
+        };
+    }
+
     pub fn getKind(self: *const Ast, idx: NodeIndex) NodeKind {
         return self.kinds.items[idx];
     }

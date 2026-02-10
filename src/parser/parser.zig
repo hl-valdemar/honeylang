@@ -551,11 +551,35 @@ pub const Parser = struct {
         const token = self.peek() orelse return expr;
 
         if (token.kind == .equal) {
-            // field assignment: p.x = value
+            // field/deref assignment: p.x = value, p^ = value
             self.advance(); // consume '='
             const value = try self.parseExpression();
             const end_pos = self.previousEnd();
             return try self.ast.addAssignment(expr, value, start_pos, end_pos);
+        }
+
+        // compound assignment: p^ += value, p.x -= value, etc.
+        if (token.kind == .plus_equal or
+            token.kind == .minus_equal or
+            token.kind == .star_equal or
+            token.kind == .slash_equal)
+        {
+            const op: ast.BinaryOp.Op = switch (token.kind) {
+                .plus_equal => .add,
+                .minus_equal => .sub,
+                .star_equal => .mul,
+                .slash_equal => .div,
+                else => unreachable,
+            };
+
+            self.advance(); // consume the compound operator
+            const rhs = try self.parseExpression();
+
+            // desugar: p^ += y  becomes  p^ = p^ + y
+            const target_ref = try self.ast.duplicateExpr(expr);
+            const binary_op = try self.ast.addBinaryOp(op, target_ref, rhs, start_pos, self.currentStart());
+            const end_pos = self.previousEnd();
+            return try self.ast.addAssignment(expr, binary_op, start_pos, end_pos);
         }
 
         // Not an assignment, just an expression statement

@@ -1,6 +1,6 @@
 main :: func() i32 {
-   mut x := 42
-   p := &x
-   p^ = 100
-   return x
+    mut x := 42
+    p := &x
+    p^ += 100
+    return x
 }

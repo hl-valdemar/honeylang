@@ -1223,6 +1223,98 @@ test "nested struct inline type definition" {
     try r.expectLLVMContains("getelementptr inbounds %Vec2");
 }
 
+// ============================================================
+// correct programs: pointers
+// ============================================================
+
+test "pointer deref and write" {
+    var r = try compileTo(.codegen,
+        \\main :: func() i32 {
+        \\    mut x := 42
+        \\    p := &x
+        \\    p^ = 100
+        \\    return x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("getelementptr i8, ptr %local.0, i32 0");
+    try r.expectLLVMContains("store i32 %");
+}
+
+test "pointer compound assignment" {
+    var r = try compileTo(.codegen,
+        \\main :: func() i32 {
+        \\    mut x := 42
+        \\    p := &x
+        \\    p^ += 100
+        \\    return x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    // desugared to p^ = p^ + 100: should have a load_ptr then add then store_ptr
+    try r.expectLLVMContains("load i32, ptr %");
+    try r.expectLLVMContains("store i32 %");
+}
+
+test "pointer as function parameter" {
+    var r = try compileTo(.codegen,
+        \\set_value :: func(p: @mut i32, val: i32) void {
+        \\    p^ = val
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    mut x := 0
+        \\    set_value(&x, 42)
+        \\    return x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("call fastcc void @set_value(ptr %");
+}
+
+test "pointer type annotation" {
+    var r = try compileTo(.codegen,
+        \\main :: func() i32 {
+        \\    mut x := 10
+        \\    p : @mut i32 = &x
+        \\    q : @i32 = &x
+        \\    return q^
+        \\}
+        \\
+    );
+    defer r.deinit();
+    // only a warning (unused p), no errors
+    try std.testing.expect(!r.lex.errors.hasErrors());
+    if (r.parse) |p| try std.testing.expect(!p.errors.hasErrors());
+    if (r.sem) |s| try std.testing.expect(!s.errors.hasErrors());
+    try r.expectLLVMContains("load ptr, ptr %local.1");
+    try r.expectLLVMContains("load i32, ptr %");
+}
+
+test "pointer to struct" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\get_x :: func(p: @Point) i32 { return p^.x }
+        \\
+        \\main :: func() i32 {
+        \\    pt := Point{ .x = 7, .y = 3 }
+        \\    return get_x(&pt)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("define fastcc i32 @get_x(ptr %arg0)");
+    try r.expectLLVMContains("getelementptr inbounds %Point");
+}
+
 test "nested struct reverse declaration order" {
     var r = try compileTo(.codegen,
         \\Rect :: c struct { origin: Vec2, size: Vec2, }
