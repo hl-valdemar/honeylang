@@ -220,6 +220,8 @@ pub const CodeGenContext = struct {
             const kind = self.ast.getKind(decl_idx);
             if (kind == .var_decl) {
                 try self.collectGlobalVar(decl_idx, &globals_needing_init);
+            } else if (kind == .const_decl) {
+                try self.collectGlobalConst(decl_idx, &globals_needing_init);
             }
         }
 
@@ -245,22 +247,68 @@ pub const CodeGenContext = struct {
         const type_id = self.symbols.getTypeId(sym_idx);
         const width = typeIdToWidth(type_id);
 
-        // Try to evaluate initializer as a literal constant
-        const init_value = self.tryEvaluateLiteral(var_decl.value);
+        // Try to evaluate initializer at compile time
+        var init_value: ?i64 = null;
+        var struct_init: ?[]const i64 = null;
+
+        if (type_id.isStruct()) {
+            struct_init = self.tryEvaluateStructInit(var_decl.value, type_id);
+        } else {
+            init_value = self.tryEvaluateLiteral(var_decl.value);
+        }
 
         // Register global in MIR
-        _ = try self.mir.globals.add(
+        const global_idx = try self.mir.globals.add(
             self.allocator,
             name,
             width,
+            type_id,
+            false,
             init_value,
             sym_idx,
         );
 
+        if (struct_init) |values| {
+            try self.mir.globals.struct_inits.put(self.allocator, global_idx, values);
+        }
+
         // If needs runtime init, add to list
-        if (init_value == null) {
+        if (init_value == null and struct_init == null) {
             try needs_init.append(self.allocator, node_idx);
         }
+    }
+
+    fn collectGlobalConst(self: *CodeGenContext, node_idx: NodeIndex, _: *std.ArrayList(NodeIndex)) !void {
+        if (self.skip_nodes.contains(node_idx)) return;
+
+        const const_decl = self.ast.getConstDecl(node_idx);
+        const value_kind = self.ast.getKind(const_decl.value);
+
+        // Only collect struct-typed constants as globals (primitives are handled by comptime)
+        if (value_kind != .struct_literal) return;
+
+        const name_ident = self.ast.getIdentifier(const_decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        const sym_idx = self.symbols.lookup(name) orelse return;
+        const type_id = self.symbols.getTypeId(sym_idx);
+        const width = typeIdToWidth(type_id);
+
+        // :: structs must have all compile-time known fields (no runtime init fallback)
+        const struct_init = self.tryEvaluateStructInit(const_decl.value, type_id) orelse return;
+
+        const global_idx = try self.mir.globals.add(
+            self.allocator,
+            name,
+            width,
+            type_id,
+            true,
+            null,
+            sym_idx,
+        );
+
+        try self.mir.globals.struct_inits.put(self.allocator, global_idx, struct_init);
     }
 
     fn tryEvaluateLiteral(self: *CodeGenContext, node_idx: NodeIndex) ?i64 {
@@ -278,25 +326,109 @@ pub const CodeGenContext = struct {
         };
     }
 
+    /// Evaluate a literal node with knowledge of the target type.
+    /// For float types, parses as f64 and stores IEEE 754 bits as i64.
+    fn tryEvaluateTypedLiteral(self: *CodeGenContext, node_idx: NodeIndex, target_type: TypeId) ?i64 {
+        const kind = self.ast.getKind(node_idx);
+        if (kind != .literal) return null;
+
+        const lit = self.ast.getLiteral(node_idx);
+        const token = self.tokens.items[lit.token_idx];
+        const value_str = self.src.getSlice(token.start, token.start + token.len);
+
+        return switch (token.kind) {
+            .bool => if (std.mem.eql(u8, value_str, "true")) 1 else 0,
+            .number => {
+                if (target_type == .primitive) {
+                    switch (target_type.primitive) {
+                        .f16, .f32, .f64 => {
+                            const float_val = std.fmt.parseFloat(f64, value_str) catch return null;
+                            return @bitCast(float_val);
+                        },
+                        else => {},
+                    }
+                }
+                return std.fmt.parseInt(i64, value_str, 10) catch null;
+            },
+            else => null,
+        };
+    }
+
+    fn tryEvaluateStructInit(self: *CodeGenContext, value_node: NodeIndex, type_id: TypeId) ?[]const i64 {
+        if (self.ast.getKind(value_node) != .struct_literal) return null;
+        if (!type_id.isStruct()) return null;
+
+        const struct_type = self.types.getStructType(type_id) orelse return null;
+        const lit = self.ast.getStructLiteral(value_node);
+        const field_data = self.ast.getExtra(lit.fields);
+
+        const values = self.allocator.alloc(i64, struct_type.fields.len) catch return null;
+        @memset(values, 0);
+
+        var fi: usize = 0;
+        while (fi < field_data.len) : (fi += 2) {
+            const field_name_idx = field_data[fi];
+            const field_value_idx = field_data[fi + 1];
+
+            const field_ident = self.ast.getIdentifier(field_name_idx);
+            const field_token = self.tokens.items[field_ident.token_idx];
+            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+            var found = false;
+            for (struct_type.fields, 0..) |field, i| {
+                if (mem.eql(u8, field.name, field_name)) {
+                    const val = self.tryEvaluateTypedLiteral(field_value_idx, field.type_id) orelse {
+                        self.allocator.free(values);
+                        return null;
+                    };
+                    values[i] = val;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                self.allocator.free(values);
+                return null;
+            }
+        }
+
+        return values;
+    }
+
     fn generateGlobalInit(self: *CodeGenContext, var_nodes: []const NodeIndex) !void {
         // Create __honey_init function (void, no params)
         self.current_func = try self.mir.addFunction("__honey_init", .c, null, &.{});
         try self.current_func.?.emit(.prologue);
 
         for (var_nodes) |node_idx| {
-            const var_decl = self.ast.getVarDecl(node_idx);
-            const name_ident = self.ast.getIdentifier(var_decl.name);
-            const name_token = self.tokens.items[name_ident.token_idx];
-            const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+            const kind = self.ast.getKind(node_idx);
+
+            // Get name and value from either var_decl or const_decl
+            const name: []const u8, const value_node: NodeIndex = switch (kind) {
+                .var_decl => blk: {
+                    const var_decl = self.ast.getVarDecl(node_idx);
+                    const ni = self.ast.getIdentifier(var_decl.name);
+                    const nt = self.tokens.items[ni.token_idx];
+                    break :blk .{ self.src.getSlice(nt.start, nt.start + nt.len), var_decl.value };
+                },
+                else => continue,
+            };
 
             const global_idx = self.mir.globals.lookup(name) orelse continue;
-            const width = self.mir.globals.getWidth(global_idx);
+            const type_id = self.mir.globals.getTypeId(global_idx);
 
             // Evaluate initializer expression
-            const value_reg = try self.generateExpression(var_decl.value) orelse continue;
+            const value_reg = try self.generateExpression(value_node) orelse continue;
 
-            // Store to global
-            try self.current_func.?.emitStoreGlobal(value_reg, global_idx, width);
+            // Store to global — struct vs primitive
+            if (type_id.isStruct()) {
+                const func = self.current_func.?;
+                const dst_ptr = try func.emitAddrOfGlobal(global_idx);
+                try func.emitCopyStruct(dst_ptr, value_reg, type_id.struct_type);
+            } else {
+                const width = self.mir.globals.getWidth(global_idx);
+                try self.current_func.?.emitStoreGlobal(value_reg, global_idx, width);
+            }
         }
 
         // Return void (emit ret with null value)
@@ -565,6 +697,13 @@ pub const CodeGenContext = struct {
             }
             try self.current_func.?.emitStoreLocal(value_reg, local.offset, local.width);
         } else if (self.mir.globals.lookup(name)) |global_idx| {
+            const target_type_id = self.mir.globals.getTypeId(global_idx);
+            if (target_type_id.isStruct()) {
+                const func = self.current_func.?;
+                const dst_ptr = try func.emitAddrOfGlobal(global_idx);
+                try func.emitCopyStruct(dst_ptr, value_reg, target_type_id.struct_type);
+                return;
+            }
             const width = self.mir.globals.getWidth(global_idx);
             try self.current_func.?.emitStoreGlobal(value_reg, global_idx, width);
         }
@@ -735,7 +874,14 @@ pub const CodeGenContext = struct {
         const kind = self.symbols.getKind(sym_idx);
 
         return switch (kind) {
-            .constant => self.generateConstLoad(sym_idx, type_id),
+            .constant => {
+                // For struct constants, comptime returns null — use global path
+                const result = try self.generateConstLoad(sym_idx, type_id);
+                if (result == null and type_id.isStruct()) {
+                    return self.generateVarLoad(name, type_id);
+                }
+                return result;
+            },
             .variable => self.generateVarLoad(name, type_id),
             .function, .type_ => error.UnsupportedFeature,
         };
@@ -744,6 +890,10 @@ pub const CodeGenContext = struct {
     fn generateVarLoad(self: *CodeGenContext, name: []const u8, type_id: TypeId) !?VReg {
         const func = self.current_func.?;
         const global_idx = self.mir.globals.lookup(name) orelse return null;
+        if (type_id.isStruct()) {
+            // The global IS the struct data; return a pointer to it
+            return try func.emitAddrOfGlobal(global_idx);
+        }
         const width = typeIdToWidth(type_id);
         return try func.emitLoadGlobal(global_idx, width);
     }

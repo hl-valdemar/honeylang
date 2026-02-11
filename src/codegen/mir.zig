@@ -3,6 +3,7 @@ const mem = std.mem;
 
 const CallingConvention = @import("../parser/ast.zig").CallingConvention;
 const SymbolIndex = @import("../semantic/symbols.zig").SymbolIndex;
+const TypeId = @import("../semantic/types.zig").TypeId;
 
 /// Virtual register - unlimited during MIR generation,
 /// mapped to physical registers during lowering.
@@ -462,7 +463,10 @@ pub const MIRFunction = struct {
 pub const GlobalVars = struct {
     names: std.ArrayListUnmanaged([]const u8),
     widths: std.ArrayListUnmanaged(Width),
+    type_ids: std.ArrayListUnmanaged(TypeId),
+    is_const: std.ArrayListUnmanaged(bool),
     init_values: std.ArrayListUnmanaged(?i64), // null if needs runtime init
+    struct_inits: std.AutoHashMapUnmanaged(GlobalIndex, []const i64), // compile-time struct field values
     sym_indices: std.ArrayListUnmanaged(SymbolIndex),
     name_map: std.StringHashMapUnmanaged(GlobalIndex),
 
@@ -470,7 +474,10 @@ pub const GlobalVars = struct {
         return .{
             .names = .{},
             .widths = .{},
+            .type_ids = .{},
+            .is_const = .{},
             .init_values = .{},
+            .struct_inits = .{},
             .sym_indices = .{},
             .name_map = .{},
         };
@@ -479,7 +486,10 @@ pub const GlobalVars = struct {
     pub fn deinit(self: *GlobalVars, allocator: mem.Allocator) void {
         self.names.deinit(allocator);
         self.widths.deinit(allocator);
+        self.type_ids.deinit(allocator);
+        self.is_const.deinit(allocator);
         self.init_values.deinit(allocator);
+        self.struct_inits.deinit(allocator);
         self.sym_indices.deinit(allocator);
         self.name_map.deinit(allocator);
     }
@@ -489,12 +499,16 @@ pub const GlobalVars = struct {
         allocator: mem.Allocator,
         name: []const u8,
         width: Width,
+        type_id: TypeId,
+        is_const_val: bool,
         init_value: ?i64,
         sym_idx: SymbolIndex,
     ) !GlobalIndex {
         const idx: GlobalIndex = @intCast(self.names.items.len);
         try self.names.append(allocator, name);
         try self.widths.append(allocator, width);
+        try self.type_ids.append(allocator, type_id);
+        try self.is_const.append(allocator, is_const_val);
         try self.init_values.append(allocator, init_value);
         try self.sym_indices.append(allocator, sym_idx);
         try self.name_map.put(allocator, name, idx);
@@ -517,11 +531,24 @@ pub const GlobalVars = struct {
         return self.widths.items[idx];
     }
 
+    pub fn getTypeId(self: *const GlobalVars, idx: GlobalIndex) TypeId {
+        return self.type_ids.items[idx];
+    }
+
+    pub fn getIsConst(self: *const GlobalVars, idx: GlobalIndex) bool {
+        return self.is_const.items[idx];
+    }
+
     pub fn getInitValue(self: *const GlobalVars, idx: GlobalIndex) ?i64 {
         return self.init_values.items[idx];
     }
 
+    pub fn getStructInit(self: *const GlobalVars, idx: GlobalIndex) ?[]const i64 {
+        return self.struct_inits.get(idx);
+    }
+
     pub fn needsRuntimeInit(self: *const GlobalVars, idx: GlobalIndex) bool {
+        if (self.struct_inits.contains(idx)) return false;
         return self.init_values.items[idx] == null;
     }
 };

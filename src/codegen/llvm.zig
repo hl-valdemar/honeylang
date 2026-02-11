@@ -39,7 +39,7 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule, types: *const T
     }
 
     // emit global variable declarations
-    try emitGlobals(&emitter, &module.globals);
+    try emitGlobals(&emitter, &module.globals, types);
 
     // emit extern function declarations
     for (module.extern_functions.items) |ext| {
@@ -98,19 +98,45 @@ fn needsMemcpy(types: *const TypeRegistry) bool {
     return types.struct_types.items.len > 0;
 }
 
-fn emitGlobals(emitter: *Emitter, globals: *const GlobalVars) !void {
+fn emitGlobals(emitter: *Emitter, globals: *const GlobalVars, types: *const TypeRegistry) !void {
     for (0..globals.count()) |i| {
         const idx: mir.GlobalIndex = @intCast(i);
         const name = globals.getName(idx);
-        const width = globals.getWidth(idx);
-        const type_str = widthToLLVMType(width);
-        const init_value = globals.getInitValue(idx);
+        const type_id = globals.getTypeId(idx);
+        const is_const = globals.getIsConst(idx);
+        const linkage = if (is_const) "constant" else "global";
 
-        if (init_value) |val| {
-            try emitter.appendFmt("@{s} = global {s} {d}\n", .{ name, type_str, val });
+        if (type_id.isStruct()) {
+            const struct_type = types.struct_types.items[type_id.struct_type];
+            if (globals.getStructInit(idx)) |field_values| {
+                // Static initializer: @P = constant/global %Point { i32 42, i32 54 }
+                try emitter.appendFmt("@{s} = {s} %{s} {{ ", .{ name, linkage, struct_type.name });
+                for (struct_type.fields, 0..) |field, fi| {
+                    if (fi > 0) try emitter.appendSlice(", ");
+                    const field_llvm = typeIdToLLVMType(field.type_id);
+                    if (isFloatType(field.type_id)) {
+                        // Emit IEEE 754 double-precision hex (LLVM format for float constants)
+                        const bits: u64 = @bitCast(field_values[fi]);
+                        try emitter.appendFmt("{s} 0x{X:0>16}", .{ field_llvm, bits });
+                    } else {
+                        try emitter.appendFmt("{s} {d}", .{ field_llvm, field_values[fi] });
+                    }
+                }
+                try emitter.appendSlice(" }\n");
+            } else {
+                // Runtime-initialized struct
+                try emitter.appendFmt("@{s} = {s} %{s} zeroinitializer\n", .{ name, linkage, struct_type.name });
+            }
         } else {
-            // runtime-initialized, start as zero
-            try emitter.appendFmt("@{s} = global {s} 0\n", .{ name, type_str });
+            const width = globals.getWidth(idx);
+            const type_str = widthToLLVMType(width);
+            const init_value = globals.getInitValue(idx);
+
+            if (init_value) |val| {
+                try emitter.appendFmt("@{s} = {s} {s} {d}\n", .{ name, linkage, type_str, val });
+            } else {
+                try emitter.appendFmt("@{s} = {s} {s} 0\n", .{ name, linkage, type_str });
+            }
         }
     }
     if (globals.count() > 0) {
@@ -513,6 +539,14 @@ fn typeIdToLLVMType(type_id: TypeId) []const u8 {
         .pointer => "ptr",
         .unresolved => "i32",
         .function => "ptr",
+    };
+}
+
+fn isFloatType(type_id: TypeId) bool {
+    if (type_id != .primitive) return false;
+    return switch (type_id.primitive) {
+        .f16, .f32, .f64 => true,
+        else => false,
     };
 }
 
