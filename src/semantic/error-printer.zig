@@ -97,7 +97,11 @@ fn writeDiagnostic(
     const line_width = @max(digitCount(line), 4);
 
     // print diagnostic
-    const severity_str: []const u8 = if (info.severity == .warning) "warning" else "error";
+    const severity_str: []const u8 = switch (info.severity) {
+        .warning => "warning",
+        .fatal => "fatal",
+        else => "error",
+    };
     const severity_col: []const u8 = if (info.severity == .warning) ansi.yellow() else ansi.red();
     try writer.print("{s}{s}{s}[{s}]: {s}\n", .{ severity_col, severity_str, ansi.reset(), info.code, info.message });
     try writer.print("  --> {s}:{d}:{d}\n", .{ file_path, line, col });

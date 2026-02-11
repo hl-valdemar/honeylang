@@ -4,7 +4,7 @@ const mem = @import("std").mem;
 const SourceIndex = @import("../source/source.zig").SourceIndex;
 const SourceCode = @import("../source/source.zig").SourceCode;
 
-pub const Severity = enum { err, warning };
+pub const Severity = enum { fatal, err, warning };
 
 pub const ErrorInfo = struct {
     code: []const u8,
@@ -177,6 +177,7 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .code = "S021",
         .message = "missing entry point",
         .help = "program must define a 'main' function",
+        .severity = .fatal,
     },
     .duplicate_field = .{
         .code = "S022",
