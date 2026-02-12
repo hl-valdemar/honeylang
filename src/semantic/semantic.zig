@@ -730,6 +730,18 @@ pub const SemanticContext = struct {
                         self.symbols.resolve(sym_idx, type_id);
                     }
                 }
+
+                // also propagate through local variables
+                if (self.lookupLocalPtr(name)) |local| {
+                    if (local.type_id.isUnresolved()) {
+                        local.type_id = type_id;
+                        // cascade through the local's value expression
+                        if (local.node_idx != 0) {
+                            const var_decl = self.ast.getVarDecl(local.node_idx);
+                            self.propagateType(var_decl.value, type_id);
+                        }
+                    }
+                }
             },
             .unary_op => {
                 const unary_op = self.ast.getUnaryOp(node_idx);
@@ -739,6 +751,15 @@ pub const SemanticContext = struct {
                 const binary_op = self.ast.getBinaryOp(node_idx);
                 self.propagateType(binary_op.left, type_id);
                 self.propagateType(binary_op.right, type_id);
+            },
+            .address_of => {
+                // unwrap pointer type and propagate pointee to operand
+                if (type_id.isPointer()) {
+                    if (self.types.getPointerType(type_id)) |ptr_info| {
+                        const addr = self.ast.getAddressOf(node_idx);
+                        self.propagateType(addr.operand, ptr_info.pointee);
+                    }
+                }
             },
             else => {},
         }
@@ -979,6 +1000,40 @@ pub const SemanticContext = struct {
             try self.checkStatement(stmt_idx);
         }
 
+        // post-pass: re-check var_decl value expressions for locals that were
+        // resolved after their initial check (backward type inference).
+        // iterate until fixed point to handle chains (x → &x → p).
+        var changed = true;
+        while (changed) {
+            changed = false;
+            for (statements) |stmt_idx| {
+                if (self.ast.getKind(stmt_idx) == .var_decl) {
+                    const stored = self.node_types.get(stmt_idx);
+                    if (stored == null or !stored.?.isUnresolved()) continue;
+
+                    const decl = self.ast.getVarDecl(stmt_idx);
+                    const name_ident = self.ast.getIdentifier(decl.name);
+                    const name_token = self.tokens.items[name_ident.token_idx];
+                    const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+                    if (self.lookupLocalPtr(name)) |local| {
+                        // re-check value expression with the local's current type as context
+                        const ctx = local.type_id;
+                        const new_type = try self.checkExpression(decl.value, ctx);
+                        if (new_type) |nt| {
+                            if (!nt.isUnresolved()) {
+                                try self.node_types.put(self.allocator, stmt_idx, nt);
+                                if (local.type_id.isUnresolved()) {
+                                    local.type_id = nt;
+                                }
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         const deferred = self.ast.getExtra(block.deferred);
         for (deferred) |stmt_idx| {
             try self.checkStatement(stmt_idx);
@@ -1110,7 +1165,9 @@ pub const SemanticContext = struct {
         }
 
         // check mutability
-        if (!is_mutable) {
+        // for deref assignments with unresolved pointer type, skip — can't verify yet
+        const skip_mutability_check = target_kind == .deref and target_type.isUnresolved();
+        if (!is_mutable and !skip_mutability_check) {
             try self.errors.add(.{
                 .kind = .assignment_to_immutable,
                 .start = loc.start,
@@ -1248,6 +1305,11 @@ pub const SemanticContext = struct {
             // propagate type from context if local is still unresolved
             if (local.type_id == .unresolved and !context_type.isUnresolved()) {
                 local.type_id = context_type;
+                // cascade through the local's value expression (e.g. &x → resolve x)
+                if (local.node_idx != 0) {
+                    const var_decl = self.ast.getVarDecl(local.node_idx);
+                    self.propagateType(var_decl.value, context_type);
+                }
             }
             return local.type_id;
         }
@@ -1359,6 +1421,10 @@ pub const SemanticContext = struct {
         // check operand type
         const operand_type = try self.checkExpression(addr.operand, pointee_context) orelse return null;
 
+        // if operand is unresolved, the whole address-of is unresolved
+        // (so context from the consumer can flow back through checkIdentifier later)
+        if (operand_type.isUnresolved()) return .unresolved;
+
         // determine mutability from the target
         var is_mutable = false;
         if (operand_kind == .identifier) {
@@ -1399,6 +1465,9 @@ pub const SemanticContext = struct {
 
         // check operand type
         const operand_type = try self.checkExpression(deref.operand, .unresolved) orelse return null;
+
+        // if operand is unresolved, propagate unresolved (will be resolved later)
+        if (operand_type.isUnresolved()) return .unresolved;
 
         // verify it's a pointer
         if (!operand_type.isPointer()) {

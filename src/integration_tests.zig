@@ -1547,3 +1547,46 @@ test "mixed f32 and i32 struct fields" {
     try r.expectLLVMContains("store i32");
     try r.expectLLVMContains("store float");
 }
+
+// ============================================================
+// correct programs: backward type inference through address-of
+// ============================================================
+
+test "return address-of with unresolved local" {
+    var r = try compileTo(.codegen,
+        \\main :: func() @i32 {
+        \\    mut x := 42
+        \\    return &x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "address-of through intermediate variable" {
+    var r = try compileTo(.codegen,
+        \\main :: func() @i32 {
+        \\    mut x := 42
+        \\    p := &x
+        \\    return p
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "address-of chain through two intermediates" {
+    var r = try compileTo(.codegen,
+        \\main :: func() @i32 {
+        \\    mut x := 42
+        \\    p := &x
+        \\    q := p
+        \\    return q
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
