@@ -1,0 +1,23 @@
+test_float_less :: func() i32 {
+  x: f32 = 1.5
+  y: f32 = 2.5
+  if x < y { return 1 }
+  return 0
+}
+
+test_float_equal :: func() i32 {
+  x: f64 = 3.14
+  y: f64 = 3.14
+  if x == y { return 1 }
+  return 0
+}
+
+main :: func() i32 {
+  mut r: i32 = test_float_less()
+  if r != 1 { return 10 }
+
+  r = test_float_equal()
+  if r != 1 { return 20 }
+
+  return 0
+}

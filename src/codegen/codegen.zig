@@ -20,6 +20,7 @@ const MInst = mir.MInst;
 const VReg = mir.VReg;
 const Width = mir.Width;
 const BinOp = mir.BinOp;
+const CmpOp = mir.CmpOp;
 const GlobalIndex = mir.GlobalIndex;
 
 const llvm = @import("llvm.zig");
@@ -981,6 +982,25 @@ pub const CodeGenContext = struct {
 
         const left_reg = try self.generateExpression(binary.left) orelse return null;
         const right_reg = try self.generateExpression(binary.right) orelse return null;
+
+        // Comparisons: use operand type for width/signedness, result is always bool
+        if (binary.isComparison()) {
+            const operand_type = self.node_types.get(binary.left) orelse .unresolved;
+            const operand_width = typeIdToWidth(operand_type);
+            const signed = operand_type.isSignedInteger();
+
+            const cmp_op: CmpOp = switch (binary.op) {
+                .equal => .eq,
+                .not_equal => .ne,
+                .less => if (signed) CmpOp.lt_s else CmpOp.lt_u,
+                .greater => if (signed) CmpOp.gt_s else CmpOp.gt_u,
+                .less_equal => if (signed) CmpOp.le_s else CmpOp.le_u,
+                .greater_equal => if (signed) CmpOp.ge_s else CmpOp.ge_u,
+                else => unreachable,
+            };
+
+            return try func.emitCmp(cmp_op, left_reg, right_reg, operand_width);
+        }
 
         const mir_op: BinOp = switch (binary.op) {
             .add => .add,

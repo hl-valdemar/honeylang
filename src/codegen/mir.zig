@@ -317,6 +317,13 @@ pub const MIRFunction = struct {
         return dst;
     }
 
+    /// Emit a comparison operation and return the destination vreg.
+    pub fn emitCmp(self: *MIRFunction, op: CmpOp, lhs: VReg, rhs: VReg, width: Width) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .cmp = .{ .op = op, .dst = dst, .lhs = lhs, .rhs = rhs, .width = width } });
+        return dst;
+    }
+
     /// Emit a return instruction.
     pub fn emitRet(self: *MIRFunction, value: ?VReg, width: Width) !void {
         try self.emit(.{ .ret = .{ .value = value, .width = width } });
