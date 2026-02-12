@@ -851,6 +851,11 @@ pub const CodeGenContext = struct {
                 return try func.emitMovImm(value, width);
             },
             .number => {
+                if (width.isFloat()) {
+                    const float_val = std.fmt.parseFloat(f64, value_str) catch 0.0;
+                    const bits: i64 = @bitCast(float_val);
+                    return try func.emitMovImm(bits, width);
+                }
                 const value = std.fmt.parseInt(i64, value_str, 10) catch 0;
                 return try func.emitMovImm(value, width);
             },
@@ -905,7 +910,9 @@ pub const CodeGenContext = struct {
     fn typeIdToWidth(type_id: TypeId) Width {
         return switch (type_id) {
             .primitive => |prim| switch (prim) {
-                .i64, .u64, .f64 => .w64,
+                .i64, .u64 => .w64,
+                .f16, .f32 => .wf32,
+                .f64 => .wf64,
                 else => .w32,
             },
             .struct_type => .ptr,
@@ -954,8 +961,15 @@ pub const CodeGenContext = struct {
                 const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
                 return try func.emitMovImm(val, .w64);
             },
-            .f16, .f32, .f64 => {
-                return error.UnsupportedFeature;
+            .f16, .f32 => {
+                const float_val = std.fmt.parseFloat(f64, value_str) catch 0.0;
+                const bits: i64 = @bitCast(float_val);
+                return try func.emitMovImm(bits, .wf32);
+            },
+            .f64 => {
+                const float_val = std.fmt.parseFloat(f64, value_str) catch 0.0;
+                const bits: i64 = @bitCast(float_val);
+                return try func.emitMovImm(bits, .wf64);
             },
             .void => return null,
         }

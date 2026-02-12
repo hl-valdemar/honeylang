@@ -242,6 +242,8 @@ fn widthStr(w: Width) []const u8 {
         .w32 => "w32",
         .w64 => "w64",
         .ptr => "ptr",
+        .wf32 => "f32",
+        .wf64 => "f64",
     };
 }
 

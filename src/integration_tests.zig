@@ -1333,3 +1333,217 @@ test "nested struct reverse declaration order" {
     try r.expectNoErrors();
     try r.expectLLVMContains("%Rect = type { %Vec2, %Vec2 }");
 }
+
+// ============================================================
+// codegen: float types
+// ============================================================
+
+test "f32 function parameter and return" {
+    var r = try compileTo(.codegen,
+        \\add :: func(a: f32, b: f32) f32 {
+        \\    return a + b
+        \\}
+        \\
+        \\main :: func() f32 {
+        \\    return add(1, 2)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("define fastcc float @add(float %arg0, float %arg1)");
+    try r.expectLLVMContains("fadd float");
+    try r.expectLLVMContains("ret float");
+}
+
+test "f64 function parameter and return" {
+    var r = try compileTo(.codegen,
+        \\add :: func(a: f64, b: f64) f64 {
+        \\    return a + b
+        \\}
+        \\
+        \\main :: func() f64 {
+        \\    return add(1, 2)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("define fastcc double @add(double %arg0, double %arg1)");
+    try r.expectLLVMContains("fadd double");
+    try r.expectLLVMContains("ret double");
+}
+
+test "f32 local variable and literal" {
+    var r = try compileTo(.codegen,
+        \\identity :: func(x: f32) f32 { return x }
+        \\
+        \\main :: func() f32 {
+        \\    x: f32 = 42
+        \\    return identity(x)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("fadd float 0.0, 0x");
+    try r.expectLLVMContains("alloca float");
+    try r.expectLLVMContains("store float %");
+}
+
+test "f32 arithmetic operations" {
+    var r = try compileTo(.codegen,
+        \\main :: func() f32 {
+        \\    a: f32 = 10
+        \\    b: f32 = 3
+        \\    return a - b
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("load float, ptr %local.");
+    try r.expectLLVMContains("fsub float");
+}
+
+test "f32 multiply and divide" {
+    var r = try compileTo(.codegen,
+        \\mul :: func(a: f32, b: f32) f32 {
+        \\    return a * b
+        \\}
+        \\
+        \\div :: func(a: f32, b: f32) f32 {
+        \\    return a / b
+        \\}
+        \\
+        \\main :: func() f32 {
+        \\    return mul(div(6, 2), 3)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("fmul float");
+    try r.expectLLVMContains("fdiv float");
+}
+
+test "struct with f32 fields" {
+    var r = try compileTo(.codegen,
+        \\Point :: struct { x: f32, y: f32 }
+        \\
+        \\get_x :: func(p: Point) f32 { return p.x }
+        \\
+        \\main :: func() f32 {
+        \\    p := Point{ .x = 1, .y = 2 }
+        \\    return get_x(p)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("%Point = type { float, float }");
+    try r.expectLLVMContains("store float %");
+}
+
+test "struct with f32 field access" {
+    var r = try compileTo(.codegen,
+        \\Point :: struct { x: f32, y: f32 }
+        \\
+        \\get_x :: func(p: Point) f32 {
+        \\    return p.x
+        \\}
+        \\
+        \\main :: func() f32 {
+        \\    p := Point{ .x = 5, .y = 10 }
+        \\    return get_x(p)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("load float, ptr %gep.");
+}
+
+test "global struct with f32 fields comptime init" {
+    var r = try compileTo(.codegen,
+        \\Point :: struct { x: f32, y: f32 }
+        \\
+        \\p := Point{ .x = 52, .y = 44 }
+        \\
+        \\main :: func() i32 {
+        \\    return 0
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("%Point = type { float, float }");
+    // 52.0 as f64 bits = 0x404A000000000000
+    try r.expectLLVMContains("float 0x404A000000000000");
+    // 44.0 as f64 bits = 0x4046000000000000
+    try r.expectLLVMContains("float 0x4046000000000000");
+}
+
+test "f32 function call with struct field args" {
+    var r = try compileTo(.codegen,
+        \\Point :: struct { x: f32, y: f32 }
+        \\
+        \\p := Point{ .x = 52, .y = 44 }
+        \\
+        \\add :: func(a: f32, b: f32) f32 { return a + b }
+        \\
+        \\main :: func() f32 { return add(p.x, p.y) }
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("call fastcc float @add(float %");
+    try r.expectLLVMContains("fadd float");
+}
+
+test "f32 constant via comptime" {
+    var r = try compileTo(.codegen,
+        \\PI: f32 :: 3
+        \\
+        \\main :: func() f32 {
+        \\    return PI
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("fadd float 0.0, 0x");
+    try r.expectLLVMContains("ret float");
+}
+
+test "global f32 variable" {
+    var r = try compileTo(.codegen,
+        \\x: f32 = 10
+        \\
+        \\main :: func() f32 {
+        \\    return x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("global float 0x");
+    try r.expectLLVMContains("load float, ptr @x");
+}
+
+test "mixed f32 and i32 struct fields" {
+    var r = try compileTo(.codegen,
+        \\Entity :: struct { id: i32, x: f32, y: f32 }
+        \\
+        \\main :: func() i32 {
+        \\    e := Entity{ .id = 1, .x = 5, .y = 10 }
+        \\    return e.id
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("%Entity = type { i32, float, float }");
+    try r.expectLLVMContains("store i32");
+    try r.expectLLVMContains("store float");
+}

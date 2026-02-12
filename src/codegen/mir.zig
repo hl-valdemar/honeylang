@@ -14,11 +14,20 @@ pub const Width = enum {
     w32,
     w64,
     ptr, // pointer type (for struct params passed by reference)
+    wf32, // 32-bit float
+    wf64, // 64-bit float
 
     pub fn bits(self: Width) u8 {
         return switch (self) {
-            .w32 => 32,
-            .w64, .ptr => 64,
+            .w32, .wf32 => 32,
+            .w64, .wf64, .ptr => 64,
+        };
+    }
+
+    pub fn isFloat(self: Width) bool {
+        return switch (self) {
+            .wf32, .wf64 => true,
+            else => false,
         };
     }
 };

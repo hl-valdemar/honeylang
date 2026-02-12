@@ -133,9 +133,18 @@ fn emitGlobals(emitter: *Emitter, globals: *const GlobalVars, types: *const Type
             const init_value = globals.getInitValue(idx);
 
             if (init_value) |val| {
-                try emitter.appendFmt("@{s} = {s} {s} {d}\n", .{ name, linkage, type_str, val });
+                if (width.isFloat()) {
+                    const bits: u64 = @bitCast(val);
+                    try emitter.appendFmt("@{s} = {s} {s} 0x{X:0>16}\n", .{ name, linkage, type_str, bits });
+                } else {
+                    try emitter.appendFmt("@{s} = {s} {s} {d}\n", .{ name, linkage, type_str, val });
+                }
             } else {
-                try emitter.appendFmt("@{s} = {s} {s} 0\n", .{ name, linkage, type_str });
+                if (width.isFloat()) {
+                    try emitter.appendFmt("@{s} = {s} {s} 0.0\n", .{ name, linkage, type_str });
+                } else {
+                    try emitter.appendFmt("@{s} = {s} {s} 0\n", .{ name, linkage, type_str });
+                }
             }
         }
     }
@@ -206,7 +215,8 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
     };
     if (needs_ret) {
         if (func.return_width) |w| {
-            try emitter.appendFmt("  ret {s} 0\n", .{widthToLLVMType(w)});
+            const zero_str: []const u8 = if (w.isFloat()) "0.0" else "0";
+            try emitter.appendFmt("  ret {s} {s}\n", .{ widthToLLVMType(w), zero_str });
         } else {
             try emitter.appendSlice("  ret void\n");
         }
@@ -229,14 +239,24 @@ fn lowerInst(
         .mov_imm => |op| {
             const ssa_name = ssa_map.allocFor(op.dst);
             const type_str = widthToLLVMType(op.width);
-            try emitter.appendFmt("  %{d} = add {s} 0, {d}\n", .{ ssa_name, type_str, op.value });
+            if (op.width.isFloat()) {
+                // Float immediate: value holds IEEE 754 bits, emit as LLVM hex float
+                const bits: u64 = @bitCast(op.value);
+                try emitter.appendFmt("  %{d} = fadd {s} 0.0, 0x{X:0>16}\n", .{ ssa_name, type_str, bits });
+            } else {
+                try emitter.appendFmt("  %{d} = add {s} 0, {d}\n", .{ ssa_name, type_str, op.value });
+            }
         },
 
         .mov_reg => |op| {
             const src_ssa = ssa_map.get(op.src);
             const dst_ssa = ssa_map.allocFor(op.dst);
             const type_str = widthToLLVMType(op.width);
-            try emitter.appendFmt("  %{d} = add {s} %{d}, 0\n", .{ dst_ssa, type_str, src_ssa });
+            if (op.width.isFloat()) {
+                try emitter.appendFmt("  %{d} = fadd {s} %{d}, 0.0\n", .{ dst_ssa, type_str, src_ssa });
+            } else {
+                try emitter.appendFmt("  %{d} = add {s} %{d}, 0\n", .{ dst_ssa, type_str, src_ssa });
+            }
         },
 
         .binop => |op| {
@@ -244,7 +264,7 @@ fn lowerInst(
             const rhs_ssa = ssa_map.get(op.rhs);
             const dst_ssa = ssa_map.allocFor(op.dst);
             const type_str = widthToLLVMType(op.width);
-            const op_str = binOpToLLVM(op.op);
+            const op_str = if (op.width.isFloat()) floatBinOpToLLVM(op.op) else binOpToLLVM(op.op);
 
             try emitter.appendFmt("  %{d} = {s} {s} %{d}, %{d}\n", .{
                 dst_ssa, op_str, type_str, lhs_ssa, rhs_ssa,
@@ -256,15 +276,26 @@ fn lowerInst(
             const rhs_ssa = ssa_map.get(op.rhs);
             const dst_ssa = ssa_map.allocFor(op.dst);
             const type_str = widthToLLVMType(op.width);
-            const cmp_op_str = cmpOpToLLVM(op.op);
 
-            // icmp returns i1, zero-extend to target width
-            try emitter.appendFmt("  %cmp{d} = icmp {s} {s} %{d}, %{d}\n", .{
-                dst_ssa, cmp_op_str, type_str, lhs_ssa, rhs_ssa,
-            });
-            try emitter.appendFmt("  %{d} = zext i1 %cmp{d} to {s}\n", .{
-                dst_ssa, dst_ssa, type_str,
-            });
+            if (op.width.isFloat()) {
+                const fcmp_op_str = floatCmpOpToLLVM(op.op);
+                // fcmp returns i1, zero-extend to i32 (comparisons always produce integers)
+                try emitter.appendFmt("  %cmp{d} = fcmp {s} {s} %{d}, %{d}\n", .{
+                    dst_ssa, fcmp_op_str, type_str, lhs_ssa, rhs_ssa,
+                });
+                try emitter.appendFmt("  %{d} = zext i1 %cmp{d} to i32\n", .{
+                    dst_ssa, dst_ssa,
+                });
+            } else {
+                const cmp_op_str = cmpOpToLLVM(op.op);
+                // icmp returns i1, zero-extend to target width
+                try emitter.appendFmt("  %cmp{d} = icmp {s} {s} %{d}, %{d}\n", .{
+                    dst_ssa, cmp_op_str, type_str, lhs_ssa, rhs_ssa,
+                });
+                try emitter.appendFmt("  %{d} = zext i1 %cmp{d} to {s}\n", .{
+                    dst_ssa, dst_ssa, type_str,
+                });
+            }
         },
 
         .ret => |op| {
@@ -275,7 +306,8 @@ fn lowerInst(
             } else {
                 if (func.return_width) |w| {
                     // non-void function with no explicit value — return 0
-                    try emitter.appendFmt("  ret {s} 0\n", .{widthToLLVMType(w)});
+                    const zero_str: []const u8 = if (w.isFloat()) "0.0" else "0";
+                    try emitter.appendFmt("  ret {s} {s}\n", .{ widthToLLVMType(w), zero_str });
                 } else {
                     try emitter.appendSlice("  ret void\n");
                 }
@@ -518,6 +550,8 @@ fn widthToLLVMType(width: Width) []const u8 {
         .w32 => "i32",
         .w64 => "i64",
         .ptr => "ptr",
+        .wf32 => "float",
+        .wf64 => "double",
     };
 }
 
@@ -580,6 +614,28 @@ fn cmpOpToLLVM(op: CmpOp) []const u8 {
         .gt_u => "ugt",
         .ge_s => "sge",
         .ge_u => "uge",
+    };
+}
+
+fn floatBinOpToLLVM(op: BinOp) []const u8 {
+    return switch (op) {
+        .add => "fadd",
+        .sub => "fsub",
+        .mul => "fmul",
+        .div_s, .div_u => "fdiv",
+        .mod_s, .mod_u => "frem",
+        else => "fadd", // fallback for bitwise ops (shouldn't occur on floats)
+    };
+}
+
+fn floatCmpOpToLLVM(op: CmpOp) []const u8 {
+    return switch (op) {
+        .eq => "oeq",
+        .ne => "une",
+        .lt_s, .lt_u => "olt",
+        .le_s, .le_u => "ole",
+        .gt_s, .gt_u => "ogt",
+        .ge_s, .ge_u => "oge",
     };
 }
 
