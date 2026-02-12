@@ -1,0 +1,7 @@
+# single-item pointer arithmetic should be rejected
+main :: func() void {
+    mut x: i32 = 42
+    p: @mut i32 = &x
+
+    bad: i32 = p + 1
+}

@@ -57,6 +57,7 @@ pub const SemanticErrorKind = enum {
     cannot_take_address,
     deref_non_pointer,
     assign_through_immutable_ptr,
+    pointer_arithmetic,
 
     pub fn info(self: SemanticErrorKind) ErrorInfo {
         return error_info.get(self);
@@ -224,6 +225,11 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .code = "S030",
         .message = "cannot assign through immutable pointer",
         .help = "use @mut to create a mutable pointer",
+    },
+    .pointer_arithmetic = .{
+        .code = "S031",
+        .message = "arithmetic on single-item pointer",
+        .help = "single-item pointers do not support arithmetic; use a many-item pointer (*T) instead",
     },
 });
 

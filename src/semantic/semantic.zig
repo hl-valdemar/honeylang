@@ -1495,6 +1495,18 @@ pub const SemanticContext = struct {
 
             const operand_type = left_type orelse right_type;
 
+            // reject arithmetic on single-item pointers
+            const left_is_ptr = if (left_type) |t| t.isPointer() else false;
+            const right_is_ptr = if (right_type) |t| t.isPointer() else false;
+            if (left_is_ptr or right_is_ptr) {
+                try self.errors.add(.{
+                    .kind = .pointer_arithmetic,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+                return operand_type;
+            }
+
             if (operand_type) |t| {
                 if (!t.isNumeric() and !t.isUnresolved()) {
                     try self.errors.add(.{
