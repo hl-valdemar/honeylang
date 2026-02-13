@@ -534,6 +534,50 @@ fn lowerInst(
             const type_str = widthToLLVMType(op.width);
             try emitter.appendFmt("  store {s} %{d}, ptr %{d}\n", .{ type_str, value_ssa, ptr_ssa });
         },
+
+        .addr_of_field => |op| {
+            const base_ssa = ssa_map.get(op.base);
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            const struct_type = types.struct_types.items[op.struct_idx];
+            try emitter.appendFmt("  %{d} = getelementptr inbounds %{s}, ptr %{d}, i32 0, i32 {d}\n", .{
+                dst_ssa, struct_type.name, base_ssa, op.field_idx,
+            });
+        },
+
+        .ptr_offset => |op| {
+            const base_ssa = ssa_map.get(op.base);
+            const count_ssa = ssa_map.get(op.count);
+            if (op.stride == 1) {
+                if (op.is_sub) {
+                    const neg_ssa = ssa_map.next_ssa;
+                    ssa_map.next_ssa += 1;
+                    try emitter.appendFmt("  %{d} = sub i64 0, %{d}\n", .{ neg_ssa, count_ssa });
+                    const dst_ssa = ssa_map.allocFor(op.dst);
+                    try emitter.appendFmt("  %{d} = getelementptr i8, ptr %{d}, i64 %{d}\n", .{ dst_ssa, base_ssa, neg_ssa });
+                } else {
+                    const dst_ssa = ssa_map.allocFor(op.dst);
+                    try emitter.appendFmt("  %{d} = getelementptr i8, ptr %{d}, i64 %{d}\n", .{ dst_ssa, base_ssa, count_ssa });
+                }
+            } else {
+                // sign-extend count to i64, multiply by stride, then GEP
+                const ext_ssa = ssa_map.next_ssa;
+                ssa_map.next_ssa += 1;
+                try emitter.appendFmt("  %{d} = sext i32 %{d} to i64\n", .{ ext_ssa, count_ssa });
+                const scaled_ssa = ssa_map.next_ssa;
+                ssa_map.next_ssa += 1;
+                try emitter.appendFmt("  %{d} = mul i64 %{d}, {d}\n", .{ scaled_ssa, ext_ssa, op.stride });
+                if (op.is_sub) {
+                    const neg_ssa = ssa_map.next_ssa;
+                    ssa_map.next_ssa += 1;
+                    try emitter.appendFmt("  %{d} = sub i64 0, %{d}\n", .{ neg_ssa, scaled_ssa });
+                    const dst_ssa = ssa_map.allocFor(op.dst);
+                    try emitter.appendFmt("  %{d} = getelementptr i8, ptr %{d}, i64 %{d}\n", .{ dst_ssa, base_ssa, neg_ssa });
+                } else {
+                    const dst_ssa = ssa_map.allocFor(op.dst);
+                    try emitter.appendFmt("  %{d} = getelementptr i8, ptr %{d}, i64 %{d}\n", .{ dst_ssa, base_ssa, scaled_ssa });
+                }
+            }
+        },
     }
 }
 

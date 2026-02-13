@@ -233,6 +233,7 @@ pub const Deref = struct {
 pub const PointerType = struct {
     pointee: NodeIndex,
     is_mutable: bool,
+    is_many_item: bool,
 };
 
 pub const Error = struct {
@@ -772,6 +773,7 @@ pub const Ast = struct {
         self: *Ast,
         pointee: NodeIndex,
         is_mutable: bool,
+        is_many_item: bool,
         start: SourceIndex,
         end: SourceIndex,
     ) !NodeIndex {
@@ -785,6 +787,7 @@ pub const Ast = struct {
         try self.pointer_types.append(self.allocator, .{
             .pointee = pointee,
             .is_mutable = is_mutable,
+            .is_many_item = is_many_item,
         });
 
         return node_idx;

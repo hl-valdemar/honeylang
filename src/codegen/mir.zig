@@ -231,6 +231,24 @@ pub const MInst = union(enum) {
         value: VReg,
         width: Width,
     },
+
+    /// Get a pointer to a struct field (GEP without load).
+    addr_of_field: struct {
+        dst: VReg,
+        base: VReg, // pointer to struct
+        struct_idx: u32,
+        field_idx: u32,
+    },
+
+    /// Offset a pointer by (count * stride) bytes.
+    /// Used for many-item pointer arithmetic.
+    ptr_offset: struct {
+        dst: VReg,
+        base: VReg, // pointer to offset from
+        count: VReg, // integer element count
+        stride: u32, // element size in bytes
+        is_sub: bool, // true for subtraction
+    },
 };
 
 /// Function parameter metadata.
@@ -314,6 +332,20 @@ pub const MIRFunction = struct {
     pub fn emitBinOp(self: *MIRFunction, op: BinOp, lhs: VReg, rhs: VReg, width: Width) !VReg {
         const dst = self.allocVReg();
         try self.emit(.{ .binop = .{ .op = op, .dst = dst, .lhs = lhs, .rhs = rhs, .width = width } });
+        return dst;
+    }
+
+    /// Emit an addr_of_field instruction (GEP to a struct field, no load).
+    pub fn emitAddrOfField(self: *MIRFunction, base: VReg, struct_idx: u32, field_idx: u32) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .addr_of_field = .{ .dst = dst, .base = base, .struct_idx = struct_idx, .field_idx = field_idx } });
+        return dst;
+    }
+
+    /// Emit a pointer offset instruction and return the destination vreg.
+    pub fn emitPtrOffset(self: *MIRFunction, base: VReg, count: VReg, stride: u32, is_sub: bool) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .ptr_offset = .{ .dst = dst, .base = base, .count = count, .stride = stride, .is_sub = is_sub } });
         return dst;
     }
 

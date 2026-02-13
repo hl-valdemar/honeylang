@@ -234,6 +234,21 @@ fn printInstruction(inst: *const MInst) void {
                 s.value,
             });
         },
+        .addr_of_field => |a| {
+            std.debug.print("addr_of_field v{d}, v{d}, struct[{d}].field[{d}]", .{
+                a.dst, a.base, a.struct_idx, a.field_idx,
+            });
+        },
+        .ptr_offset => |p| {
+            const op_str = if (p.is_sub) "sub" else "add";
+            std.debug.print("ptr_offset.{s} v{d}, v{d}, v{d}, stride={d}", .{
+                op_str,
+                p.dst,
+                p.base,
+                p.count,
+                p.stride,
+            });
+        },
     }
 }
 

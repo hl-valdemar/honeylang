@@ -179,8 +179,9 @@ fn getNodeInfo(
         .deref => "deref",
         .pointer_type => blk: {
             const ptr = ast.getPointerType(idx);
-            const mut_str = if (ptr.is_mutable) "@mut" else "@";
-            break :blk std.fmt.bufPrint(&S.buf, "{s}", .{mut_str}) catch "?";
+            const prefix = if (ptr.is_many_item) "*" else "@";
+            const mut_str = if (ptr.is_mutable) "mut" else "";
+            break :blk std.fmt.bufPrint(&S.buf, "{s}{s}", .{ prefix, mut_str }) catch "?";
         },
         .void_literal => "void",
         .err => blk: {
@@ -623,8 +624,9 @@ fn printNode(
 
         .pointer_type => {
             const ptr = ast.getPointerType(idx);
-            const mut_str = if (ptr.is_mutable) "@mut " else "@";
-            std.debug.print("pointer_type: {s}\n", .{mut_str});
+            const ptr_prefix = if (ptr.is_many_item) "*" else "@";
+            const mut_str = if (ptr.is_mutable) "mut " else "";
+            std.debug.print("pointer_type: {s}{s}\n", .{ ptr_prefix, mut_str });
             printNode(ast, tokens, src, ptr.pointee, child_prefix, true);
         },
 
@@ -643,10 +645,11 @@ fn printTypeValue(
 ) void {
     if (ast.getKind(idx) == .pointer_type) {
         const ptr = ast.getPointerType(idx);
+        const prefix = if (ptr.is_many_item) "*" else "@";
         if (ptr.is_mutable) {
-            std.debug.print("@mut ", .{});
+            std.debug.print("{s}mut ", .{prefix});
         } else {
-            std.debug.print("@", .{});
+            std.debug.print("{s}", .{prefix});
         }
         printTypeValue(ast, tokens, src, ptr.pointee);
     } else {

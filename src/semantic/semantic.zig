@@ -510,7 +510,7 @@ pub const SemanticContext = struct {
             .pointer_type => {
                 const ptr = self.ast.getPointerType(node_idx);
                 const pointee = self.resolveTypeNode(ptr.pointee) orelse return null;
-                return self.types.addPointerType(pointee, ptr.is_mutable) catch return null;
+                return self.types.addPointerType(pointee, ptr.is_mutable, ptr.is_many_item) catch return null;
             },
             else => null,
         };
@@ -633,8 +633,8 @@ pub const SemanticContext = struct {
             .address_of => {
                 const addr = self.ast.getAddressOf(node_idx);
                 const operand_type = self.tryInferType(addr.operand) orelse return null;
-                // default to immutable pointer for inference
-                return self.types.addPointerType(operand_type, false) catch return null;
+                // default to immutable single-item pointer for inference
+                return self.types.addPointerType(operand_type, false, false) catch return null;
             },
             .deref => {
                 const deref = self.ast.getDeref(node_idx);
@@ -1455,7 +1455,9 @@ pub const SemanticContext = struct {
             }
         }
 
-        return self.types.addPointerType(operand_type, is_mutable) catch return null;
+        // produce many-item pointer if context expects one, single-item otherwise
+        const is_many_item = if (self.types.getPointerType(context_type)) |ctx_ptr| ctx_ptr.is_many_item else false;
+        return self.types.addPointerType(operand_type, is_mutable, is_many_item) catch return null;
     }
 
     fn checkDeref(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
@@ -1495,10 +1497,22 @@ pub const SemanticContext = struct {
 
             const operand_type = left_type orelse right_type;
 
-            // reject arithmetic on single-item pointers
+            // pointer arithmetic: allow for many-item pointers, reject for single-item
             const left_is_ptr = if (left_type) |t| t.isPointer() else false;
             const right_is_ptr = if (right_type) |t| t.isPointer() else false;
             if (left_is_ptr or right_is_ptr) {
+                const left_is_many = if (left_type) |t| self.types.isManyItemPointer(t) else false;
+                const right_is_many = if (right_type) |t| self.types.isManyItemPointer(t) else false;
+
+                if (left_is_many and (binary_op.op == .add or binary_op.op == .sub)) {
+                    // many-item pointer +/- integer: result is the pointer type
+                    return left_type;
+                } else if (right_is_many and binary_op.op == .add) {
+                    // integer + many-item pointer: result is the pointer type
+                    return right_type;
+                }
+
+                // single-item pointer arithmetic is not allowed
                 try self.errors.add(.{
                     .kind = .pointer_arithmetic,
                     .start = loc.start,
@@ -1826,15 +1840,15 @@ pub const SemanticContext = struct {
             return true;
         }
 
-        // pointer types: structural comparison, @mut T is assignable to @T
+        // pointer types: structural comparison, mut → immutable is allowed, same pointer kind required
         if (left.isPointer() and right.isPointer()) {
             const lp = self.types.getPointerType(left) orelse return false;
             const rp = self.types.getPointerType(right) orelse return false;
-            // @mut T → @T is allowed (mutable to immutable)
-            // @T → @mut T is not allowed
-            if (!lp.is_mutable and rp.is_mutable) {
-                // expected immutable, got mutable — OK
-            } else if (lp.is_mutable and !rp.is_mutable) {
+            // @T and *T are distinct kinds
+            if (lp.is_many_item != rp.is_many_item) return false;
+            // mut T → T is allowed (mutable to immutable)
+            // T → mut T is not allowed
+            if (lp.is_mutable and !rp.is_mutable) {
                 // expected mutable, got immutable — not OK
                 return false;
             }

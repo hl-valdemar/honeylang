@@ -469,7 +469,7 @@ pub const Parser = struct {
         try self.expectToken(.colon, .expected_colon);
 
         // optional type
-        const type_node = if (self.check(.identifier) or self.check(.at))
+        const type_node = if (self.check(.identifier) or self.check(.at) or self.check(.star))
             try self.parseType()
         else
             null;
@@ -896,7 +896,15 @@ pub const Parser = struct {
             const is_mutable = self.match(.mut);
             const inner = try self.parseType(); // recursive for @@T
             const end_pos = self.previousEnd();
-            return try self.ast.addPointerType(inner, is_mutable, start_pos, end_pos);
+            return try self.ast.addPointerType(inner, is_mutable, false, start_pos, end_pos);
+        }
+        if (self.check(.star)) {
+            const start_pos = self.currentStart();
+            self.advance(); // consume *
+            const is_mutable = self.match(.mut);
+            const inner = try self.parseType(); // recursive for **T
+            const end_pos = self.previousEnd();
+            return try self.ast.addPointerType(inner, is_mutable, true, start_pos, end_pos);
         }
         return try self.parseIdentifier();
     }

@@ -79,6 +79,12 @@ pub fn printVerbose(registry: *const TypeRegistry) void {
         std.debug.print("\n", .{});
     }
 
+    for (registry.pointer_types.items, 0..) |pt, i| {
+        const kind_str = if (pt.is_many_item) "mptr" else "ptr";
+        const mut_str = if (pt.is_mutable) "mut " else "";
+        std.debug.print("{s}[{d}]: {s}{s}\n", .{ kind_str, i, mut_str, formatTypeId(pt.pointee) });
+    }
+
     for (registry.struct_types.items, 0..) |st, i| {
         std.debug.print("struct_type[{d}]:\n", .{i});
         std.debug.print("  name:      {s}\n", .{st.name});

@@ -165,6 +165,7 @@ pub const StructType = struct {
 pub const PointerTypeInfo = struct {
     pointee: TypeId,
     is_mutable: bool,
+    is_many_item: bool,
 };
 
 /// Type Registry (Storage for Composite Types)
@@ -366,9 +367,9 @@ pub const TypeRegistry = struct {
 
     /// Register a pointer type and return a TypeId for it.
     /// Deduplicates: returns existing TypeId if an identical pointer type exists.
-    pub fn addPointerType(self: *TypeRegistry, pointee: TypeId, is_mutable: bool) !TypeId {
+    pub fn addPointerType(self: *TypeRegistry, pointee: TypeId, is_mutable: bool, is_many_item: bool) !TypeId {
         for (self.pointer_types.items, 0..) |existing, i| {
-            if (existing.is_mutable == is_mutable and existing.pointee.eql(pointee)) {
+            if (existing.is_mutable == is_mutable and existing.is_many_item == is_many_item and existing.pointee.eql(pointee)) {
                 return .{ .pointer = @intCast(i) };
             }
         }
@@ -376,6 +377,7 @@ pub const TypeRegistry = struct {
         try self.pointer_types.append(self.allocator, .{
             .pointee = pointee,
             .is_mutable = is_mutable,
+            .is_many_item = is_many_item,
         });
         return .{ .pointer = idx };
     }
@@ -393,10 +395,17 @@ pub const TypeRegistry = struct {
         const pa = self.getPointerType(a) orelse return false;
         const pb = self.getPointerType(b) orelse return false;
         if (pa.is_mutable != pb.is_mutable) return false;
+        if (pa.is_many_item != pb.is_many_item) return false;
         if (pa.pointee.isPointer() and pb.pointee.isPointer()) {
             return self.pointerTypesEqual(pa.pointee, pb.pointee);
         }
         return pa.pointee.eql(pb.pointee);
+    }
+
+    /// Check if a TypeId is a many-item pointer.
+    pub fn isManyItemPointer(self: *const TypeRegistry, type_id: TypeId) bool {
+        const info = self.getPointerType(type_id) orelse return false;
+        return info.is_many_item;
     }
 };
 

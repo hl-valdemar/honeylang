@@ -4,9 +4,10 @@ const mem = std.mem;
 const ComptimeResult = @import("../comptime/comptime.zig").ComptimeResult;
 const SymbolTable = @import("../semantic/symbols.zig").SymbolTable;
 const SymbolIndex = @import("../semantic/symbols.zig").SymbolIndex;
-const TypeId = @import("../semantic/types.zig").TypeId;
-const PrimitiveType = @import("../semantic/types.zig").PrimitiveType;
-const TypeRegistry = @import("../semantic/types.zig").TypeRegistry;
+const types_mod = @import("../semantic/types.zig");
+const TypeId = types_mod.TypeId;
+const PrimitiveType = types_mod.PrimitiveType;
+const TypeRegistry = types_mod.TypeRegistry;
 const Ast = @import("../parser/ast.zig").Ast;
 const NodeIndex = @import("../parser/ast.zig").NodeIndex;
 const NodeKind = @import("../parser/ast.zig").NodeKind;
@@ -1002,6 +1003,24 @@ pub const CodeGenContext = struct {
             return try func.emitCmp(cmp_op, left_reg, right_reg, operand_width);
         }
 
+        // Many-item pointer arithmetic: emit ptr_offset instruction
+        const result_type = self.node_types.get(node_idx) orelse TypeId.unresolved;
+        if (result_type.isPointer()) {
+            if (self.types.getPointerType(result_type)) |ptr_info| {
+                if (ptr_info.is_many_item) {
+                    const pointee_size = types_mod.sizeOf(ptr_info.pointee, self.types);
+                    const left_type = self.node_types.get(binary.left) orelse TypeId.unresolved;
+                    const left_is_ptr = left_type.isPointer();
+
+                    const ptr_reg = if (left_is_ptr) left_reg else right_reg;
+                    const off_reg = if (left_is_ptr) right_reg else left_reg;
+                    const is_sub = binary.op == .sub;
+
+                    return try func.emitPtrOffset(ptr_reg, off_reg, pointee_size, is_sub);
+                }
+            }
+        }
+
         const mir_op: BinOp = switch (binary.op) {
             .add => .add,
             .sub => .sub,
@@ -1140,6 +1159,25 @@ pub const CodeGenContext = struct {
                 return try self.current_func.?.emitAddrOfLocal(local.offset);
             } else if (self.mir.globals.lookup(name)) |global_idx| {
                 return try self.current_func.?.emitAddrOfGlobal(global_idx);
+            }
+        } else if (operand_kind == .field_access) {
+            // &obj.field — GEP to the field without loading
+            const access = self.ast.getFieldAccess(addr.operand);
+            const base_reg = try self.generateExpression(access.object) orelse return null;
+            const object_type = self.node_types.get(access.object) orelse return null;
+            if (object_type != .struct_type) return null;
+
+            const struct_idx = object_type.struct_type;
+            const struct_type = self.types.getStructType(object_type) orelse return null;
+
+            const field_ident = self.ast.getIdentifier(access.field);
+            const field_token = self.tokens.items[field_ident.token_idx];
+            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+            for (struct_type.fields, 0..) |field, i| {
+                if (mem.eql(u8, field.name, field_name)) {
+                    return try self.current_func.?.emitAddrOfField(base_reg, struct_idx, @intCast(i));
+                }
             }
         }
 
