@@ -1741,3 +1741,188 @@ test "address-of struct field emits GEP" {
     try r.expectNoErrors();
     try r.expectLLVMContains("getelementptr inbounds %Buf");
 }
+
+// ============================================================
+// codegen: struct return (SRET)
+// ============================================================
+
+test "function returning struct uses sret" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\make_point :: func(x: i32, y: i32) Point {
+        \\    return Point{ .x = x, .y = y }
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    p := make_point(3, 4)
+        \\    return p.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    // function definition uses sret hidden parameter
+    try r.expectLLVMContains("define fastcc void @make_point(ptr sret(%Point) %arg0");
+    // caller allocates struct and passes as sret
+    try r.expectLLVMContains("call fastcc void @make_point(ptr sret(%Point)");
+}
+
+test "sret with nested struct return" {
+    var r = try compileTo(.codegen,
+        \\Vec2 :: c struct { x: i32, y: i32 }
+        \\Rect :: c struct { origin: Vec2, size: Vec2 }
+        \\
+        \\make_rect :: func() Rect {
+        \\    return Rect{
+        \\        .origin = Vec2{ .x = 0, .y = 0 },
+        \\        .size = Vec2{ .x = 10, .y = 20 },
+        \\    }
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    r := make_rect()
+        \\    return r.origin.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("define fastcc void @make_rect(ptr sret(%Rect) %arg0");
+    try r.expectLLVMContains("call fastcc void @make_rect(ptr sret(%Rect)");
+}
+
+// ============================================================
+// codegen: struct by-value parameter passing
+// ============================================================
+
+test "struct by-value parameter emits memcpy at call site" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\sum :: func(p: Point) i32 {
+        \\    return p.x
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    p := Point{ .x = 10, .y = 20 }
+        \\    return sum(p)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    // struct parameter is passed as pointer
+    try r.expectLLVMContains("define fastcc i32 @sum(ptr %arg0)");
+    // field access via GEP inside function
+    try r.expectLLVMContains("getelementptr inbounds %Point");
+}
+
+// ============================================================
+// codegen: struct copy assignment
+// ============================================================
+
+test "struct copy via assignment emits memcpy" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\main :: func() i32 {
+        \\    p := Point{ .x = 5, .y = 6 }
+        \\    q := p
+        \\    return q.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    // copy from p to q uses memcpy
+    try r.expectLLVMContains("@llvm.memcpy.p0.p0.i64");
+}
+
+// ============================================================
+// codegen: mutable struct field write
+// ============================================================
+
+test "mutable struct field store" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\main :: func() i32 {
+        \\    mut p := Point{ .x = 1, .y = 2 }
+        \\    p.x = 42
+        \\    return p.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("getelementptr inbounds %Point");
+    try r.expectLLVMContains("store i32");
+}
+
+// ============================================================
+// codegen: global struct with i32 fields
+// ============================================================
+
+test "global struct i32 codegen" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\origin := Point{ .x = 0, .y = 0 }
+        \\
+        \\main :: func() i32 {
+        \\    return origin.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("%Point = type { i32, i32 }");
+    try r.expectLLVMContains("@origin = global %Point { i32 0, i32 0 }");
+}
+
+// ============================================================
+// codegen: c calling convention with structs
+// ============================================================
+
+test "c function taking struct parameter" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\process :: c func(p: Point) i32 {
+        \\    return p.x
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    p := Point{ .x = 7, .y = 8 }
+        \\    return process(p)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    // C calling convention function with struct param
+    try r.expectLLVMContains("define i32 @process(ptr %arg0)");
+    try r.expectLLVMContains("call i32 @process(ptr");
+}
+
+test "c function returning struct uses sret" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\make :: c func(x: i32, y: i32) Point {
+        \\    return Point{ .x = x, .y = y }
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    p := make(3, 4)
+        \\    return p.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    // C convention sret
+    try r.expectLLVMContains("define void @make(ptr sret(%Point) %arg0");
+    try r.expectLLVMContains("call void @make(ptr sret(%Point)");
+}
