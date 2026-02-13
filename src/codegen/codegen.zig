@@ -481,12 +481,15 @@ pub const CodeGenContext = struct {
         const param_count = param_nodes.len / 2;
         var param_widths = try std.ArrayList(Width).initCapacity(self.allocator, param_count);
         defer param_widths.deinit(self.allocator);
+        var param_struct_indices = try std.ArrayList(?u32).initCapacity(self.allocator, param_count);
+        defer param_struct_indices.deinit(self.allocator);
 
         var i: usize = 0;
         while (i < param_nodes.len) : (i += 2) {
             const param_name_idx = param_nodes[i];
             const param_type = self.node_types.get(param_name_idx) orelse .unresolved;
             try param_widths.append(self.allocator, typeIdToWidth(param_type));
+            try param_struct_indices.append(self.allocator, if (param_type.isStruct()) param_type.struct_type else null);
         }
 
         try self.mir.addExternFunction(
@@ -494,6 +497,7 @@ pub const CodeGenContext = struct {
             func.call_conv,
             return_width,
             try self.allocator.dupe(Width, param_widths.items),
+            try self.allocator.dupe(?u32, param_struct_indices.items),
         );
     }
 
@@ -527,7 +531,11 @@ pub const CodeGenContext = struct {
                 const param_token = self.tokens.items[param_ident.token_idx];
                 const param_name = self.src.getSlice(param_token.start, param_token.start + param_token.len);
                 const param_type = self.node_types.get(param_name_idx) orelse .unresolved;
-                try param_list.append(self.allocator, .{ .name = param_name, .width = typeIdToWidth(param_type) });
+                try param_list.append(self.allocator, .{
+                    .name = param_name,
+                    .width = typeIdToWidth(param_type),
+                    .struct_idx = if (param_type.isStruct()) param_type.struct_type else null,
+                });
             }
         }
 
@@ -1061,6 +1069,8 @@ pub const CodeGenContext = struct {
         defer arg_regs.deinit(self.allocator);
         var arg_widths = try std.ArrayList(Width).initCapacity(self.allocator, arg_nodes.len);
         defer arg_widths.deinit(self.allocator);
+        var arg_struct_indices = try std.ArrayList(?u32).initCapacity(self.allocator, arg_nodes.len);
+        defer arg_struct_indices.deinit(self.allocator);
 
         for (arg_nodes) |arg_idx| {
             const arg_type = self.node_types.get(arg_idx) orelse .unresolved;
@@ -1070,10 +1080,12 @@ pub const CodeGenContext = struct {
                 const zero = try func.emitMovImm(0, .w32);
                 try arg_regs.append(self.allocator, zero);
                 try arg_widths.append(self.allocator, .w32);
+                try arg_struct_indices.append(self.allocator, null);
                 continue;
             };
             try arg_regs.append(self.allocator, arg_reg);
             try arg_widths.append(self.allocator, arg_width);
+            try arg_struct_indices.append(self.allocator, if (arg_type.isStruct()) arg_type.struct_type else null);
         }
 
         // 4. Determine return type and check for sret
@@ -1096,8 +1108,13 @@ pub const CodeGenContext = struct {
             try sret_widths.append(self.allocator, .ptr);
             for (arg_widths.items) |w| try sret_widths.append(self.allocator, w);
 
+            var sret_struct_indices = try std.ArrayList(?u32).initCapacity(self.allocator, arg_struct_indices.items.len + 1);
+            defer sret_struct_indices.deinit(self.allocator);
+            try sret_struct_indices.append(self.allocator, null); // sret pointer itself is not byval
+            for (arg_struct_indices.items) |s| try sret_struct_indices.append(self.allocator, s);
+
             // call returns void; the struct is written via sret pointer
-            _ = try func.emitCall(func_name, sret_args.items, sret_widths.items, call_conv, null, struct_idx);
+            _ = try func.emitCall(func_name, sret_args.items, sret_widths.items, sret_struct_indices.items, call_conv, null, struct_idx);
 
             return result_ptr;
         }
@@ -1109,7 +1126,7 @@ pub const CodeGenContext = struct {
             break :blk typeIdToWidth(rt);
         } else .w32;
 
-        return try func.emitCall(func_name, arg_regs.items, arg_widths.items, call_conv, return_width, null);
+        return try func.emitCall(func_name, arg_regs.items, arg_widths.items, arg_struct_indices.items, call_conv, return_width, null);
     }
 
     fn generateFieldAccess(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {

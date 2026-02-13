@@ -162,6 +162,7 @@ pub const MInst = union(enum) {
         func_name: []const u8, // function name
         args: []const VReg, // argument registers (in order)
         arg_widths: []const Width, // argument types (parallel to args)
+        arg_struct_indices: []const ?u32 = &.{}, // parallel to args; non-null for struct params (byval)
         call_conv: CallingConvention,
         width: Width, // return value width
         sret_struct_idx: ?u32 = null, // non-null => first arg is sret pointer
@@ -261,6 +262,7 @@ pub const MInst = union(enum) {
 pub const ParamInfo = struct {
     name: []const u8,
     width: Width,
+    struct_idx: ?u32 = null, // non-null for struct params (index into TypeRegistry.struct_types)
 };
 
 /// External function declaration (no body).
@@ -269,6 +271,7 @@ pub const ExternFunc = struct {
     call_conv: CallingConvention,
     return_width: ?Width, // null means void
     param_widths: []const Width,
+    param_struct_indices: []const ?u32 = &.{}, // parallel to param_widths; non-null for struct params
 };
 
 /// A function in MIR form.
@@ -493,6 +496,7 @@ pub const MIRFunction = struct {
         func_name: []const u8,
         args: []const VReg,
         arg_widths: []const Width,
+        arg_struct_indices: []const ?u32,
         call_conv: CallingConvention,
         return_width: ?Width,
         sret_struct_idx: ?u32,
@@ -500,11 +504,13 @@ pub const MIRFunction = struct {
         const dst: ?VReg = if (return_width != null) self.allocVReg() else null;
         const args_copy = try self.allocator.dupe(VReg, args);
         const widths_copy = try self.allocator.dupe(Width, arg_widths);
+        const struct_indices_copy = try self.allocator.dupe(?u32, arg_struct_indices);
         try self.emit(.{ .call = .{
             .dst = dst,
             .func_name = func_name,
             .args = args_copy,
             .arg_widths = widths_copy,
+            .arg_struct_indices = struct_indices_copy,
             .call_conv = call_conv,
             .width = return_width orelse .w32,
             .sret_struct_idx = sret_struct_idx,
@@ -649,12 +655,14 @@ pub const MIRModule = struct {
         call_conv: CallingConvention,
         return_width: ?Width,
         param_widths: []const Width,
+        param_struct_indices: []const ?u32,
     ) !void {
         try self.extern_functions.append(self.allocator, .{
             .name = name,
             .call_conv = call_conv,
             .return_width = return_width,
             .param_widths = param_widths,
+            .param_struct_indices = param_struct_indices,
         });
     }
 };

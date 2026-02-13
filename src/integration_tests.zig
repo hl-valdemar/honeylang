@@ -983,10 +983,6 @@ test "chained struct field access" {
     try r.expectNoErrors();
 }
 
-// ============================================================
-// semantic errors: structs
-// ============================================================
-
 test "duplicate field in struct" {
     var r = try compileTo(.semantic,
         \\Bad :: c struct {
@@ -1796,7 +1792,7 @@ test "sret with nested struct return" {
 // codegen: struct by-value parameter passing
 // ============================================================
 
-test "struct by-value parameter emits memcpy at call site" {
+test "struct by-value parameter uses byval attribute" {
     var r = try compileTo(.codegen,
         \\Point :: c struct { x: i32, y: i32 }
         \\
@@ -1812,8 +1808,10 @@ test "struct by-value parameter emits memcpy at call site" {
     );
     defer r.deinit();
     try r.expectNoErrors();
-    // struct parameter is passed as pointer
-    try r.expectLLVMContains("define fastcc i32 @sum(ptr %arg0)");
+    // struct parameter uses byval for correct by-value semantics
+    try r.expectLLVMContains("define fastcc i32 @sum(ptr byval(%Point) %arg0)");
+    // call site also uses byval
+    try r.expectLLVMContains("ptr byval(%Point)");
     // field access via GEP inside function
     try r.expectLLVMContains("getelementptr inbounds %Point");
 }
@@ -1901,9 +1899,9 @@ test "c function taking struct parameter" {
     );
     defer r.deinit();
     try r.expectNoErrors();
-    // C calling convention function with struct param
-    try r.expectLLVMContains("define i32 @process(ptr %arg0)");
-    try r.expectLLVMContains("call i32 @process(ptr");
+    // C calling convention function with struct param uses byval
+    try r.expectLLVMContains("define i32 @process(ptr byval(%Point) %arg0)");
+    try r.expectLLVMContains("call i32 @process(ptr byval(%Point)");
 }
 
 test "c function returning struct uses sret" {

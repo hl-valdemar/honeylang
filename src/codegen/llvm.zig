@@ -43,7 +43,7 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule, types: *const T
 
     // emit extern function declarations
     for (module.extern_functions.items) |ext| {
-        try emitExternDecl(&emitter, &ext);
+        try emitExternDecl(&emitter, &ext, types);
     }
     if (module.extern_functions.items.len > 0) {
         try emitter.newline();
@@ -153,7 +153,7 @@ fn emitGlobals(emitter: *Emitter, globals: *const GlobalVars, types: *const Type
     }
 }
 
-fn emitExternDecl(emitter: *Emitter, ext: *const mir.ExternFunc) !void {
+fn emitExternDecl(emitter: *Emitter, ext: *const mir.ExternFunc, types: *const TypeRegistry) !void {
     const cc_attr = ccAttr(ext.call_conv);
     const ret_str = if (ext.return_width) |w| widthToLLVMType(w) else "void";
 
@@ -161,6 +161,13 @@ fn emitExternDecl(emitter: *Emitter, ext: *const mir.ExternFunc) !void {
 
     for (ext.param_widths, 0..) |pw, j| {
         if (j > 0) try emitter.appendSlice(", ");
+        if (j < ext.param_struct_indices.len) {
+            if (ext.param_struct_indices[j]) |si| {
+                const struct_type = types.struct_types.items[si];
+                try emitter.appendFmt("ptr byval(%{s})", .{struct_type.name});
+                continue;
+            }
+        }
         try emitter.appendSlice(widthToLLVMType(pw));
     }
 
@@ -178,7 +185,12 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
         });
         // remaining params shifted by 1
         for (func.params, 0..) |param, i| {
-            try emitter.appendFmt(", {s} %arg{d}", .{ widthToLLVMType(param.width), i + 1 });
+            if (param.struct_idx) |si| {
+                const param_struct = types.struct_types.items[si];
+                try emitter.appendFmt(", ptr byval(%{s}) %arg{d}", .{ param_struct.name, i + 1 });
+            } else {
+                try emitter.appendFmt(", {s} %arg{d}", .{ widthToLLVMType(param.width), i + 1 });
+            }
         }
         try emitter.appendSlice(") {\n");
     } else {
@@ -189,7 +201,12 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
 
         for (func.params, 0..) |param, i| {
             if (i > 0) try emitter.appendSlice(", ");
-            try emitter.appendFmt("{s} %arg{d}", .{ widthToLLVMType(param.width), i });
+            if (param.struct_idx) |si| {
+                const struct_type = types.struct_types.items[si];
+                try emitter.appendFmt("ptr byval(%{s}) %arg{d}", .{ struct_type.name, i });
+            } else {
+                try emitter.appendFmt("{s} %arg{d}", .{ widthToLLVMType(param.width), i });
+            }
         }
 
         try emitter.appendSlice(") {\n");
@@ -403,13 +420,22 @@ fn lowerInst(
                 try args_str.appendSlice(emitter.allocator, sret_fmt);
 
                 // remaining args
-                for (op.args[1..], op.arg_widths[1..]) |arg_vreg, arg_width| {
+                for (op.args[1..], op.arg_widths[1..], 1..) |arg_vreg, arg_width, i| {
                     try args_str.appendSlice(emitter.allocator, ", ");
                     const arg_ssa = ssa_map.get(arg_vreg);
-                    const arg_type = widthToLLVMType(arg_width);
-                    var abuf: [32]u8 = undefined;
-                    const arg_fmt = std.fmt.bufPrint(&abuf, "{s} %{d}", .{ arg_type, arg_ssa }) catch unreachable;
-                    try args_str.appendSlice(emitter.allocator, arg_fmt);
+
+                    const struct_idx_val: ?u32 = if (i < op.arg_struct_indices.len) op.arg_struct_indices[i] else null;
+                    if (struct_idx_val) |si| {
+                        const arg_struct = types.struct_types.items[si];
+                        var abuf: [64]u8 = undefined;
+                        const arg_fmt = std.fmt.bufPrint(&abuf, "ptr byval(%{s}) %{d}", .{ arg_struct.name, arg_ssa }) catch unreachable;
+                        try args_str.appendSlice(emitter.allocator, arg_fmt);
+                    } else {
+                        const arg_type = widthToLLVMType(arg_width);
+                        var abuf: [32]u8 = undefined;
+                        const arg_fmt = std.fmt.bufPrint(&abuf, "{s} %{d}", .{ arg_type, arg_ssa }) catch unreachable;
+                        try args_str.appendSlice(emitter.allocator, arg_fmt);
+                    }
                 }
 
                 try emitter.appendFmt("  call {s}void @{s}({s})\n", .{
@@ -423,10 +449,20 @@ fn lowerInst(
                 for (op.args, op.arg_widths, 0..) |arg_vreg, arg_width, i| {
                     if (i > 0) try args_str.appendSlice(emitter.allocator, ", ");
                     const arg_ssa = ssa_map.get(arg_vreg);
-                    const arg_type = widthToLLVMType(arg_width);
-                    var buf: [32]u8 = undefined;
-                    const arg_fmt = std.fmt.bufPrint(&buf, "{s} %{d}", .{ arg_type, arg_ssa }) catch unreachable;
-                    try args_str.appendSlice(emitter.allocator, arg_fmt);
+
+                    // check if this arg is a byval struct
+                    const struct_idx: ?u32 = if (i < op.arg_struct_indices.len) op.arg_struct_indices[i] else null;
+                    if (struct_idx) |si| {
+                        const struct_type = types.struct_types.items[si];
+                        var buf: [64]u8 = undefined;
+                        const arg_fmt = std.fmt.bufPrint(&buf, "ptr byval(%{s}) %{d}", .{ struct_type.name, arg_ssa }) catch unreachable;
+                        try args_str.appendSlice(emitter.allocator, arg_fmt);
+                    } else {
+                        const arg_type = widthToLLVMType(arg_width);
+                        var buf: [32]u8 = undefined;
+                        const arg_fmt = std.fmt.bufPrint(&buf, "{s} %{d}", .{ arg_type, arg_ssa }) catch unreachable;
+                        try args_str.appendSlice(emitter.allocator, arg_fmt);
+                    }
                 }
 
                 if (op.dst) |dst_vreg| {
