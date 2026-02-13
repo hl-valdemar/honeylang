@@ -239,6 +239,9 @@ fn printInstruction(inst: *const MInst) void {
                 a.dst, a.base, a.struct_idx, a.field_idx,
             });
         },
+        .trap => {
+            std.debug.print("trap", .{});
+        },
         .ptr_offset => |p| {
             const op_str = if (p.is_sub) "sub" else "add";
             std.debug.print("ptr_offset.{s} v{d}, v{d}, v{d}, stride={d}", .{

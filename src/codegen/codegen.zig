@@ -829,7 +829,17 @@ pub const CodeGenContext = struct {
             }
             try func.emitRet(null, .w32);
         } else {
-            try func.emitRet(result_reg, ret_width);
+            // If the expression type doesn't match the declared return type
+            // (semantic error already reported), trap at runtime so the user
+            // knows this code path is invalid.
+            const expr_type = self.node_types.get(ret.expr) orelse .unresolved;
+            const expr_width = typeIdToWidth(expr_type);
+            if (expr_width != ret_width) {
+                try func.emitTrap();
+                try func.emitRet(null, ret_width);
+            } else {
+                try func.emitRet(result_reg, ret_width);
+            }
         }
     }
 

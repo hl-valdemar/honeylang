@@ -247,6 +247,11 @@ pub const MInst = union(enum) {
         field_idx: u32,
     },
 
+    /// Trap — abort execution at an error site.
+    /// Emitted when the compiler detects a semantic error but continues
+    /// code generation under the "always compile" philosophy.
+    trap,
+
     /// Offset a pointer by (count * stride) bytes.
     /// Used for many-item pointer arithmetic.
     ptr_offset: struct {
@@ -368,6 +373,11 @@ pub const MIRFunction = struct {
     /// Emit a return instruction.
     pub fn emitRet(self: *MIRFunction, value: ?VReg, width: Width) !void {
         try self.emit(.{ .ret = .{ .value = value, .width = width } });
+    }
+
+    /// Emit a trap (runtime abort at a semantic error site).
+    pub fn emitTrap(self: *MIRFunction) !void {
+        try self.emit(.trap);
     }
 
     /// Emit a load from global variable and return the destination vreg.

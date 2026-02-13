@@ -2169,3 +2169,23 @@ test "mixed width struct fields" {
     try r.expectLLVMContains("store i16");
     try r.expectLLVMContains("store i32");
 }
+
+// ============================================================
+// codegen: error recovery traps
+// ============================================================
+
+test "return type mismatch emits trap" {
+    var r = try compileTo(.codegen,
+        \\Point :: struct { x: f32, y: f32 }
+        \\
+        \\main :: func() i32 {
+        \\    p := Point{ .x = 1, .y = 2 }
+        \\    return p.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.return_type_mismatch);
+    try r.expectLLVMContains("call void @llvm.trap()");
+    try r.expectLLVMContains("unreachable");
+}

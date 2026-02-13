@@ -38,6 +38,13 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule, types: *const T
         try emitter.newline();
     }
 
+    // emit trap intrinsic if any function contains a trap instruction
+    const needs_trap = needsTrap(module) or !hasMain(module);
+    if (needs_trap) {
+        try emitter.raw("declare void @llvm.trap() noreturn nounwind");
+        try emitter.newline();
+    }
+
     // emit global variable declarations
     try emitGlobals(&emitter, &module.globals, types);
 
@@ -50,16 +57,12 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule, types: *const T
     }
 
     // emit function definitions
-    var has_main = false;
     for (module.functions.items) |*func| {
-        if (std.mem.eql(u8, func.name, "main")) has_main = true;
         try lowerFunction(&emitter, func, &module.globals, types);
     }
 
     // emit trap stub if no main function was defined
-    if (!has_main) {
-        try emitter.raw("declare void @llvm.trap() noreturn nounwind");
-        try emitter.newline();
+    if (!hasMain(module)) {
         try emitter.raw("define i32 @main() {");
         try emitter.raw("entry:");
         try emitter.raw("  call void @llvm.trap()");
@@ -96,6 +99,22 @@ fn emitStructTypes(emitter: *Emitter, types: *const TypeRegistry) !void {
 
 fn needsMemcpy(types: *const TypeRegistry) bool {
     return types.struct_types.items.len > 0;
+}
+
+fn needsTrap(module: *const MIRModule) bool {
+    for (module.functions.items) |*func| {
+        for (func.instructions.items) |inst| {
+            if (inst == .trap) return true;
+        }
+    }
+    return false;
+}
+
+fn hasMain(module: *const MIRModule) bool {
+    for (module.functions.items) |*func| {
+        if (std.mem.eql(u8, func.name, "main")) return true;
+    }
+    return false;
 }
 
 fn emitGlobals(emitter: *Emitter, globals: *const GlobalVars, types: *const TypeRegistry) !void {
@@ -333,6 +352,11 @@ fn lowerInst(
 
         .prologue, .epilogue => {
             // LLVM handles prologue/epilogue automatically
+        },
+
+        .trap => {
+            try emitter.appendSlice("  call void @llvm.trap()\n");
+            try emitter.appendSlice("  unreachable\n");
         },
 
         .store_arg => |op| {
