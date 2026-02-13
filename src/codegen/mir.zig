@@ -11,14 +11,19 @@ pub const VReg = u16;
 
 /// Operand width for instructions.
 pub const Width = enum {
+    w8, // 8-bit integer (bool, i8, u8)
+    w16, // 16-bit integer (i16, u16)
     w32,
     w64,
     ptr, // pointer type (for struct params passed by reference)
+    wf16, // 16-bit float (half)
     wf32, // 32-bit float
     wf64, // 64-bit float
 
     pub fn bits(self: Width) u8 {
         return switch (self) {
+            .w8 => 8,
+            .w16, .wf16 => 16,
             .w32, .wf32 => 32,
             .w64, .wf64, .ptr => 64,
         };
@@ -26,7 +31,7 @@ pub const Width = enum {
 
     pub fn isFloat(self: Width) bool {
         return switch (self) {
-            .wf32, .wf64 => true,
+            .wf16, .wf32, .wf64 => true,
             else => false,
         };
     }
@@ -168,6 +173,7 @@ pub const MInst = union(enum) {
     /// Conditional branch: if vreg != 0 goto true_label, else goto false_label.
     br_cond: struct {
         cond: VReg,
+        cond_width: Width, // width of the condition value
         true_label: LabelId,
         false_label: LabelId,
     },
@@ -403,8 +409,8 @@ pub const MIRFunction = struct {
     }
 
     /// Emit a conditional branch.
-    pub fn emitBrCond(self: *MIRFunction, cond: VReg, true_label: LabelId, false_label: LabelId) !void {
-        try self.emit(.{ .br_cond = .{ .cond = cond, .true_label = true_label, .false_label = false_label } });
+    pub fn emitBrCond(self: *MIRFunction, cond: VReg, cond_width: Width, true_label: LabelId, false_label: LabelId) !void {
+        try self.emit(.{ .br_cond = .{ .cond = cond, .cond_width = cond_width, .true_label = true_label, .false_label = false_label } });
     }
 
     /// Emit an unconditional branch.

@@ -748,13 +748,14 @@ pub const CodeGenContext = struct {
 
         // Generate the if guard
         const guard_reg = try self.generateExpression(if_node.if_guard) orelse return;
+        const guard_width = if (self.node_types.get(if_node.if_guard)) |tid| typeIdToWidth(tid) else Width.w8;
 
         const then_label = func.allocLabel();
         // Determine where to jump on false: first else-if, else block, or end
         const else_if_count = if_node.elseIfCount();
         const first_false_label = func.allocLabel();
 
-        try func.emitBrCond(guard_reg, then_label, first_false_label);
+        try func.emitBrCond(guard_reg, guard_width, then_label, first_false_label);
 
         // Then block
         try func.emitLabel(then_label);
@@ -770,11 +771,12 @@ pub const CodeGenContext = struct {
 
             const pair = if_node.getElseIf(self.ast, i) orelse continue;
             const elif_guard_reg = try self.generateExpression(pair.guard) orelse continue;
+            const elif_guard_width = if (self.node_types.get(pair.guard)) |tid| typeIdToWidth(tid) else Width.w8;
 
             const elif_then_label = func.allocLabel();
             next_false_label = func.allocLabel();
 
-            try func.emitBrCond(elif_guard_reg, elif_then_label, next_false_label);
+            try func.emitBrCond(elif_guard_reg, elif_guard_width, elif_then_label, next_false_label);
 
             try func.emitLabel(elif_then_label);
             const elif_has_return = try self.generateBlock(pair.block);
@@ -912,10 +914,14 @@ pub const CodeGenContext = struct {
     fn typeIdToWidth(type_id: TypeId) Width {
         return switch (type_id) {
             .primitive => |prim| switch (prim) {
+                .bool, .i8, .u8 => .w8,
+                .i16, .u16 => .w16,
+                .i32, .u32 => .w32,
                 .i64, .u64 => .w64,
-                .f16, .f32 => .wf32,
+                .f16 => .wf16,
+                .f32 => .wf32,
                 .f64 => .wf64,
-                else => .w32,
+                .void => .w32, // error recovery
             },
             .struct_type => .ptr,
             .pointer => .ptr,

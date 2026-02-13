@@ -172,7 +172,7 @@ fn printInstruction(inst: *const MInst) void {
             std.debug.print("L{d}:", .{id});
         },
         .br_cond => |b| {
-            std.debug.print("br_cond v{d}, L{d}, L{d}", .{ b.cond, b.true_label, b.false_label });
+            std.debug.print("br_cond v{d} ({s}), L{d}, L{d}", .{ b.cond, @tagName(b.cond_width), b.true_label, b.false_label });
         },
         .br => |target| {
             std.debug.print("br L{d}", .{target});
@@ -254,9 +254,12 @@ fn printInstruction(inst: *const MInst) void {
 
 fn widthStr(w: Width) []const u8 {
     return switch (w) {
+        .w8 => "w8",
+        .w16 => "w16",
         .w32 => "w32",
         .w64 => "w64",
         .ptr => "ptr",
+        .wf16 => "f16",
         .wf32 => "f32",
         .wf64 => "f64",
     };

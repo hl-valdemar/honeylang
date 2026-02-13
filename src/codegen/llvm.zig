@@ -279,21 +279,21 @@ fn lowerInst(
 
             if (op.width.isFloat()) {
                 const fcmp_op_str = floatCmpOpToLLVM(op.op);
-                // fcmp returns i1, zero-extend to i32 (comparisons always produce integers)
+                // fcmp returns i1, zero-extend to i8 (bool)
                 try emitter.appendFmt("  %cmp{d} = fcmp {s} {s} %{d}, %{d}\n", .{
                     dst_ssa, fcmp_op_str, type_str, lhs_ssa, rhs_ssa,
                 });
-                try emitter.appendFmt("  %{d} = zext i1 %cmp{d} to i32\n", .{
+                try emitter.appendFmt("  %{d} = zext i1 %cmp{d} to i8\n", .{
                     dst_ssa, dst_ssa,
                 });
             } else {
                 const cmp_op_str = cmpOpToLLVM(op.op);
-                // icmp returns i1, zero-extend to target width
+                // icmp returns i1, zero-extend to i8 (bool)
                 try emitter.appendFmt("  %cmp{d} = icmp {s} {s} %{d}, %{d}\n", .{
                     dst_ssa, cmp_op_str, type_str, lhs_ssa, rhs_ssa,
                 });
-                try emitter.appendFmt("  %{d} = zext i1 %cmp{d} to {s}\n", .{
-                    dst_ssa, dst_ssa, type_str,
+                try emitter.appendFmt("  %{d} = zext i1 %cmp{d} to i8\n", .{
+                    dst_ssa, dst_ssa,
                 });
             }
         },
@@ -370,10 +370,11 @@ fn lowerInst(
 
         .br_cond => |op| {
             const cond_ssa = ssa_map.get(op.cond);
-            // truncate i32 condition to i1 for LLVM br
+            const cond_type = widthToLLVMType(op.cond_width);
+            // convert condition to i1 for LLVM br
             const cmp_id = ssa_map.next_ssa;
             ssa_map.next_ssa += 1;
-            try emitter.appendFmt("  %cond.{d} = icmp ne i32 %{d}, 0\n", .{ cmp_id, cond_ssa });
+            try emitter.appendFmt("  %cond.{d} = icmp ne {s} %{d}, 0\n", .{ cmp_id, cond_type, cond_ssa });
             try emitter.appendFmt("  br i1 %cond.{d}, label %lbl.{d}, label %lbl.{d}\n", .{
                 cmp_id, op.true_label, op.false_label,
             });
@@ -591,9 +592,12 @@ fn ccAttr(cc: CallingConvention) []const u8 {
 
 fn widthToLLVMType(width: Width) []const u8 {
     return switch (width) {
+        .w8 => "i8",
+        .w16 => "i16",
         .w32 => "i32",
         .w64 => "i64",
         .ptr => "ptr",
+        .wf16 => "half",
         .wf32 => "float",
         .wf64 => "double",
     };
