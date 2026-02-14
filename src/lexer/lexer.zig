@@ -18,19 +18,19 @@ pub const error_printer = @import("error-printer.zig");
 const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     // declaration-related
     .{ "func", .func },
-    .{ "struct", .struct_ },
+    .{ "struct", .@"struct" },
 
     // statement-related
     .{ "mut", .mut },
-    .{ "defer", .defer_ },
-    .{ "return", .return_ },
+    .{ "defer", .@"defer" },
+    .{ "return", .@"return" },
 
     // logic-related
-    .{ "if", .if_ },
-    .{ "else", .else_ },
+    .{ "if", .@"if" },
+    .{ "else", .@"else" },
     .{ "not", .not },
-    .{ "and", .and_ },
-    .{ "or", .or_ },
+    .{ "and", .@"and" },
+    .{ "or", .@"or" },
     .{ "xor", .xor },
     .{ "true", .bool },
     .{ "false", .bool },

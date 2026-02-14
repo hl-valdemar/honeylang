@@ -137,7 +137,7 @@ pub const Parser = struct {
 
                 if (after.kind == .func) {
                     return try self.parseFuncDecl();
-                } else if (after.kind == .struct_) {
+                } else if (after.kind == .@"struct") {
                     return try self.parseStructDecl();
                 } else if (after.kind == .identifier and self.isCallingConvention(2)) {
                     // check if calling convention is followed by func or struct
@@ -147,7 +147,7 @@ pub const Parser = struct {
                     };
                     if (after_cc.kind == .func) {
                         return try self.parseFuncDecl();
-                    } else if (after_cc.kind == .struct_) {
+                    } else if (after_cc.kind == .@"struct") {
                         return try self.parseStructDecl();
                     } else {
                         return try self.parseConstDecl();
@@ -261,7 +261,7 @@ pub const Parser = struct {
         const calling_conv = self.matchCallingConvention();
 
         // expect 'struct'
-        try self.expectToken(.struct_, .unexpected_token);
+        try self.expectToken(.@"struct", .unexpected_token);
 
         // expect {
         try self.expectToken(.left_curly, .expected_left_curly);
@@ -397,8 +397,8 @@ pub const Parser = struct {
         };
 
         return switch (token.kind) {
-            .return_ => try self.parseReturn(),
-            .defer_ => try self.parseDefer(),
+            .@"return" => try self.parseReturn(),
+            .@"defer" => try self.parseDefer(),
             .mut => try self.parseVarDecl(),
             .identifier => blk: {
                 // could be var decl, assignment, field assignment, or expression
@@ -423,7 +423,7 @@ pub const Parser = struct {
                     break :blk try self.parseExpression();
                 }
             },
-            .if_ => try self.parseIfStmt(),
+            .@"if" => try self.parseIfStmt(),
             else => try self.parseExpression(),
         };
     }
@@ -431,7 +431,7 @@ pub const Parser = struct {
     fn parseReturn(self: *Parser) ParseError!NodeIndex {
         const start_pos = self.currentStart();
 
-        try self.expectToken(.return_, .unexpected_token);
+        try self.expectToken(.@"return", .unexpected_token);
 
         // bare return (void) — next token cannot start an expression
         const expr = if (self.peek()) |token| switch (token.kind) {
@@ -447,7 +447,7 @@ pub const Parser = struct {
     fn parseDefer(self: *Parser) ParseError!NodeIndex {
         const start_pos = self.currentStart();
 
-        try self.expectToken(.defer_, .unexpected_token);
+        try self.expectToken(.@"defer", .unexpected_token);
 
         const stmt = try self.parseStatement();
 
@@ -590,7 +590,7 @@ pub const Parser = struct {
         const start_pos = self.currentStart();
 
         // expect 'if'
-        try self.expectToken(.if_, .unexpected_token);
+        try self.expectToken(.@"if", .unexpected_token);
 
         // expect boolean expression
         const if_guard = if (self.check(.left_paren)) blk: {
@@ -610,9 +610,9 @@ pub const Parser = struct {
         defer else_ifs.deinit(self.allocator);
 
         var i: NodeIndex = 0;
-        while (self.check(.else_)) : (i += 1) {
+        while (self.check(.@"else")) : (i += 1) {
             // check for 'else if'
-            if (!self.checkOffset(.if_, 1) or i > 10) {
+            if (!self.checkOffset(.@"if", 1) or i > 10) {
                 break;
             }
 
@@ -640,7 +640,7 @@ pub const Parser = struct {
         const else_ifs_range = try self.ast.addExtra(else_ifs.items);
 
         // parse else block
-        const else_block: ?NodeIndex = if (self.check(.else_)) blk: {
+        const else_block: ?NodeIndex = if (self.check(.@"else")) blk: {
             self.advance();
             break :blk try self.parseBlock();
         } else blk: {
@@ -671,12 +671,12 @@ pub const Parser = struct {
     fn parseLogicalOr(self: *Parser) ParseError!NodeIndex {
         var left = try self.parseLogicalAnd();
 
-        while (self.match(.or_)) {
+        while (self.match(.@"or")) {
             const start_pos = self.ast.getLocation(left).start;
             const right = try self.parseLogicalAnd();
             const end_pos = self.previousEnd();
 
-            left = try self.ast.addBinaryOp(.or_, left, right, start_pos, end_pos);
+            left = try self.ast.addBinaryOp(.@"or", left, right, start_pos, end_pos);
         }
 
         return left;
@@ -685,12 +685,12 @@ pub const Parser = struct {
     fn parseLogicalAnd(self: *Parser) ParseError!NodeIndex {
         var left = try self.parseComparative();
 
-        while (self.match(.and_)) {
+        while (self.match(.@"and")) {
             const start_pos = self.ast.getLocation(left).start;
             const right = try self.parseComparative();
             const end_pos = self.previousEnd();
 
-            left = try self.ast.addBinaryOp(.and_, left, right, start_pos, end_pos);
+            left = try self.ast.addBinaryOp(.@"and", left, right, start_pos, end_pos);
         }
 
         return left;
@@ -1153,9 +1153,9 @@ pub const Parser = struct {
             if (token.kind == .right_curly) return;
 
             // statement starters
-            if (token.kind == .return_ or
-                token.kind == .defer_ or
-                token.kind == .if_ or
+            if (token.kind == .@"return" or
+                token.kind == .@"defer" or
+                token.kind == .@"if" or
                 token.kind == .mut)
             {
                 return;

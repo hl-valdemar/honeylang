@@ -21,9 +21,9 @@ pub const Kind = enum {
 
     // keywords
     func,
-    struct_,
-    defer_,
-    return_,
+    @"struct",
+    @"defer",
+    @"return",
     mut,
 
     // assignment
@@ -50,11 +50,11 @@ pub const Kind = enum {
     greater_equal,
 
     // logical
-    if_,
-    else_,
+    @"if",
+    @"else",
     not,
-    and_,
-    or_,
+    @"and",
+    @"or",
     xor,
 
     // enclosing

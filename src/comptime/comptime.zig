@@ -269,8 +269,8 @@ pub const ComptimeContext = struct {
             const right_bool = std.mem.eql(u8, right, "true");
 
             const result: bool = switch (binary_op.op) {
-                .and_ => left_bool and right_bool,
-                .or_ => left_bool or right_bool,
+                .@"and" => left_bool and right_bool,
+                .@"or" => left_bool or right_bool,
                 .equal => left_bool == right_bool,
                 .not_equal => left_bool != right_bool,
                 else => return null,

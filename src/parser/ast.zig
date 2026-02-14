@@ -116,8 +116,8 @@ pub const BinaryOp = struct {
         greater_equal,
 
         // logical
-        and_,
-        or_,
+        @"and",
+        @"or",
     };
 
     pub fn isArithmetic(self: *const BinaryOp) bool {
@@ -136,7 +136,7 @@ pub const BinaryOp = struct {
 
     pub fn isLogical(self: *const BinaryOp) bool {
         return switch (self.op) {
-            .and_, .or_ => true,
+            .@"and", .@"or" => true,
             else => false,
         };
     }
