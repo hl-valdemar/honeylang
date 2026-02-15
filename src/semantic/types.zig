@@ -47,6 +47,7 @@ pub const PrimitiveType = enum(u8) {
 pub const FunctionTypeIndex = u32;
 pub const StructTypeIndex = u32;
 pub const PointerTypeIndex = u32;
+pub const NamespaceTypeIndex = u32;
 
 pub const TypeId = union(enum) {
     /// Type could not be determined, will trap at runtime
@@ -63,6 +64,9 @@ pub const TypeId = union(enum) {
 
     /// Pointer type, index into TypeRegistry.pointer_types
     pointer: PointerTypeIndex,
+
+    /// Namespace type, index into TypeRegistry.namespace_types
+    namespace: NamespaceTypeIndex,
 
     pub const @"void": TypeId = .{ .primitive = .void };
     pub const @"bool": TypeId = .{ .primitive = .bool };
@@ -136,6 +140,10 @@ pub const TypeId = union(enum) {
         return self == .pointer;
     }
 
+    pub fn isNamespace(self: TypeId) bool {
+        return self == .namespace;
+    }
+
     pub fn eql(self: TypeId, other: TypeId) bool {
         return std.meta.eql(self, other);
     }
@@ -168,12 +176,24 @@ pub const PointerTypeInfo = struct {
     is_many_item: bool,
 };
 
+pub const NamespaceMember = struct {
+    name: []const u8,
+    symbol_idx: @import("symbols.zig").SymbolIndex,
+    is_pub: bool,
+};
+
+pub const NamespaceType = struct {
+    name: []const u8,
+    members: []const NamespaceMember,
+};
+
 /// Type Registry (Storage for Composite Types)
 pub const TypeRegistry = struct {
     allocator: mem.Allocator,
     function_types: std.ArrayList(FunctionType),
     struct_types: std.ArrayList(StructType),
     pointer_types: std.ArrayList(PointerTypeInfo),
+    namespace_types: std.ArrayList(NamespaceType),
     arena: std.heap.ArenaAllocator,
 
     pub fn init(allocator: mem.Allocator) !TypeRegistry {
@@ -182,6 +202,7 @@ pub const TypeRegistry = struct {
             .function_types = try std.ArrayList(FunctionType).initCapacity(allocator, 16),
             .struct_types = try std.ArrayList(StructType).initCapacity(allocator, 4),
             .pointer_types = try std.ArrayList(PointerTypeInfo).initCapacity(allocator, 4),
+            .namespace_types = try std.ArrayList(NamespaceType).initCapacity(allocator, 4),
             .arena = std.heap.ArenaAllocator.init(allocator),
         };
     }
@@ -190,6 +211,7 @@ pub const TypeRegistry = struct {
         self.function_types.deinit(self.allocator);
         self.struct_types.deinit(self.allocator);
         self.pointer_types.deinit(self.allocator);
+        self.namespace_types.deinit(self.allocator);
         self.arena.deinit();
     }
 
@@ -407,6 +429,32 @@ pub const TypeRegistry = struct {
         const info = self.getPointerType(type_id) orelse return false;
         return info.is_many_item;
     }
+
+    /// Register a namespace type and return a TypeId for it.
+    pub fn addNamespaceType(
+        self: *TypeRegistry,
+        name: []const u8,
+        members: []const NamespaceMember,
+    ) !TypeId {
+        const arena_alloc = self.arena.allocator();
+        const members_copy = try arena_alloc.dupe(NamespaceMember, members);
+
+        const idx: NamespaceTypeIndex = @intCast(self.namespace_types.items.len);
+        try self.namespace_types.append(self.allocator, .{
+            .name = name,
+            .members = members_copy,
+        });
+
+        return .{ .namespace = idx };
+    }
+
+    /// Get the namespace type for a given TypeId.
+    pub fn getNamespaceType(self: *const TypeRegistry, type_id: TypeId) ?NamespaceType {
+        return switch (type_id) {
+            .namespace => |idx| self.namespace_types.items[idx],
+            else => null,
+        };
+    }
 };
 
 /// Size in bytes of a type (for C layout computation).
@@ -423,6 +471,7 @@ pub fn sizeOf(type_id: TypeId, types: *const TypeRegistry) u32 {
         .function => 8, // pointer-sized
         .struct_type => |idx| types.struct_types.items[idx].size,
         .pointer => 8, // pointer-sized
+        .namespace => 0,
     };
 }
 
@@ -440,6 +489,7 @@ pub fn alignmentOf(type_id: TypeId, types: *const TypeRegistry) u32 {
         .function => 8,
         .struct_type => |idx| types.struct_types.items[idx].alignment,
         .pointer => 8,
+        .namespace => 1,
     };
 }
 

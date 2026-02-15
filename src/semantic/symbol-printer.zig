@@ -52,7 +52,8 @@ fn printSymbol(symbols: *const SymbolTable, src: *const SourceCode, idx: SymbolI
         .constant => "const",
         .variable => "var",
         .function => "func",
-        .type_ => "type",
+        .@"type" => "type",
+        .namespace => "namespace",
     };
 
     const type_str = switch (type_state) {
@@ -65,6 +66,7 @@ fn printSymbol(symbols: *const SymbolTable, src: *const SourceCode, idx: SymbolI
                 .function => "function",
                 .struct_type => "struct",
                 .pointer => "pointer",
+                .namespace => "namespace",
             };
         },
     };

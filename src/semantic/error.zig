@@ -53,6 +53,10 @@ pub const SemanticErrorKind = enum {
     // usage warnings
     unused_type,
 
+    // namespace errors
+    access_private_member,
+    unused_namespace,
+
     // pointer errors
     cannot_take_address,
     deref_non_pointer,
@@ -230,6 +234,17 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .code = "S031",
         .message = "arithmetic on single-item pointer",
         .help = "single-item pointers do not support arithmetic; use a many-item pointer (*T) instead",
+    },
+    .access_private_member = .{
+        .code = "S032",
+        .message = "access to private namespace member",
+        .help = "mark the member with 'pub' to make it accessible",
+    },
+    .unused_namespace = .{
+        .code = "S033",
+        .message = "unused namespace",
+        .help = "remove or use this namespace",
+        .severity = .warning,
     },
 });
 

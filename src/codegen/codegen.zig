@@ -224,6 +224,8 @@ pub const CodeGenContext = struct {
                 try self.collectGlobalVar(decl_idx, &globals_needing_init);
             } else if (kind == .const_decl) {
                 try self.collectGlobalConst(decl_idx, &globals_needing_init);
+            } else if (kind == .namespace_decl) {
+                try self.collectNamespaceGlobals(decl_idx, "", &globals_needing_init);
             }
         }
 
@@ -237,14 +239,13 @@ pub const CodeGenContext = struct {
     }
 
     fn collectGlobalVar(self: *CodeGenContext, node_idx: NodeIndex, needs_init: *std.ArrayList(NodeIndex)) !void {
-        // skip unused global variables
         if (self.skip_nodes.contains(node_idx)) return;
+        const name = self.getDeclShortName(node_idx) orelse return;
+        try self.collectGlobalVarByName(node_idx, name, needs_init);
+    }
 
+    fn collectGlobalVarByName(self: *CodeGenContext, node_idx: NodeIndex, name: []const u8, needs_init: *std.ArrayList(NodeIndex)) !void {
         const var_decl = self.ast.getVarDecl(node_idx);
-        const name_ident = self.ast.getIdentifier(var_decl.name);
-        const name_token = self.tokens.items[name_ident.token_idx];
-        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
-
         const sym_idx = self.symbols.lookup(name) orelse return;
         const type_id = self.symbols.getTypeId(sym_idx);
         const width = typeIdToWidth(type_id);
@@ -280,18 +281,18 @@ pub const CodeGenContext = struct {
         }
     }
 
-    fn collectGlobalConst(self: *CodeGenContext, node_idx: NodeIndex, _: *std.ArrayList(NodeIndex)) !void {
+    fn collectGlobalConst(self: *CodeGenContext, node_idx: NodeIndex, needs_init: *std.ArrayList(NodeIndex)) !void {
         if (self.skip_nodes.contains(node_idx)) return;
+        const name = self.getDeclShortName(node_idx) orelse return;
+        try self.collectGlobalConstByName(node_idx, name, needs_init);
+    }
 
+    fn collectGlobalConstByName(self: *CodeGenContext, node_idx: NodeIndex, name: []const u8, _: *std.ArrayList(NodeIndex)) !void {
         const const_decl = self.ast.getConstDecl(node_idx);
         const value_kind = self.ast.getKind(const_decl.value);
 
         // Only collect struct-typed constants as globals (primitives are handled by comptime)
         if (value_kind != .struct_literal) return;
-
-        const name_ident = self.ast.getIdentifier(const_decl.name);
-        const name_token = self.tokens.items[name_ident.token_idx];
-        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
 
         const sym_idx = self.symbols.lookup(name) orelse return;
         const type_id = self.symbols.getTypeId(sym_idx);
@@ -397,6 +398,110 @@ pub const CodeGenContext = struct {
         return values;
     }
 
+    /// Unwrap a pub_decl to get the inner declaration node.
+    fn unwrapPubDecl(self: *CodeGenContext, node_idx: NodeIndex) NodeIndex {
+        if (self.ast.getKind(node_idx) == .pub_decl) {
+            const pub_decl = self.ast.getPubDecl(node_idx);
+            return pub_decl.inner;
+        }
+        return node_idx;
+    }
+
+    /// Get the short name of a declaration node from its name identifier.
+    fn getDeclShortName(self: *CodeGenContext, node_idx: NodeIndex) ?[]const u8 {
+        const kind = self.ast.getKind(node_idx);
+        const name_node = switch (kind) {
+            .const_decl => self.ast.getConstDecl(node_idx).name,
+            .func_decl => self.ast.getFuncDecl(node_idx).name,
+            .var_decl => self.ast.getVarDecl(node_idx).name,
+            .namespace_decl => self.ast.getNamespaceDecl(node_idx).name,
+            else => return null,
+        };
+        const ident = self.ast.getIdentifier(name_node);
+        const token = self.tokens.items[ident.token_idx];
+        return self.src.getSlice(token.start, token.start + token.len);
+    }
+
+    /// Collect global vars/consts from inside a namespace declaration.
+    fn collectNamespaceGlobals(self: *CodeGenContext, node_idx: NodeIndex, prefix: []const u8, needs_init: *std.ArrayList(NodeIndex)) !void {
+        const ns_decl = self.ast.getNamespaceDecl(node_idx);
+        const ns_name = self.getDeclShortName(node_idx) orelse return;
+
+        const qualified_prefix = if (prefix.len > 0)
+            try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ prefix, ns_name })
+        else
+            ns_name;
+
+        const members = self.ast.getExtra(ns_decl.declarations);
+        for (members) |member_idx| {
+            const inner_idx = self.unwrapPubDecl(member_idx);
+            if (self.skip_nodes.contains(inner_idx)) continue;
+            const kind = self.ast.getKind(inner_idx);
+            if (kind == .var_decl) {
+                const short_name = self.getDeclShortName(inner_idx) orelse continue;
+                const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ qualified_prefix, short_name });
+                try self.collectGlobalVarByName(inner_idx, qualified_name, needs_init);
+            } else if (kind == .const_decl) {
+                const short_name = self.getDeclShortName(inner_idx) orelse continue;
+                const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ qualified_prefix, short_name });
+                try self.collectGlobalConstByName(inner_idx, qualified_name, needs_init);
+            } else if (kind == .namespace_decl) {
+                try self.collectNamespaceGlobals(inner_idx, qualified_prefix, needs_init);
+            }
+        }
+    }
+
+    /// Generate all declarations inside a namespace (functions, nested namespaces).
+    fn generateNamespaceDecl(self: *CodeGenContext, node_idx: NodeIndex, prefix: []const u8) !void {
+        const ns_decl = self.ast.getNamespaceDecl(node_idx);
+        const ns_name = self.getDeclShortName(node_idx) orelse return;
+
+        const qualified_prefix = if (prefix.len > 0)
+            try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ prefix, ns_name })
+        else
+            ns_name;
+
+        const members = self.ast.getExtra(ns_decl.declarations);
+        for (members) |member_idx| {
+            const inner_idx = self.unwrapPubDecl(member_idx);
+            if (self.skip_nodes.contains(inner_idx)) continue;
+            const kind = self.ast.getKind(inner_idx);
+            switch (kind) {
+                .func_decl => {
+                    const short_name = self.getDeclShortName(inner_idx) orelse continue;
+                    const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ qualified_prefix, short_name });
+                    const func_ast = self.ast.getFuncDecl(inner_idx);
+                    if (func_ast.body == null) {
+                        try self.collectExternFunctionByName(inner_idx, qualified_name);
+                    } else {
+                        try self.generateFunctionByName(inner_idx, qualified_name);
+                    }
+                },
+                .namespace_decl => try self.generateNamespaceDecl(inner_idx, qualified_prefix),
+                .const_decl, .var_decl, .struct_decl => {},
+                else => {},
+            }
+        }
+    }
+
+    /// Build a qualified name from a field_access chain (e.g., "math.add").
+    fn buildQualifiedName(self: *CodeGenContext, node_idx: NodeIndex) !?[]const u8 {
+        const kind = self.ast.getKind(node_idx);
+        if (kind == .identifier) {
+            const ident = self.ast.getIdentifier(node_idx);
+            const token = self.tokens.items[ident.token_idx];
+            return self.src.getSlice(token.start, token.start + token.len);
+        } else if (kind == .field_access) {
+            const access = self.ast.getFieldAccess(node_idx);
+            const obj_name = try self.buildQualifiedName(access.object) orelse return null;
+            const field_ident = self.ast.getIdentifier(access.field);
+            const field_token = self.tokens.items[field_ident.token_idx];
+            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+            return try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ obj_name, field_name });
+        }
+        return null;
+    }
+
     fn generateGlobalInit(self: *CodeGenContext, var_nodes: []const NodeIndex) !void {
         // Create __honey_init function (void, no params)
         self.current_func = try self.mir.addFunction("__honey_init", .c, null, &.{});
@@ -456,22 +561,30 @@ pub const CodeGenContext = struct {
             },
             .const_decl, .var_decl => {
                 // global constants/variables handled at data section
-                // for now, skip (comptime evaluates constants)
             },
             .struct_decl => {
                 // struct declarations are type definitions, handled at LLVM level
+            },
+            .namespace_decl => try self.generateNamespaceDecl(node_idx, ""),
+            .pub_decl => {
+                const pub_decl = self.ast.getPubDecl(node_idx);
+                try self.generateDeclaration(pub_decl.inner);
             },
             else => {},
         }
     }
 
     fn collectExternFunction(self: *CodeGenContext, node_idx: NodeIndex) !void {
-        const func = self.ast.getFuncDecl(node_idx);
+        const func_name = self.getDeclShortName(node_idx) orelse return;
+        try self.collectExternFunctionBody(node_idx, func_name);
+    }
 
-        // get func name
-        const name_ident = self.ast.getIdentifier(func.name);
-        const name_token = self.tokens.items[name_ident.token_idx];
-        const func_name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+    fn collectExternFunctionByName(self: *CodeGenContext, node_idx: NodeIndex, func_name: []const u8) !void {
+        try self.collectExternFunctionBody(node_idx, func_name);
+    }
+
+    fn collectExternFunctionBody(self: *CodeGenContext, node_idx: NodeIndex, func_name: []const u8) !void {
+        const func = self.ast.getFuncDecl(node_idx);
 
         // resolve return type from node_types (stored by semantic analysis)
         const return_width: ?Width = resolveReturnWidth(self.node_types, func.return_type);
@@ -502,12 +615,16 @@ pub const CodeGenContext = struct {
     }
 
     fn generateFunction(self: *CodeGenContext, node_idx: NodeIndex) !void {
-        const func = self.ast.getFuncDecl(node_idx);
+        const func_name = self.getDeclShortName(node_idx) orelse return;
+        try self.generateFunctionBody(node_idx, func_name);
+    }
 
-        // get func name
-        const name_ident = self.ast.getIdentifier(func.name);
-        const name_token = self.tokens.items[name_ident.token_idx];
-        const func_name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+    fn generateFunctionByName(self: *CodeGenContext, node_idx: NodeIndex, func_name: []const u8) !void {
+        try self.generateFunctionBody(node_idx, func_name);
+    }
+
+    fn generateFunctionBody(self: *CodeGenContext, node_idx: NodeIndex, func_name: []const u8) !void {
+        const func = self.ast.getFuncDecl(node_idx);
 
         // calling conv should be c if main (for darwin)
         const call_conv = if (std.mem.eql(u8, func_name, "main")) .c else func.call_conv;
@@ -890,7 +1007,7 @@ pub const CodeGenContext = struct {
         const token = self.tokens.items[ident.token_idx];
         const name = self.src.getSlice(token.start, token.start + token.len);
 
-        // Check locals first (for function-scoped variables)
+        // Check locals @"type" (for function-scoped variables)
         if (self.locals.lookup(name)) |local| {
             return try self.current_func.?.emitLoadLocal(local.offset, local.width);
         }
@@ -910,7 +1027,7 @@ pub const CodeGenContext = struct {
                 return result;
             },
             .variable => self.generateVarLoad(name, type_id),
-            .function, .type_ => error.UnsupportedFeature,
+            .function, .@"type", .namespace => error.UnsupportedFeature,
         };
     }
 
@@ -1061,11 +1178,16 @@ pub const CodeGenContext = struct {
     fn generateCallExpr(self: *CodeGenContext, node_idx: NodeIndex) !?VReg {
         const func = self.current_func.?;
         const call = self.ast.getCallExpr(node_idx);
+        const func_node_kind = self.ast.getKind(call.func);
 
-        // 1. Get function name from identifier
-        const func_ident = self.ast.getIdentifier(call.func);
-        const func_token = self.tokens.items[func_ident.token_idx];
-        const func_name = self.src.getSlice(func_token.start, func_token.start + func_token.len);
+        // 1. Get function name (direct identifier or qualified via field_access)
+        const func_name: []const u8 = if (func_node_kind == .identifier) blk: {
+            const func_ident = self.ast.getIdentifier(call.func);
+            const func_token = self.tokens.items[func_ident.token_idx];
+            break :blk self.src.getSlice(func_token.start, func_token.start + func_token.len);
+        } else if (func_node_kind == .field_access) blk: {
+            break :blk try self.buildQualifiedName(call.func) orelse return null;
+        } else return null;
 
         // 2. Look up function to get calling convention
         const sym_idx = self.symbols.lookup(func_name) orelse return null;
@@ -1143,12 +1265,34 @@ pub const CodeGenContext = struct {
         const func = self.current_func.?;
         const access = self.ast.getFieldAccess(node_idx);
 
-        // generate the base object expression (produces a pointer for struct types)
-        const base_reg = try self.generateExpression(access.object) orelse return null;
-
         // get the object's type from semantic analysis
         const object_type = self.node_types.get(access.object) orelse return null;
+
+        // namespace field access: resolve to the member symbol
+        if (object_type.isNamespace()) {
+            const qualified_name = try self.buildQualifiedName(node_idx) orelse return null;
+            const sym_idx = self.symbols.lookup(qualified_name) orelse return null;
+            const type_id = self.symbols.getTypeId(sym_idx);
+            const kind = self.symbols.getKind(sym_idx);
+
+            return switch (kind) {
+                .constant => {
+                    const result = try self.generateConstLoad(sym_idx, type_id);
+                    if (result == null and type_id.isStruct()) {
+                        return self.generateVarLoad(qualified_name, type_id);
+                    }
+                    return result;
+                },
+                .variable => self.generateVarLoad(qualified_name, type_id),
+                .namespace => null, // nested namespace has no runtime value
+                .function, .@"type" => null,
+            };
+        }
+
         if (object_type != .struct_type) return null;
+
+        // generate the base object expression (produces a pointer for struct types)
+        const base_reg = try self.generateExpression(access.object) orelse return null;
 
         const struct_idx = object_type.struct_type;
         const struct_type = self.types.getStructType(object_type) orelse return null;

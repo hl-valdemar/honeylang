@@ -118,6 +118,13 @@ fn getNodeInfo(
             const mut_str = if (decl.is_mutable) "mut" else "immut";
             break :blk std.fmt.bufPrint(&S.buf, "name: {s}, {s}", .{ name, mut_str }) catch "?";
         },
+        .namespace_decl => blk: {
+            const decl = ast.getNamespaceDecl(idx);
+            const name = getIdentifierName(ast, tokens, src, decl.name);
+            const member_count = decl.declarations.len;
+            break :blk std.fmt.bufPrint(&S.buf, "namespace {s}, members: {d}", .{ name, member_count }) catch "?";
+        },
+        .pub_decl => "pub",
         .identifier => blk: {
             const name = getIdentifierName(ast, tokens, src, idx);
             break :blk std.fmt.bufPrint(&S.buf, "\"{s}\"", .{name}) catch "?";
@@ -161,8 +168,15 @@ fn getNodeInfo(
         },
         .call_expr => blk: {
             const call = ast.getCallExpr(idx);
-            const name = getIdentifierName(ast, tokens, src, call.func);
-            break :blk std.fmt.bufPrint(&S.buf, "func: {s}, args: {d}", .{ name, call.args.len }) catch "?";
+            if (ast.getKind(call.func) == .identifier) {
+                const name = getIdentifierName(ast, tokens, src, call.func);
+                break :blk std.fmt.bufPrint(&S.buf, "func: {s}, args: {d}", .{ name, call.args.len }) catch "?";
+            } else if (ast.getKind(call.func) == .field_access) {
+                const path = getFieldAccessPath(ast, tokens, src, call.func);
+                break :blk std.fmt.bufPrint(&S.buf, "func: {s}, args: {d}", .{ path, call.args.len }) catch "?";
+            } else {
+                break :blk std.fmt.bufPrint(&S.buf, "func: <expr>, args: {d}", .{call.args.len}) catch "?";
+            }
         },
         .field_access => blk: {
             const access = ast.getFieldAccess(idx);
@@ -171,7 +185,10 @@ fn getNodeInfo(
         },
         .struct_literal => blk: {
             const lit = ast.getStructLiteral(idx);
-            const name = getIdentifierName(ast, tokens, src, lit.type_name);
+            const name = if (ast.getKind(lit.type_name) == .field_access)
+                getIdentifierName(ast, tokens, src, ast.getFieldAccess(lit.type_name).field)
+            else
+                getIdentifierName(ast, tokens, src, lit.type_name);
             const field_count = lit.fields.len / 2;
             break :blk std.fmt.bufPrint(&S.buf, "{s}{{ fields: {d} }}", .{ name, field_count }) catch "?";
         },
@@ -432,9 +449,15 @@ fn printNode(
             std.debug.print("call_expr:\n", .{});
             const call = ast.getCallExpr(idx);
 
-            std.debug.print("{s}├─ func: ", .{child_prefix});
-            printIdentifierValue(ast, tokens, src, call.func);
-            std.debug.print("\n", .{});
+            if (ast.getKind(call.func) == .identifier) {
+                std.debug.print("{s}├─ func: ", .{child_prefix});
+                printIdentifierValue(ast, tokens, src, call.func);
+                std.debug.print("\n", .{});
+            } else {
+                std.debug.print("{s}├─ func:\n", .{child_prefix});
+                const func_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+                printNode(ast, tokens, src, call.func, func_prefix, true);
+            }
 
             const args = ast.getExtra(call.args);
             std.debug.print("{s}└─ args: {d}\n", .{ child_prefix, args.len });
@@ -466,8 +489,12 @@ fn printNode(
             std.debug.print("struct_literal:\n", .{});
 
             std.debug.print("{s}├─ type: ", .{child_prefix});
-            printIdentifierValue(ast, tokens, src, lit.type_name);
-            std.debug.print("\n", .{});
+            if (ast.getKind(lit.type_name) == .field_access) {
+                printNode(ast, tokens, src, lit.type_name, child_prefix, false);
+            } else {
+                printIdentifierValue(ast, tokens, src, lit.type_name);
+                std.debug.print("\n", .{});
+            }
 
             const field_data = ast.getExtra(lit.fields);
             const field_count = field_data.len / 2;
@@ -486,6 +513,32 @@ fn printNode(
                     std.fmt.allocPrint(std.heap.page_allocator, "{s}    │   ", .{child_prefix}) catch unreachable;
                 printNode(ast, tokens, src, field_data[fi + 1], val_prefix, true);
             }
+        },
+
+        .namespace_decl => {
+            std.debug.print("namespace_decl:\n", .{});
+            const decl = ast.getNamespaceDecl(idx);
+
+            std.debug.print("{s}├─ name: ", .{child_prefix});
+            printIdentifierValue(ast, tokens, src, decl.name);
+            std.debug.print("\n", .{});
+
+            const members = ast.getExtra(decl.declarations);
+            std.debug.print("{s}└─ members: {d}\n", .{ child_prefix, members.len });
+
+            if (members.len > 0) {
+                const member_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
+                for (members, 0..) |member, i| {
+                    const is_last_member = (i == members.len - 1);
+                    printNode(ast, tokens, src, member, member_prefix, is_last_member);
+                }
+            }
+        },
+
+        .pub_decl => {
+            std.debug.print("pub:\n", .{});
+            const decl = ast.getPubDecl(idx);
+            printNode(ast, tokens, src, decl.inner, child_prefix, true);
         },
 
         .identifier => {

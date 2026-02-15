@@ -14,6 +14,8 @@ pub const NodeKind = enum {
     func_decl,
     var_decl,
     struct_decl,
+    namespace_decl,
+    pub_decl,
 
     // expressions
     binary_op,
@@ -95,6 +97,15 @@ pub const StructDecl = struct {
     call_conv: CallingConvention,
 };
 
+pub const NamespaceDecl = struct {
+    name: NodeIndex,
+    declarations: Range, // into extra_data: list of declaration NodeIndices
+};
+
+pub const PubDecl = struct {
+    inner: NodeIndex, // the wrapped declaration
+};
+
 pub const BinaryOp = struct {
     op: Op,
     left: NodeIndex,
@@ -163,7 +174,7 @@ pub const FieldAccess = struct {
 };
 
 pub const StructLiteral = struct {
-    type_name: NodeIndex, // identifier for the struct type
+    type_name: NodeIndex, // identifier or field_access for the struct type
     fields: Range, // pairs of (field_name_ident, value_expr) in extra_data
 };
 
@@ -255,6 +266,8 @@ pub const Ast = struct {
     func_decls: std.ArrayList(FuncDecl),
     var_decls: std.ArrayList(VarDecl),
     struct_decls: std.ArrayList(StructDecl),
+    namespace_decls: std.ArrayList(NamespaceDecl),
+    pub_decls: std.ArrayList(PubDecl),
     binary_ops: std.ArrayList(BinaryOp),
     unary_ops: std.ArrayList(UnaryOp),
     call_exprs: std.ArrayList(CallExpr),
@@ -292,6 +305,8 @@ pub const Ast = struct {
             .func_decls = try std.ArrayList(FuncDecl).initCapacity(allocator, capacity),
             .var_decls = try std.ArrayList(VarDecl).initCapacity(allocator, capacity),
             .struct_decls = try std.ArrayList(StructDecl).initCapacity(allocator, capacity),
+            .namespace_decls = try std.ArrayList(NamespaceDecl).initCapacity(allocator, capacity),
+            .pub_decls = try std.ArrayList(PubDecl).initCapacity(allocator, capacity),
             .binary_ops = try std.ArrayList(BinaryOp).initCapacity(allocator, capacity),
             .unary_ops = try std.ArrayList(UnaryOp).initCapacity(allocator, capacity),
             .call_exprs = try std.ArrayList(CallExpr).initCapacity(allocator, capacity),
@@ -324,6 +339,8 @@ pub const Ast = struct {
         self.func_decls.deinit(self.allocator);
         self.var_decls.deinit(self.allocator);
         self.struct_decls.deinit(self.allocator);
+        self.namespace_decls.deinit(self.allocator);
+        self.pub_decls.deinit(self.allocator);
         self.binary_ops.deinit(self.allocator);
         self.unary_ops.deinit(self.allocator);
         self.call_exprs.deinit(self.allocator);
@@ -460,6 +477,46 @@ pub const Ast = struct {
             .fields = fields,
             .call_conv = calling_conv,
         });
+
+        return node_idx;
+    }
+
+    pub fn addNamespaceDecl(
+        self: *Ast,
+        name: NodeIndex,
+        declarations: Range,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.namespace_decls.items.len);
+
+        try self.kinds.append(self.allocator, .namespace_decl);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.namespace_decls.append(self.allocator, .{
+            .name = name,
+            .declarations = declarations,
+        });
+
+        return node_idx;
+    }
+
+    pub fn addPubDecl(
+        self: *Ast,
+        inner: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.pub_decls.items.len);
+
+        try self.kinds.append(self.allocator, .pub_decl);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.pub_decls.append(self.allocator, .{ .inner = inner });
 
         return node_idx;
     }
@@ -875,6 +932,18 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .struct_decl);
         const data_idx = self.data_indices.items[idx];
         return self.struct_decls.items[data_idx];
+    }
+
+    pub fn getNamespaceDecl(self: *const Ast, idx: NodeIndex) NamespaceDecl {
+        std.debug.assert(self.kinds.items[idx] == .namespace_decl);
+        const data_idx = self.data_indices.items[idx];
+        return self.namespace_decls.items[data_idx];
+    }
+
+    pub fn getPubDecl(self: *const Ast, idx: NodeIndex) PubDecl {
+        std.debug.assert(self.kinds.items[idx] == .pub_decl);
+        const data_idx = self.data_indices.items[idx];
+        return self.pub_decls.items[data_idx];
     }
 
     pub fn getBinaryOp(self: *const Ast, idx: NodeIndex) BinaryOp {

@@ -139,6 +139,8 @@ pub const Parser = struct {
                     return try self.parseFuncDecl();
                 } else if (after.kind == .@"struct") {
                     return try self.parseStructDecl();
+                } else if (after.kind == .namespace) {
+                    return try self.parseNamespaceDecl();
                 } else if (after.kind == .identifier and self.isCallingConvention(2)) {
                     // check if calling convention is followed by func or struct
                     const after_cc = self.peekOffset(3) orelse {
@@ -302,6 +304,62 @@ pub const Parser = struct {
         }
 
         return try self.ast.addExtra(fields.items);
+    }
+
+    fn parseNamespaceDecl(self: *Parser) ParseError!NodeIndex {
+        const start_pos = self.currentStart();
+
+        // parse name
+        const name = try self.parseIdentifier();
+
+        // expect ::
+        try self.expectToken(.double_colon, .expected_double_colon);
+
+        // expect 'namespace'
+        try self.expectToken(.namespace, .unexpected_token);
+
+        // expect {
+        try self.expectToken(.left_curly, .expected_left_curly);
+
+        // parse namespace body
+        const declarations = try self.parseNamespaceBody();
+
+        // expect }
+        try self.expectToken(.right_curly, .expected_right_curly);
+
+        const end_pos = self.previousEnd();
+
+        return try self.ast.addNamespaceDecl(name, declarations, start_pos, end_pos);
+    }
+
+    fn parseNamespaceBody(self: *Parser) ParseError!ast.Range {
+        var members = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
+        defer members.deinit(self.allocator);
+
+        while (!self.check(.right_curly) and !self.check(.eof)) {
+            const member = blk: {
+                if (self.check(.@"pub")) {
+                    const pub_start = self.currentStart();
+                    self.advance(); // consume 'pub'
+
+                    const inner = self.parseDeclaration() catch {
+                        self.synchronize();
+                        continue;
+                    };
+
+                    const pub_end = self.previousEnd();
+                    break :blk try self.ast.addPubDecl(inner, pub_start, pub_end);
+                } else {
+                    break :blk self.parseDeclaration() catch {
+                        self.synchronize();
+                        continue;
+                    };
+                }
+            };
+            try members.append(self.allocator, member);
+        }
+
+        return try self.ast.addExtra(members.items);
     }
 
     fn parseParameters(self: *Parser) ParseError!ast.Range {
@@ -849,19 +907,52 @@ pub const Parser = struct {
             },
         };
 
-        // postfix: field access and dereference
-        while (self.check(.dot) or self.check(.caret)) {
+        // postfix: field access, dereference, postfix call, and struct literal
+        while (self.check(.dot) or self.check(.caret) or self.check(.left_paren) or self.check(.left_curly)) {
             if (self.check(.dot)) {
                 const start_pos = self.ast.getLocation(expr).start;
                 self.advance(); // consume dot
                 const field = try self.parseIdentifier();
                 const end_pos = self.previousEnd();
                 expr = try self.ast.addFieldAccess(expr, field, start_pos, end_pos);
-            } else {
+            } else if (self.check(.caret)) {
                 const start_pos = self.ast.getLocation(expr).start;
                 self.advance(); // consume ^
                 const end_pos = self.previousEnd();
                 expr = try self.ast.addDeref(expr, start_pos, end_pos);
+            } else if (self.check(.left_paren)) {
+                // postfix call: expr(args...)
+                const start_pos = self.ast.getLocation(expr).start;
+                const paren_start = self.currentStart();
+                self.advance(); // consume (
+
+                var args = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 1);
+                defer args.deinit(self.allocator);
+
+                while (!self.check(.right_paren) and !self.check(.eof)) {
+                    const arg = try self.parseExpression();
+                    try args.append(self.allocator, arg);
+                    if (!self.match(.comma)) break;
+                }
+
+                if (self.check(.eof)) {
+                    try self.addError(.unclosed_paren, paren_start, self.currentStart());
+                }
+
+                try self.expectToken(.right_paren, .expected_right_paren);
+
+                const args_range = try self.ast.addExtra(args.items);
+                const end_pos = self.previousEnd();
+                expr = try self.ast.addCallExpr(expr, args_range, start_pos, end_pos);
+            } else if (self.check(.left_curly)) {
+                // struct literal: expr { .field = value, ... }
+                if (self.peekOffset(1)) |after_curly| {
+                    if (after_curly.kind == .dot or after_curly.kind == .right_curly) {
+                        expr = try self.parseStructLiteralWithType(expr);
+                        continue;
+                    }
+                }
+                break; // not a struct literal, exit postfix loop
             }
         }
 
@@ -955,6 +1046,45 @@ pub const Parser = struct {
 
         // parse type name identifier
         const type_name = try self.parseIdentifier();
+
+        // expect {
+        try self.expectToken(.left_curly, .expected_left_curly);
+
+        // parse .field = value pairs
+        var fields = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
+        defer fields.deinit(self.allocator);
+
+        while (!self.check(.right_curly) and !self.check(.eof)) {
+            // expect .
+            try self.expectToken(.dot, .unexpected_token);
+
+            // parse field name
+            const field_name = try self.parseIdentifier();
+            try fields.append(self.allocator, field_name);
+
+            // expect =
+            try self.expectToken(.equal, .expected_equal);
+
+            // parse value expression
+            const value = try self.parseExpression();
+            try fields.append(self.allocator, value);
+
+            // optional comma
+            if (!self.match(.comma)) break;
+        }
+
+        // expect }
+        try self.expectToken(.right_curly, .expected_right_curly);
+
+        const fields_range = try self.ast.addExtra(fields.items);
+        const end_pos = self.previousEnd();
+
+        return try self.ast.addStructLiteral(type_name, fields_range, start_pos, end_pos);
+    }
+
+    /// Parse a struct literal when the type name has already been parsed (e.g. as a field_access).
+    fn parseStructLiteralWithType(self: *Parser, type_name: NodeIndex) ParseError!NodeIndex {
+        const start_pos = self.ast.getLocation(type_name).start;
 
         // expect {
         try self.expectToken(.left_curly, .expected_left_curly);

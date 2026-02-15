@@ -25,6 +25,8 @@ pub const Kind = enum {
     @"defer",
     @"return",
     mut,
+    namespace,
+    @"pub",
 
     // assignment
     colon,

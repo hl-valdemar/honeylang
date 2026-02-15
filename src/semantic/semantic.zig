@@ -57,6 +57,7 @@ pub const SemanticContext = struct {
     errors: ErrorList,
 
     current_ret_type: TypeId = TypeId.void,
+    current_namespace_prefix: []const u8 = "",
 
     pub fn init(
         allocator: mem.Allocator,
@@ -132,7 +133,8 @@ pub const SemanticContext = struct {
                     .constant => .unused_constant,
                     .variable => .unused_variable,
                     .function => .unused_function,
-                    .type_ => .unused_type,
+                    .@"type" => .unused_type,
+                    .namespace => .unused_namespace,
                 };
                 try self.errors.add(.{
                     .kind = err_kind,
@@ -146,7 +148,7 @@ pub const SemanticContext = struct {
             } else {
                 // referenced but type unresolved — error
                 const type_id = self.symbols.getTypeId(idx);
-                if (type_id == .unresolved and kind != .function and kind != .type_) {
+                if (type_id == .unresolved and kind != .function and kind != .@"type" and kind != .namespace) {
                     const start = self.symbols.name_starts.items[idx];
                     const len = self.symbols.name_lengths.items[idx];
                     try self.errors.add(.{
@@ -163,10 +165,12 @@ pub const SemanticContext = struct {
         const program = self.ast.getProgram(self.ast.root);
         const decls = self.ast.getExtra(program.declarations);
 
-        // Phase 1: Forward-declare all struct types so they can reference each other
+        // Phase 1: Forward-declare all struct types (including those inside namespaces)
         for (decls) |decl_idx| {
             if (self.ast.getKind(decl_idx) == .struct_decl) {
                 try self.forwardDeclareStruct(decl_idx);
+            } else if (self.ast.getKind(decl_idx) == .namespace_decl) {
+                try self.forwardDeclareStructsInNamespace(decl_idx, "");
             }
         }
 
@@ -176,7 +180,9 @@ pub const SemanticContext = struct {
         // Phase 3: Collect all non-struct declarations
         for (decls) |decl_idx| {
             const kind = self.ast.getKind(decl_idx);
-            if (kind != .struct_decl) {
+            if (kind == .namespace_decl) {
+                try self.collectNamespaceDecl(decl_idx, "");
+            } else if (kind != .struct_decl) {
                 try self.collectDeclaration(decl_idx);
             }
         }
@@ -195,7 +201,7 @@ pub const SemanticContext = struct {
         const result = try self.symbols.register(
             name,
             name_token.start,
-            .type_,
+            .@"type",
             .resolved,
             type_id,
             node_idx,
@@ -211,36 +217,298 @@ pub const SemanticContext = struct {
         }
     }
 
-    /// Finalize struct types iteratively until all are done.
-    /// Each pass finalizes structs whose field types are already finalized.
-    fn finalizeStructTypes(self: *SemanticContext, decls: []const NodeIndex) !void {
-        // collect struct declaration nodes
-        var struct_decls = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
-        defer struct_decls.deinit(self.allocator);
+    /// Forward-declare structs found inside namespace declarations.
+    fn forwardDeclareStructsInNamespace(self: *SemanticContext, node_idx: NodeIndex, prefix: []const u8) !void {
+        const ns_decl = self.ast.getNamespaceDecl(node_idx);
+        const ns_name_ident = self.ast.getIdentifier(ns_decl.name);
+        const ns_name_token = self.tokens.items[ns_name_ident.token_idx];
+        const ns_name = self.src.getSlice(ns_name_token.start, ns_name_token.start + ns_name_token.len);
 
-        for (decls) |decl_idx| {
-            if (self.ast.getKind(decl_idx) == .struct_decl) {
-                try struct_decls.append(self.allocator, decl_idx);
+        // build qualified prefix
+        const arena_alloc = self.types.arena.allocator();
+        const qualified_prefix = if (prefix.len > 0)
+            try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ prefix, ns_name })
+        else
+            try arena_alloc.dupe(u8, ns_name);
+
+        const members = self.ast.getExtra(ns_decl.declarations);
+        for (members) |member_idx| {
+            const inner_idx = self.unwrapPubDecl(member_idx);
+            const inner_kind = self.ast.getKind(inner_idx);
+            if (inner_kind == .struct_decl) {
+                try self.forwardDeclareStructWithPrefix(inner_idx, qualified_prefix);
+            } else if (inner_kind == .namespace_decl) {
+                try self.forwardDeclareStructsInNamespace(inner_idx, qualified_prefix);
+            }
+        }
+    }
+
+    /// Forward-declare a struct with a qualified name prefix.
+    fn forwardDeclareStructWithPrefix(self: *SemanticContext, node_idx: NodeIndex, prefix: []const u8) !void {
+        const decl = self.ast.getStructDecl(node_idx);
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const short_name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        const arena_alloc = self.types.arena.allocator();
+        const qualified_name = try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ prefix, short_name });
+
+        const type_id = try self.types.reserveStructType(qualified_name);
+
+        const result = try self.symbols.register(
+            qualified_name,
+            name_token.start,
+            .@"type",
+            .resolved,
+            type_id,
+            node_idx,
+            false,
+        );
+
+        if (result == null) {
+            try self.errors.add(.{
+                .kind = .duplicate_symbol,
+                .start = name_token.start,
+                .end = name_token.start + name_token.len,
+            });
+        }
+    }
+
+    /// Unwrap a pub_decl to get the inner declaration node.
+    fn unwrapPubDecl(self: *SemanticContext, node_idx: NodeIndex) NodeIndex {
+        if (self.ast.getKind(node_idx) == .pub_decl) {
+            const pub_decl = self.ast.getPubDecl(node_idx);
+            return pub_decl.inner;
+        }
+        return node_idx;
+    }
+
+    /// Collect a namespace declaration: register all members with qualified names.
+    fn collectNamespaceDecl(self: *SemanticContext, node_idx: NodeIndex, prefix: []const u8) !void {
+        const ns_decl = self.ast.getNamespaceDecl(node_idx);
+        const ns_name_ident = self.ast.getIdentifier(ns_decl.name);
+        const ns_name_token = self.tokens.items[ns_name_ident.token_idx];
+        const ns_name = self.src.getSlice(ns_name_token.start, ns_name_token.start + ns_name_token.len);
+
+        const arena_alloc = self.types.arena.allocator();
+        const qualified_prefix = if (prefix.len > 0)
+            try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ prefix, ns_name })
+        else
+            try arena_alloc.dupe(u8, ns_name);
+
+        const saved_prefix = self.current_namespace_prefix;
+        self.current_namespace_prefix = qualified_prefix;
+        defer self.current_namespace_prefix = saved_prefix;
+
+        const members = self.ast.getExtra(ns_decl.declarations);
+
+        // Build namespace member list and register each member
+        var ns_members = try std.ArrayList(@import("types.zig").NamespaceMember).initCapacity(self.allocator, members.len);
+        defer ns_members.deinit(self.allocator);
+
+        for (members) |member_idx| {
+            const is_pub = self.ast.getKind(member_idx) == .pub_decl;
+            const inner_idx = self.unwrapPubDecl(member_idx);
+            const inner_kind = self.ast.getKind(inner_idx);
+
+            // Get member's short name
+            const member_short_name = self.getMemberName(inner_idx) orelse continue;
+
+            // Build qualified name
+            const qualified_name = try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ qualified_prefix, member_short_name });
+
+            if (inner_kind == .namespace_decl) {
+                // Nested namespace: recurse
+                try self.collectNamespaceDecl(inner_idx, qualified_prefix);
+                // Look up the nested namespace symbol we just registered
+                if (self.symbols.lookup(qualified_name)) |sym_idx| {
+                    try ns_members.append(self.allocator, .{
+                        .name = member_short_name,
+                        .symbol_idx = sym_idx,
+                        .is_pub = is_pub,
+                    });
+                }
+            } else if (inner_kind == .struct_decl) {
+                // Already forward-declared with qualified name
+                if (self.symbols.lookup(qualified_name)) |sym_idx| {
+                    try ns_members.append(self.allocator, .{
+                        .name = member_short_name,
+                        .symbol_idx = sym_idx,
+                        .is_pub = is_pub,
+                    });
+                }
+            } else {
+                // Register the member with its qualified name
+                const sym_idx = try self.collectMemberDecl(inner_idx, qualified_name);
+                if (sym_idx) |si| {
+                    try ns_members.append(self.allocator, .{
+                        .name = member_short_name,
+                        .symbol_idx = si,
+                        .is_pub = is_pub,
+                    });
+                }
             }
         }
 
-        var finalized = try std.ArrayList(bool).initCapacity(self.allocator, struct_decls.items.len);
+        // Register namespace type
+        const ns_type_id = try self.types.addNamespaceType(qualified_prefix, ns_members.items);
+
+        // Register namespace symbol
+        const result = try self.symbols.register(
+            qualified_prefix,
+            ns_name_token.start,
+            .namespace,
+            .resolved,
+            ns_type_id,
+            node_idx,
+            false,
+        );
+
+        if (result == null) {
+            try self.errors.add(.{
+                .kind = .duplicate_symbol,
+                .start = ns_name_token.start,
+                .end = ns_name_token.start + ns_name_token.len,
+            });
+        }
+    }
+
+    /// Get the short name of a declaration node.
+    fn getMemberName(self: *SemanticContext, node_idx: NodeIndex) ?[]const u8 {
+        const kind = self.ast.getKind(node_idx);
+        const name_node = switch (kind) {
+            .const_decl => self.ast.getConstDecl(node_idx).name,
+            .func_decl => self.ast.getFuncDecl(node_idx).name,
+            .var_decl => self.ast.getVarDecl(node_idx).name,
+            .struct_decl => self.ast.getStructDecl(node_idx).name,
+            .namespace_decl => self.ast.getNamespaceDecl(node_idx).name,
+            else => return null,
+        };
+        const ident = self.ast.getIdentifier(name_node);
+        const token = self.tokens.items[ident.token_idx];
+        return self.src.getSlice(token.start, token.start + token.len);
+    }
+
+    /// Register a member declaration (const, var, func) with a specific qualified name.
+    fn collectMemberDecl(self: *SemanticContext, node_idx: NodeIndex, qualified_name: []const u8) !?SymbolIndex {
+        const kind = self.ast.getKind(node_idx);
+        switch (kind) {
+            .const_decl => return try self.collectConstDeclWithName(node_idx, qualified_name),
+            .func_decl => return try self.collectFuncDeclWithName(node_idx, qualified_name),
+            .var_decl => return try self.collectVarDeclWithName(node_idx, qualified_name),
+            else => return null,
+        }
+    }
+
+    fn collectConstDeclWithName(self: *SemanticContext, node_idx: NodeIndex, name: []const u8) !?SymbolIndex {
+        const decl = self.ast.getConstDecl(node_idx);
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+
+        var type_state = TypeState.pending;
+        var type_id: TypeId = .unresolved;
+
+        if (decl.type_id) |type_idx| {
+            if (self.resolveTypeNode(type_idx)) |tid| {
+                type_id = tid;
+                type_state = .resolved;
+            } else {
+                const loc = self.ast.getLocation(type_idx);
+                try self.errors.add(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
+            }
+        }
+
+        const result = try self.symbols.register(name, name_token.start, .constant, type_state, type_id, decl.value, false);
+        if (result == null) {
+            try self.errors.add(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
+            return null;
+        }
+        return result;
+    }
+
+    fn collectFuncDeclWithName(self: *SemanticContext, node_idx: NodeIndex, name: []const u8) !?SymbolIndex {
+        const decl = self.ast.getFuncDecl(node_idx);
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+
+        const return_type = self.resolveTypeNode(decl.return_type) orelse .unresolved;
+
+        const params = self.ast.getExtra(decl.params);
+        const param_count = params.len / 2;
+        var param_types = try std.ArrayList(TypeId).initCapacity(self.allocator, param_count);
+        defer param_types.deinit(self.allocator);
+
+        var i: usize = 0;
+        while (i < params.len) : (i += 2) {
+            const param_type = self.resolveTypeNode(params[i + 1]) orelse .unresolved;
+            try param_types.append(self.allocator, param_type);
+        }
+
+        const func_type = try self.types.addFunctionType(param_types.items, return_type, decl.call_conv);
+
+        const result = try self.symbols.register(name, name_token.start, .function, .resolved, func_type, node_idx, false);
+        if (result == null) {
+            try self.errors.add(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
+            return null;
+        }
+        return result;
+    }
+
+    fn collectVarDeclWithName(self: *SemanticContext, node_idx: NodeIndex, name: []const u8) !?SymbolIndex {
+        const decl = self.ast.getVarDecl(node_idx);
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+
+        var type_state = TypeState.pending;
+        var type_id: TypeId = .unresolved;
+
+        if (decl.type_id) |type_idx| {
+            if (self.resolveTypeNode(type_idx)) |tid| {
+                type_id = tid;
+                type_state = .resolved;
+            } else {
+                const loc = self.ast.getLocation(type_idx);
+                try self.errors.add(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
+            }
+        }
+
+        const result = try self.symbols.register(name, name_token.start, .variable, type_state, type_id, decl.value, decl.is_mutable);
+        if (result == null) {
+            try self.errors.add(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
+            return null;
+        }
+        return result;
+    }
+
+    /// Finalize struct types iteratively until all are done.
+    /// Each pass finalizes structs whose field types are already finalized.
+    fn finalizeStructTypes(self: *SemanticContext, decls: []const NodeIndex) !void {
+        // collect all struct declaration nodes (including those inside namespaces)
+        var struct_nodes = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
+        defer struct_nodes.deinit(self.allocator);
+        var lookup_names = try std.ArrayList([]const u8).initCapacity(self.allocator, 4);
+        defer lookup_names.deinit(self.allocator);
+
+        try self.collectAllStructDecls(decls, "", &struct_nodes, &lookup_names);
+
+        var finalized = try std.ArrayList(bool).initCapacity(self.allocator, struct_nodes.items.len);
         defer finalized.deinit(self.allocator);
-        for (0..struct_decls.items.len) |_| {
+        for (0..struct_nodes.items.len) |_| {
             try finalized.append(self.allocator, false);
         }
 
-        var remaining = struct_decls.items.len;
+        var remaining = struct_nodes.items.len;
         var prev_remaining = remaining + 1;
 
         while (remaining > 0 and remaining < prev_remaining) {
             prev_remaining = remaining;
 
-            for (struct_decls.items, 0..) |decl_idx, si| {
+            for (struct_nodes.items, 0..) |decl_idx, si| {
                 if (finalized.items[si]) continue;
 
+                self.current_namespace_prefix = self.namespaceFromQualified(lookup_names.items[si]);
                 if (self.canFinalizeStruct(decl_idx)) {
-                    try self.finalizeStruct(decl_idx);
+                    try self.finalizeStructByName(decl_idx, lookup_names.items[si]);
                     finalized.items[si] = true;
                     remaining -= 1;
                 }
@@ -248,10 +516,56 @@ pub const SemanticContext = struct {
         }
 
         // any remaining structs have unresolvable field types (cycles or unknown types)
-        // finalizeStruct will report errors for those
-        for (struct_decls.items, 0..) |decl_idx, si| {
+        for (struct_nodes.items, 0..) |decl_idx, si| {
             if (!finalized.items[si]) {
-                try self.finalizeStruct(decl_idx);
+                self.current_namespace_prefix = self.namespaceFromQualified(lookup_names.items[si]);
+                try self.finalizeStructByName(decl_idx, lookup_names.items[si]);
+            }
+        }
+
+        self.current_namespace_prefix = "";
+    }
+
+    /// Extract namespace prefix from a qualified name (e.g. "geometry.Vec2" -> "geometry").
+    fn namespaceFromQualified(_: *SemanticContext, qualified: []const u8) []const u8 {
+        // find last dot
+        var i = qualified.len;
+        while (i > 0) {
+            i -= 1;
+            if (qualified[i] == '.') return qualified[0..i];
+        }
+        return "";
+    }
+
+    /// Recursively collect all struct_decl nodes from declarations, including inside namespaces.
+    fn collectAllStructDecls(
+        self: *SemanticContext,
+        decls: []const NodeIndex,
+        prefix: []const u8,
+        struct_nodes: *std.ArrayList(NodeIndex),
+        lookup_names: *std.ArrayList([]const u8),
+    ) !void {
+        const arena_alloc = self.types.arena.allocator();
+        for (decls) |decl_idx| {
+            const inner_idx = self.unwrapPubDecl(decl_idx);
+            const kind = self.ast.getKind(inner_idx);
+            if (kind == .struct_decl) {
+                const short_name = self.getMemberName(inner_idx) orelse continue;
+                const lookup_name = if (prefix.len > 0)
+                    try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ prefix, short_name })
+                else
+                    short_name;
+                try struct_nodes.append(self.allocator, inner_idx);
+                try lookup_names.append(self.allocator, lookup_name);
+            } else if (kind == .namespace_decl) {
+                const ns_decl = self.ast.getNamespaceDecl(inner_idx);
+                const ns_name = self.getMemberName(inner_idx) orelse continue;
+                const ns_prefix = if (prefix.len > 0)
+                    try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ prefix, ns_name })
+                else
+                    try arena_alloc.dupe(u8, ns_name);
+                const ns_members = self.ast.getExtra(ns_decl.declarations);
+                try self.collectAllStructDecls(ns_members, ns_prefix, struct_nodes, lookup_names);
             }
         }
     }
@@ -277,13 +591,10 @@ pub const SemanticContext = struct {
     }
 
     /// Finalize a struct: resolve field types, compute layout, update registry.
-    fn finalizeStruct(self: *SemanticContext, node_idx: NodeIndex) !void {
+    fn finalizeStructByName(self: *SemanticContext, node_idx: NodeIndex, lookup_name: []const u8) !void {
         const decl = self.ast.getStructDecl(node_idx);
-        const name_ident = self.ast.getIdentifier(decl.name);
-        const name_token = self.tokens.items[name_ident.token_idx];
-        const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
 
-        const sym_idx = self.symbols.lookup(name) orelse return;
+        const sym_idx = self.symbols.lookup(lookup_name) orelse return;
         const type_id = self.symbols.getTypeId(sym_idx);
 
         // parse field pairs
@@ -522,8 +833,19 @@ pub const SemanticContext = struct {
 
         // then check symbol table for struct types
         if (self.symbols.lookup(name)) |sym_idx| {
-            if (self.symbols.getKind(sym_idx) == .type_) {
+            if (self.symbols.getKind(sym_idx) == .@"type") {
                 return self.symbols.getTypeId(sym_idx);
+            }
+        }
+
+        // try with current namespace prefix
+        if (self.current_namespace_prefix.len > 0) {
+            var buf: [512]u8 = undefined;
+            const qualified = std.fmt.bufPrint(&buf, "{s}.{s}", .{ self.current_namespace_prefix, name }) catch return null;
+            if (self.symbols.lookup(qualified)) |sym_idx| {
+                if (self.symbols.getKind(sym_idx) == .@"type") {
+                    return self.symbols.getTypeId(sym_idx);
+                }
             }
         }
 
@@ -792,7 +1114,7 @@ pub const SemanticContext = struct {
             for (0..self.symbols.count()) |i| {
                 const idx: SymbolIndex = @intCast(i);
                 const kind = self.symbols.getKind(idx);
-                if (kind == .function or kind == .type_) continue;
+                if (kind == .function or kind == .@"type" or kind == .namespace) continue;
 
                 if (self.symbols.getTypeState(idx) == .resolved) {
                     const value_node = self.symbols.getValueNode(idx);
@@ -823,6 +1145,11 @@ pub const SemanticContext = struct {
                 _ = try self.checkVarDecl(node_idx);
             },
             .struct_decl => {}, // handled by two-pass struct collection
+            .namespace_decl => try self.checkNamespaceDecl(node_idx, ""),
+            .pub_decl => {
+                const inner = self.unwrapPubDecl(node_idx);
+                try self.checkDeclaration(inner);
+            },
             else => {}, // ignore
         }
     }
@@ -866,15 +1193,90 @@ pub const SemanticContext = struct {
         }
     }
 
-    fn checkFuncDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
-        const decl = self.ast.getFuncDecl(node_idx);
+    /// Check all member declarations inside a namespace.
+    fn checkNamespaceDecl(self: *SemanticContext, node_idx: NodeIndex, prefix: []const u8) !void {
+        const ns_decl = self.ast.getNamespaceDecl(node_idx);
+        const ns_name_ident = self.ast.getIdentifier(ns_decl.name);
+        const ns_name_token = self.tokens.items[ns_name_ident.token_idx];
+        const ns_name = self.src.getSlice(ns_name_token.start, ns_name_token.start + ns_name_token.len);
 
-        // get function's type from symtable
-        const name_ident = self.ast.getIdentifier(decl.name);
+        const arena_alloc = self.types.arena.allocator();
+        const qualified_prefix = if (prefix.len > 0)
+            try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ prefix, ns_name })
+        else
+            try arena_alloc.dupe(u8, ns_name);
+
+        const saved_prefix = self.current_namespace_prefix;
+        self.current_namespace_prefix = qualified_prefix;
+        defer self.current_namespace_prefix = saved_prefix;
+
+        const members = self.ast.getExtra(ns_decl.declarations);
+        for (members) |member_idx| {
+            const inner_idx = self.unwrapPubDecl(member_idx);
+            const kind = self.ast.getKind(inner_idx);
+            switch (kind) {
+                .func_decl => {
+                    const short_name = self.getMemberName(inner_idx) orelse continue;
+                    const qualified_name = try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ qualified_prefix, short_name });
+                    const sym_idx = self.symbols.lookup(qualified_name) orelse continue;
+                    try self.checkFuncDeclBody(inner_idx, sym_idx);
+                },
+                .const_decl => {
+                    const short_name = self.getMemberName(inner_idx) orelse continue;
+                    const qualified_name = try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ qualified_prefix, short_name });
+                    try self.checkConstDeclWithName(inner_idx, qualified_name);
+                },
+                .var_decl => {
+                    _ = try self.checkVarDecl(inner_idx);
+                },
+                .namespace_decl => try self.checkNamespaceDecl(inner_idx, qualified_prefix),
+                .struct_decl => {},
+                else => {},
+            }
+        }
+    }
+
+    fn checkConstDeclWithName(self: *SemanticContext, node_idx: NodeIndex, name: []const u8) !void {
+        const decl = self.ast.getConstDecl(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+
+        const sym_idx = self.symbols.lookup(name) orelse return;
+        const declared_type = self.symbols.getTypeId(sym_idx);
+
+        const expr_type = try self.checkExpression(decl.value, declared_type);
+
+        if (!declared_type.isUnresolved()) {
+            if (expr_type) |et| {
+                if (!self.typesCompatible(declared_type, et)) {
+                    try self.errors.add(.{
+                        .kind = .type_mismatch,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
+            } else {
+                if (!self.isExprCompatibleWithType(decl.value, declared_type)) {
+                    try self.errors.add(.{
+                        .kind = .type_mismatch,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
+            }
+        }
+    }
+
+    fn checkFuncDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const name_ident = self.ast.getIdentifier(self.ast.getFuncDecl(node_idx).name);
         const name_token = self.tokens.items[name_ident.token_idx];
         const name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
 
         const sym_idx = self.symbols.lookup(name) orelse return;
+        try self.checkFuncDeclBody(node_idx, sym_idx);
+    }
+
+    fn checkFuncDeclBody(self: *SemanticContext, node_idx: NodeIndex, sym_idx: SymbolIndex) !void {
+        const decl = self.ast.getFuncDecl(node_idx);
         const func_type_id = self.symbols.getTypeId(sym_idx);
 
         // get return type from function type and store for codegen
@@ -1605,26 +2007,53 @@ pub const SemanticContext = struct {
     fn checkCallExpression(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
         const call = self.ast.getCallExpr(node_idx);
         const loc = self.ast.getLocation(node_idx);
+        const func_node_kind = self.ast.getKind(call.func);
 
-        // get function name
-        const func_ident = self.ast.getIdentifier(call.func);
-        const func_token = self.tokens.items[func_ident.token_idx];
-        const func_name = self.src.getSlice(func_token.start, func_token.start + func_token.len);
+        var func_type_id: TypeId = .unresolved;
 
-        // look up function symbol
-        const sym_idx = self.symbols.lookup(func_name) orelse {
-            try self.errors.add(.{
-                .kind = .undefined_symbol,
-                .start = loc.start,
-                .end = loc.end,
-            });
-            return null;
-        };
+        if (func_node_kind == .identifier) {
+            // direct call: func_name(args...)
+            const func_ident = self.ast.getIdentifier(call.func);
+            const func_token = self.tokens.items[func_ident.token_idx];
+            const func_name = self.src.getSlice(func_token.start, func_token.start + func_token.len);
 
-        self.symbols.markReferenced(sym_idx);
+            const sym_idx = self.symbols.lookup(func_name) orelse {
+                try self.errors.add(.{
+                    .kind = .undefined_symbol,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+                return null;
+            };
 
-        // verify it's a function
-        if (self.symbols.getKind(sym_idx) != .function) {
+            self.symbols.markReferenced(sym_idx);
+
+            if (self.symbols.getKind(sym_idx) != .function) {
+                try self.errors.add(.{
+                    .kind = .not_callable,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+                return null;
+            }
+
+            func_type_id = self.symbols.getTypeId(sym_idx);
+        } else if (func_node_kind == .field_access) {
+            // namespace call: ns.func(args...)
+            // checkFieldAccess handles namespace member resolution and pub checking
+            const ft = try self.checkFieldAccess(call.func) orelse return null;
+
+            if (!ft.isFunction()) {
+                try self.errors.add(.{
+                    .kind = .not_callable,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+                return null;
+            }
+
+            func_type_id = ft;
+        } else {
             try self.errors.add(.{
                 .kind = .not_callable,
                 .start = loc.start,
@@ -1634,7 +2063,6 @@ pub const SemanticContext = struct {
         }
 
         // get function type from registry
-        const func_type_id = self.symbols.getTypeId(sym_idx);
         const param_types = self.types.getParamTypes(func_type_id) orelse &[_]TypeId{};
         const return_type = self.types.getReturnType(func_type_id) orelse TypeId.void;
 
@@ -1648,7 +2076,6 @@ pub const SemanticContext = struct {
                 .start = loc.start,
                 .end = loc.end,
             });
-            // still check types for arguments we have
         }
 
         // check each arg type
@@ -1657,7 +2084,6 @@ pub const SemanticContext = struct {
             const arg_idx = args[i];
             const expected_type = param_types[i];
 
-            // check argument type (with expected type for context)
             const arg_type = try self.checkExpression(arg_idx, expected_type);
             if (arg_type) |at| {
                 if (!self.typesCompatible(expected_type, at)) {
@@ -1704,8 +2130,40 @@ pub const SemanticContext = struct {
                     .end = field_token.start + field_token.len,
                 });
                 return null;
+            } else if (ot.isNamespace()) {
+                const ns_type = self.types.getNamespaceType(ot) orelse return null;
+
+                // get field name
+                const field_ident = self.ast.getIdentifier(access.field);
+                const field_token = self.tokens.items[field_ident.token_idx];
+                const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+                // look up member in namespace
+                for (ns_type.members) |member| {
+                    if (mem.eql(u8, member.name, field_name)) {
+                        // check pub visibility
+                        if (!member.is_pub) {
+                            try self.errors.add(.{
+                                .kind = .access_private_member,
+                                .start = field_token.start,
+                                .end = field_token.start + field_token.len,
+                            });
+                        }
+                        // mark member symbol as referenced
+                        self.symbols.markReferenced(member.symbol_idx);
+                        return self.symbols.getTypeId(member.symbol_idx);
+                    }
+                }
+
+                // member not found
+                try self.errors.add(.{
+                    .kind = .no_such_field,
+                    .start = field_token.start,
+                    .end = field_token.start + field_token.len,
+                });
+                return null;
             } else if (!ot.isUnresolved()) {
-                // dot access on non-struct
+                // dot access on non-struct/non-namespace
                 try self.errors.add(.{
                     .kind = .field_access_on_non_struct,
                     .start = loc.start,
@@ -1722,32 +2180,41 @@ pub const SemanticContext = struct {
         const lit = self.ast.getStructLiteral(node_idx);
         const loc = self.ast.getLocation(node_idx);
 
-        // resolve type name to struct type
-        const type_ident = self.ast.getIdentifier(lit.type_name);
-        const type_token = self.tokens.items[type_ident.token_idx];
-        const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
+        // resolve type name to struct type — handle both identifier and field_access
+        const type_id: TypeId = blk: {
+            if (self.ast.getKind(lit.type_name) == .field_access) {
+                // qualified name like geometry.Vec2 — checkFieldAccess handles
+                // namespace lookup, pub checking, and marking as referenced
+                const resolved = try self.checkFieldAccess(lit.type_name) orelse return null;
+                break :blk resolved;
+            } else {
+                const type_ident = self.ast.getIdentifier(lit.type_name);
+                const type_token = self.tokens.items[type_ident.token_idx];
+                const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
 
-        const sym_idx = self.symbols.lookup(type_name) orelse {
-            try self.errors.add(.{
-                .kind = .undefined_symbol,
-                .start = type_token.start,
-                .end = type_token.start + type_token.len,
-            });
-            return null;
+                const sym_idx = self.symbols.lookup(type_name) orelse {
+                    try self.errors.add(.{
+                        .kind = .undefined_symbol,
+                        .start = type_token.start,
+                        .end = type_token.start + type_token.len,
+                    });
+                    return null;
+                };
+
+                self.symbols.markReferenced(sym_idx);
+
+                if (self.symbols.getKind(sym_idx) != .@"type") {
+                    try self.errors.add(.{
+                        .kind = .unknown_type,
+                        .start = type_token.start,
+                        .end = type_token.start + type_token.len,
+                    });
+                    return null;
+                }
+
+                break :blk self.symbols.getTypeId(sym_idx);
+            }
         };
-
-        self.symbols.markReferenced(sym_idx);
-
-        if (self.symbols.getKind(sym_idx) != .type_) {
-            try self.errors.add(.{
-                .kind = .unknown_type,
-                .start = type_token.start,
-                .end = type_token.start + type_token.len,
-            });
-            return null;
-        }
-
-        const type_id = self.symbols.getTypeId(sym_idx);
         const struct_type = self.types.getStructType(type_id) orelse return null;
 
         // parse field pairs from extra_data

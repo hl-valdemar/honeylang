@@ -32,6 +32,8 @@ const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     .{ "and", .@"and" },
     .{ "or", .@"or" },
     .{ "xor", .xor },
+    .{ "namespace", .namespace },
+    .{ "pub", .@"pub" },
     .{ "true", .bool },
     .{ "false", .bool },
 });

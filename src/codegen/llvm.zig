@@ -681,6 +681,7 @@ fn typeIdToLLVMType(type_id: TypeId) []const u8 {
         .pointer => "ptr",
         .unresolved => "i32",
         .function => "ptr",
+        .namespace => "void", // namespaces have no runtime representation
     };
 }
 
