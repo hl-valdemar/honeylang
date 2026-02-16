@@ -22,8 +22,8 @@ fn compileTo(phase: Phase, src_input: []const u8) !CompileResult {
     const parse = try honey.parser.parse(allocator, lex.tokens, &src);
     if (phase == .parser) return .{ .arena = arena, .lex = lex, .parse = parse, .sem = null, .codegen = null };
 
-    // semantic
-    var sem = try honey.semantic.analyze(allocator, &parse.ast, &lex.tokens, &src);
+    // semantic (no file-based imports in integration tests)
+    var sem = try honey.semantic.analyze(allocator, &parse.ast, &lex.tokens, &src, null);
     if (phase == .semantic) return .{ .arena = arena, .lex = lex, .parse = parse, .sem = sem, .codegen = null };
 
     // comptime
@@ -31,7 +31,7 @@ fn compileTo(phase: Phase, src_input: []const u8) !CompileResult {
 
     // codegen
     const target: honey.codegen.Target = .{ .arch = .aarch64, .os = .darwin };
-    const codegen_result = try honey.codegen.generate(allocator, target, &comptime_result, &sem.symbols, &sem.types, &sem.node_types, &sem.skip_nodes, &parse.ast, &lex.tokens, &src);
+    const codegen_result = try honey.codegen.generate(allocator, target, &comptime_result, &sem.symbols, &sem.types, &sem.node_types, &sem.import_node_types, &sem.skip_nodes, &parse.ast, &lex.tokens, &src, null);
     return .{ .arena = arena, .lex = lex, .parse = parse, .sem = sem, .codegen = codegen_result };
 }
 

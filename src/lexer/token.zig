@@ -27,6 +27,10 @@ pub const Kind = enum {
     mut,
     namespace,
     @"pub",
+    import,
+
+    // string literals
+    string_literal,
 
     // assignment
     colon,

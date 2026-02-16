@@ -42,7 +42,7 @@ pub fn print(symbols: *const SymbolTable, src: *const SourceCode) void {
 }
 
 fn printSymbol(symbols: *const SymbolTable, src: *const SourceCode, idx: SymbolIndex) void {
-    const name = symbols.getName(idx, src);
+    const name = symbols.getDisplayName(idx, src);
     const kind = symbols.getKind(idx);
     const type_state = symbols.getTypeState(idx);
     const is_mutable = symbols.isMutable(idx);
@@ -98,7 +98,7 @@ pub fn printVerbose(symbols: *const SymbolTable, src: *const SourceCode) void {
 }
 
 fn printSymbolVerbose(symbols: *const SymbolTable, src: *const SourceCode, idx: SymbolIndex) void {
-    const name = symbols.getName(idx, src);
+    const name = symbols.getDisplayName(idx, src);
     const kind = symbols.getKind(idx);
     const type_state = symbols.getTypeState(idx);
     const value_node = symbols.getValueNode(idx);
@@ -117,6 +117,6 @@ fn printSymbolVerbose(symbols: *const SymbolTable, src: *const SourceCode, idx: 
     std.debug.print("  value_node: {d}\n", .{value_node});
     std.debug.print("  location:   {d}..{d}\n", .{
         name_start,
-        name_start + symbols.name_lens.items[idx],
+        name_start + symbols.name_lengths.items[idx],
     });
 }

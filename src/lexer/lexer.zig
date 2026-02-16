@@ -34,6 +34,7 @@ const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     .{ "xor", .xor },
     .{ "namespace", .namespace },
     .{ "pub", .@"pub" },
+    .{ "import", .import },
     .{ "true", .bool },
     .{ "false", .bool },
 });
@@ -207,6 +208,9 @@ const Lexer = struct {
                         try tokens.append(self.allocator, self.makeToken(.colon, start, self.pos));
                     }
                 },
+                '"' => {
+                    try tokens.append(self.allocator, try self.scanString());
+                },
                 else => {
                     // record error and skip the character
                     try self.errors.addWithChar(.unexpected_character, current, start, start + 1);
@@ -274,6 +278,27 @@ const Lexer = struct {
         }
 
         return self.makeToken(.number, start, self.pos);
+    }
+
+    fn scanString(self: *Lexer) !Token {
+        const quote_start = self.pos;
+        self.advance(); // skip opening "
+
+        const content_start = self.pos;
+
+        while (self.peek()) |c| {
+            if (c == '"') {
+                const content_end = self.pos;
+                self.advance(); // skip closing "
+                return self.makeToken(.string_literal, content_start, content_end);
+            }
+            if (c == '\n') break; // unterminated
+            self.advance();
+        }
+
+        // unterminated string
+        try self.errors.addSimple(.unterminated_string, quote_start, self.pos);
+        return self.makeToken(.string_literal, content_start, self.pos);
     }
 
     fn peek(self: *const Lexer) ?u8 {

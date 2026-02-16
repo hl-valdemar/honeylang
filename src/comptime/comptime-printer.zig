@@ -47,7 +47,7 @@ pub fn print(
     if (result.errors.hasErrors()) {
         std.debug.print("\nErrors:\n", .{});
         for (result.errors.errors.items) |err| {
-            const name = symbols.getName(err.symbol_idx, src);
+            const name = symbols.getDisplayName(err.symbol_idx, src);
             std.debug.print("  {s}: {s}\n", .{
                 name,
                 @tagName(err.kind),
@@ -62,7 +62,7 @@ fn printSymbol(
     src: *const SourceCode,
     idx: SymbolIndex,
 ) void {
-    const name = symbols.getName(idx, src);
+    const name = symbols.getDisplayName(idx, src);
     const kind = symbols.getKind(idx);
     const eval_state = result.eval_states.items[idx];
 
@@ -116,7 +116,7 @@ pub fn printVerbose(
     if (result.errors.hasErrors()) {
         std.debug.print("Errors ({d}):\n", .{result.errors.errors.items.len});
         for (result.errors.errors.items) |err| {
-            const name = symbols.getName(err.symbol_idx, src);
+            const name = symbols.getDisplayName(err.symbol_idx, src);
             std.debug.print("  symbol[{d}] {s}: {s}\n", .{
                 err.symbol_idx,
                 name,
@@ -132,7 +132,7 @@ fn printSymbolVerbose(
     src: *const SourceCode,
     idx: SymbolIndex,
 ) void {
-    const name = symbols.getName(idx, src);
+    const name = symbols.getDisplayName(idx, src);
     const kind = symbols.getKind(idx);
     const eval_state = result.eval_states.items[idx];
     const type_id = symbols.getResolvedType(idx);

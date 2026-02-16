@@ -134,6 +134,25 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
         honey.parser.error_printer.print(&parse_result.errors, &src, file_path);
     }
 
+    // 3.5 resolve imports
+    var import_arena = std.heap.ArenaAllocator.init(gpa);
+    defer import_arena.deinit();
+    const resolved_imports = try honey.imports.resolveImports(
+        import_arena.allocator(),
+        &parse_result.ast,
+        &lexer_result.tokens,
+        &src,
+        file_path,
+    );
+
+    if (resolved_imports.count() > 0) {
+        std.debug.print("\n{s}::[[ Import Resolution ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
+        std.debug.print("Resolved {d} import(s)\n", .{resolved_imports.count()});
+        for (resolved_imports.imports.items) |imp| {
+            std.debug.print("  - {s} (namespace: {s})\n", .{ imp.file_path, imp.namespace_name });
+        }
+    }
+
     // 4. analyze parse tree
     var semantic_arena = std.heap.ArenaAllocator.init(gpa);
     defer semantic_arena.deinit();
@@ -142,6 +161,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
         &parse_result.ast,
         &lexer_result.tokens,
         &src,
+        &resolved_imports,
     );
 
     // check for missing entry point
@@ -189,10 +209,12 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
         &sem_result.symbols,
         &sem_result.types,
         &sem_result.node_types,
+        &sem_result.import_node_types,
         &sem_result.skip_nodes,
         &parse_result.ast,
         &lexer_result.tokens,
         &src,
+        &resolved_imports,
     );
 
     // print generated MIR
@@ -250,6 +272,17 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
         honey.parser.error_printer.print(&parse_result.errors, &src, file_path);
     }
 
+    // 3.5 resolve imports
+    var import_arena = std.heap.ArenaAllocator.init(gpa);
+    defer import_arena.deinit();
+    const resolved_imports = try honey.imports.resolveImports(
+        import_arena.allocator(),
+        &parse_result.ast,
+        &lexer_result.tokens,
+        &src,
+        file_path,
+    );
+
     // 4. analyze parse tree
     var semantic_arena = std.heap.ArenaAllocator.init(gpa);
     defer semantic_arena.deinit();
@@ -258,6 +291,7 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
         &parse_result.ast,
         &lexer_result.tokens,
         &src,
+        &resolved_imports,
     );
 
     // check for missing entry point
@@ -292,10 +326,12 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
         &sem_result.symbols,
         &sem_result.types,
         &sem_result.node_types,
+        &sem_result.import_node_types,
         &sem_result.skip_nodes,
         &parse_result.ast,
         &lexer_result.tokens,
         &src,
+        &resolved_imports,
     );
 
     // 7. link into executable

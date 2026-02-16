@@ -57,6 +57,10 @@ pub const SemanticErrorKind = enum {
     access_private_member,
     unused_namespace,
 
+    // import errors
+    import_file_not_found,
+    circular_import,
+
     // pointer errors
     cannot_take_address,
     deref_non_pointer,
@@ -214,6 +218,16 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .code = "S027",
         .message = "duplicate field in struct literal",
         .help = "field already specified in this literal",
+    },
+    .import_file_not_found = .{
+        .code = "S034",
+        .message = "import file not found",
+        .help = "check that the import path is correct",
+    },
+    .circular_import = .{
+        .code = "S035",
+        .message = "circular import detected",
+        .help = "files cannot import each other",
     },
     .cannot_take_address = .{
         .code = "S028",

@@ -49,6 +49,9 @@ pub const SymbolTable = struct {
     mutabilities: std.ArrayList(bool),
     referenced: std.ArrayList(bool),
 
+    // imported symbol flag (value_node refers to a different AST)
+    is_imported: std.ArrayList(bool),
+
     // name location in source code
     name_starts: std.ArrayList(SourceIndex),
     name_lengths: std.ArrayList(u16),
@@ -66,6 +69,7 @@ pub const SymbolTable = struct {
             .value_nodes = try std.ArrayList(NodeIndex).initCapacity(allocator, capacity),
             .mutabilities = try std.ArrayList(bool).initCapacity(allocator, capacity),
             .referenced = try std.ArrayList(bool).initCapacity(allocator, capacity),
+            .is_imported = try std.ArrayList(bool).initCapacity(allocator, capacity),
             .name_starts = try std.ArrayList(SourceIndex).initCapacity(allocator, capacity),
             .name_lengths = try std.ArrayList(u16).initCapacity(allocator, capacity),
             .name_map = std.StringHashMap(SymbolIndex).init(allocator),
@@ -79,6 +83,7 @@ pub const SymbolTable = struct {
         self.value_nodes.deinit(self.allocator);
         self.mutabilities.deinit(self.allocator);
         self.referenced.deinit(self.allocator);
+        self.is_imported.deinit(self.allocator);
         self.name_starts.deinit(self.allocator);
         self.name_lengths.deinit(self.allocator);
         self.name_map.deinit();
@@ -106,6 +111,7 @@ pub const SymbolTable = struct {
         try self.value_nodes.append(self.allocator, value_node);
         try self.mutabilities.append(self.allocator, is_mutable);
         try self.referenced.append(self.allocator, false);
+        try self.is_imported.append(self.allocator, false);
         try self.name_starts.append(self.allocator, name_start);
         try self.name_lengths.append(self.allocator, @intCast(name.len));
         try self.name_map.put(name, idx);
@@ -158,5 +164,33 @@ pub const SymbolTable = struct {
 
     pub fn isReferenced(self: *const SymbolTable, idx: SymbolIndex) bool {
         return self.referenced.items[idx];
+    }
+
+    /// Get a symbol's display name, safe for imported symbols.
+    /// For imported symbols, uses the name_map (reverse lookup) since name_starts
+    /// reference a different source buffer.
+    pub fn getDisplayName(self: *const SymbolTable, idx: SymbolIndex, src: *const SourceCode) []const u8 {
+        if (self.is_imported.items[idx]) {
+            return self.getNameFromMap(idx) orelse "<imported>";
+        }
+        return self.getName(idx, src);
+    }
+
+    pub fn markImported(self: *SymbolTable, idx: SymbolIndex) void {
+        self.is_imported.items[idx] = true;
+    }
+
+    pub fn getIsImported(self: *const SymbolTable, idx: SymbolIndex) bool {
+        return self.is_imported.items[idx];
+    }
+
+    /// Look up a symbol's name via the name_map (reverse lookup).
+    /// Used for imported symbols whose name_starts reference a different source.
+    pub fn getNameFromMap(self: *const SymbolTable, idx: SymbolIndex) ?[]const u8 {
+        var it = self.name_map.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.* == idx) return entry.key_ptr.*;
+        }
+        return null;
     }
 };

@@ -16,6 +16,7 @@ pub const NodeKind = enum {
     struct_decl,
     namespace_decl,
     pub_decl,
+    import_decl,
 
     // expressions
     binary_op,
@@ -104,6 +105,10 @@ pub const NamespaceDecl = struct {
 
 pub const PubDecl = struct {
     inner: NodeIndex, // the wrapped declaration
+};
+
+pub const ImportDecl = struct {
+    path_token: u32, // token index of the string_literal token
 };
 
 pub const BinaryOp = struct {
@@ -268,6 +273,7 @@ pub const Ast = struct {
     struct_decls: std.ArrayList(StructDecl),
     namespace_decls: std.ArrayList(NamespaceDecl),
     pub_decls: std.ArrayList(PubDecl),
+    import_decls: std.ArrayList(ImportDecl),
     binary_ops: std.ArrayList(BinaryOp),
     unary_ops: std.ArrayList(UnaryOp),
     call_exprs: std.ArrayList(CallExpr),
@@ -307,6 +313,7 @@ pub const Ast = struct {
             .struct_decls = try std.ArrayList(StructDecl).initCapacity(allocator, capacity),
             .namespace_decls = try std.ArrayList(NamespaceDecl).initCapacity(allocator, capacity),
             .pub_decls = try std.ArrayList(PubDecl).initCapacity(allocator, capacity),
+            .import_decls = try std.ArrayList(ImportDecl).initCapacity(allocator, capacity),
             .binary_ops = try std.ArrayList(BinaryOp).initCapacity(allocator, capacity),
             .unary_ops = try std.ArrayList(UnaryOp).initCapacity(allocator, capacity),
             .call_exprs = try std.ArrayList(CallExpr).initCapacity(allocator, capacity),
@@ -341,6 +348,7 @@ pub const Ast = struct {
         self.struct_decls.deinit(self.allocator);
         self.namespace_decls.deinit(self.allocator);
         self.pub_decls.deinit(self.allocator);
+        self.import_decls.deinit(self.allocator);
         self.binary_ops.deinit(self.allocator);
         self.unary_ops.deinit(self.allocator);
         self.call_exprs.deinit(self.allocator);
@@ -517,6 +525,24 @@ pub const Ast = struct {
         try self.ends.append(self.allocator, end);
         try self.data_indices.append(self.allocator, data_idx);
         try self.pub_decls.append(self.allocator, .{ .inner = inner });
+
+        return node_idx;
+    }
+
+    pub fn addImportDecl(
+        self: *Ast,
+        path_token: u32,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.import_decls.items.len);
+
+        try self.kinds.append(self.allocator, .import_decl);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.import_decls.append(self.allocator, .{ .path_token = path_token });
 
         return node_idx;
     }
@@ -944,6 +970,12 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .pub_decl);
         const data_idx = self.data_indices.items[idx];
         return self.pub_decls.items[data_idx];
+    }
+
+    pub fn getImportDecl(self: *const Ast, idx: NodeIndex) ImportDecl {
+        std.debug.assert(self.kinds.items[idx] == .import_decl);
+        const data_idx = self.data_indices.items[idx];
+        return self.import_decls.items[data_idx];
     }
 
     pub fn getBinaryOp(self: *const Ast, idx: NodeIndex) BinaryOp {

@@ -33,6 +33,7 @@ pub const ParseErrorKind = enum {
     expected_left_curly,
     expected_right_curly,
     expected_comma_or_close,
+    expected_string_literal,
 };
 
 pub const ParseError = struct {

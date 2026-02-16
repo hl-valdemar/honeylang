@@ -111,6 +111,11 @@ const error_info = std.EnumArray(ParseErrorKind, ErrorInfo).init(.{
         .message = "expected ',' or closing delimiter",
         .help = "expected comma to continue or delimiter to close",
     },
+    .expected_string_literal = .{
+        .code = "P020",
+        .message = "expected string literal",
+        .help = "a quoted string was expected (e.g. \"file.hon\")",
+    },
 });
 
 fn getInfo(kind: ParseErrorKind) ErrorInfo {

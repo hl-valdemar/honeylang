@@ -17,6 +17,7 @@ const PrimitiveType = @import("types.zig").PrimitiveType;
 const TypeRegistry = @import("types.zig").TypeRegistry;
 const SemanticError = @import("error.zig").SemanticError;
 const ErrorList = @import("error.zig").ErrorList;
+const ResolvedImports = @import("../imports/imports.zig").ResolvedImports;
 
 pub const error_printer = @import("error-printer.zig");
 
@@ -25,8 +26,9 @@ pub fn analyze(
     ast: *const Ast,
     tokens: *const TokenList,
     src: *const SourceCode,
+    resolved_imports: ?*const ResolvedImports,
 ) !SemanticResult {
-    var ctx = try SemanticContext.init(allocator, ast, tokens, src);
+    var ctx = try SemanticContext.init(allocator, ast, tokens, src, resolved_imports);
     return ctx.analyze();
 }
 
@@ -38,6 +40,7 @@ pub const SemanticResult = struct {
     symbols: SymbolTable,
     types: TypeRegistry,
     node_types: std.AutoHashMapUnmanaged(NodeIndex, TypeId),
+    import_node_types: std.AutoHashMapUnmanaged(usize, std.AutoHashMapUnmanaged(NodeIndex, TypeId)),
     skip_nodes: std.AutoHashMapUnmanaged(NodeIndex, void),
     errors: ErrorList,
 };
@@ -52,9 +55,12 @@ pub const SemanticContext = struct {
     symbols: SymbolTable,
     types: TypeRegistry,
     node_types: std.AutoHashMapUnmanaged(NodeIndex, TypeId),
+    import_node_types: std.AutoHashMapUnmanaged(usize, std.AutoHashMapUnmanaged(NodeIndex, TypeId)),
     skip_nodes: std.AutoHashMapUnmanaged(NodeIndex, void),
     scopes: std.ArrayList(Scope),
     errors: ErrorList,
+
+    resolved_imports: ?*const ResolvedImports,
 
     current_ret_type: TypeId = TypeId.void,
     current_namespace_prefix: []const u8 = "",
@@ -64,6 +70,7 @@ pub const SemanticContext = struct {
         ast: *const Ast,
         tokens: *const TokenList,
         src: *const SourceCode,
+        resolved_imports: ?*const ResolvedImports,
     ) !SemanticContext {
         return .{
             .allocator = allocator,
@@ -73,9 +80,11 @@ pub const SemanticContext = struct {
             .symbols = try SymbolTable.init(allocator),
             .types = try TypeRegistry.init(allocator),
             .node_types = .{},
+            .import_node_types = .{},
             .skip_nodes = .{},
             .scopes = try std.ArrayList(Scope).initCapacity(allocator, 4),
             .errors = try ErrorList.init(allocator),
+            .resolved_imports = resolved_imports,
         };
     }
 
@@ -109,6 +118,7 @@ pub const SemanticContext = struct {
             .symbols = self.symbols,
             .types = self.types,
             .node_types = self.node_types,
+            .import_node_types = self.import_node_types,
             .skip_nodes = self.skip_nodes,
             .errors = self.errors,
         };
@@ -118,6 +128,10 @@ pub const SemanticContext = struct {
         const count = self.symbols.count();
         for (0..count) |i| {
             const idx: SymbolIndex = @intCast(i);
+
+            // skip imported symbols (unused checking handled in their own file)
+            if (self.symbols.getIsImported(idx)) continue;
+
             const kind = self.symbols.getKind(idx);
 
             // main is always considered referenced (entry point)
@@ -165,16 +179,18 @@ pub const SemanticContext = struct {
         const program = self.ast.getProgram(self.ast.root);
         const decls = self.ast.getExtra(program.declarations);
 
-        // Phase 1: Forward-declare all struct types (including those inside namespaces)
+        // Phase 1: Forward-declare all struct types (including those inside namespaces and imports)
         for (decls) |decl_idx| {
             if (self.ast.getKind(decl_idx) == .struct_decl) {
                 try self.forwardDeclareStruct(decl_idx);
             } else if (self.ast.getKind(decl_idx) == .namespace_decl) {
                 try self.forwardDeclareStructsInNamespace(decl_idx, "");
+            } else if (self.ast.getKind(decl_idx) == .import_decl) {
+                try self.forwardDeclareImportStructs(decl_idx);
             }
         }
 
-        // Phase 2: Finalize struct types in dependency order
+        // Phase 2: Finalize struct types in dependency order (including those from imports)
         try self.finalizeStructTypes(decls);
 
         // Phase 3: Collect all non-struct declarations
@@ -182,6 +198,8 @@ pub const SemanticContext = struct {
             const kind = self.ast.getKind(decl_idx);
             if (kind == .namespace_decl) {
                 try self.collectNamespaceDecl(decl_idx, "");
+            } else if (kind == .import_decl) {
+                try self.processImportDecl(decl_idx);
             } else if (kind != .struct_decl) {
                 try self.collectDeclaration(decl_idx);
             }
@@ -270,6 +288,154 @@ pub const SemanticContext = struct {
                 .kind = .duplicate_symbol,
                 .start = name_token.start,
                 .end = name_token.start + name_token.len,
+            });
+        }
+    }
+
+    /// Forward-declare structs from an imported file.
+    fn forwardDeclareImportStructs(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const ri = self.resolved_imports orelse return;
+        const import_idx = ri.map.get(node_idx) orelse return;
+        const resolved = &ri.imports.items[import_idx];
+
+        const saved_ast = self.ast;
+        const saved_tokens = self.tokens;
+        const saved_src = self.src;
+        self.ast = &resolved.ast;
+        self.tokens = &resolved.tokens;
+        self.src = &resolved.src;
+        defer {
+            self.ast = saved_ast;
+            self.tokens = saved_tokens;
+            self.src = saved_src;
+        }
+
+        const ns_name = resolved.namespace_name;
+
+        // Walk imported file's declarations
+        const sym_count_before = self.symbols.count();
+        const program = self.ast.getProgram(self.ast.root);
+        const decls = self.ast.getExtra(program.declarations);
+        for (decls) |decl_idx| {
+            const inner_idx = self.unwrapPubDecl(decl_idx);
+            const inner_kind = self.ast.getKind(inner_idx);
+            if (inner_kind == .struct_decl) {
+                try self.forwardDeclareStructWithPrefix(inner_idx, ns_name);
+            } else if (inner_kind == .namespace_decl) {
+                try self.forwardDeclareStructsInNamespace(inner_idx, ns_name);
+            }
+        }
+
+        // Mark all newly registered symbols as imported (their value_nodes reference the imported AST)
+        for (sym_count_before..self.symbols.count()) |si| {
+            self.symbols.markImported(@intCast(si));
+        }
+    }
+
+    /// Process an import declaration: collect all declarations as namespace members.
+    fn processImportDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const ri = self.resolved_imports orelse return;
+        const import_idx = ri.map.get(node_idx) orelse return;
+        const resolved = &ri.imports.items[import_idx];
+
+        const saved_ast = self.ast;
+        const saved_tokens = self.tokens;
+        const saved_src = self.src;
+        self.ast = &resolved.ast;
+        self.tokens = &resolved.tokens;
+        self.src = &resolved.src;
+        defer {
+            self.ast = saved_ast;
+            self.tokens = saved_tokens;
+            self.src = saved_src;
+        }
+
+        const ns_name = resolved.namespace_name;
+        const arena_alloc = self.types.arena.allocator();
+
+        const saved_prefix = self.current_namespace_prefix;
+        self.current_namespace_prefix = ns_name;
+        defer self.current_namespace_prefix = saved_prefix;
+
+        const program = self.ast.getProgram(self.ast.root);
+        const decls = self.ast.getExtra(program.declarations);
+
+        var ns_members = try std.ArrayList(@import("types.zig").NamespaceMember).initCapacity(self.allocator, decls.len);
+        defer ns_members.deinit(self.allocator);
+
+        const sym_count_before = self.symbols.count();
+
+        for (decls) |decl_idx| {
+            const is_pub = self.ast.getKind(decl_idx) == .pub_decl;
+            const inner_idx = self.unwrapPubDecl(decl_idx);
+            const inner_kind = self.ast.getKind(inner_idx);
+
+            // Skip import_decl nodes in imported files (no recursive imports yet)
+            if (inner_kind == .import_decl) continue;
+
+            const member_short_name = self.getMemberName(inner_idx) orelse continue;
+            const qualified_name = try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ ns_name, member_short_name });
+
+            if (inner_kind == .namespace_decl) {
+                try self.collectNamespaceDecl(inner_idx, ns_name);
+                if (self.symbols.lookup(qualified_name)) |sym_idx| {
+                    try ns_members.append(self.allocator, .{
+                        .name = member_short_name,
+                        .symbol_idx = sym_idx,
+                        .is_pub = is_pub,
+                    });
+                }
+            } else if (inner_kind == .struct_decl) {
+                if (self.symbols.lookup(qualified_name)) |sym_idx| {
+                    try ns_members.append(self.allocator, .{
+                        .name = member_short_name,
+                        .symbol_idx = sym_idx,
+                        .is_pub = is_pub,
+                    });
+                }
+            } else {
+                const sym_idx = try self.collectMemberDecl(inner_idx, qualified_name);
+                if (sym_idx) |si| {
+                    try ns_members.append(self.allocator, .{
+                        .name = member_short_name,
+                        .symbol_idx = si,
+                        .is_pub = is_pub,
+                    });
+                }
+            }
+        }
+
+        // Mark all member symbols as imported (their value_nodes reference the imported AST)
+        for (sym_count_before..self.symbols.count()) |si| {
+            self.symbols.markImported(@intCast(si));
+        }
+
+        // Register namespace type and symbol using the main file's AST location
+        const ns_type_id = try self.types.addNamespaceType(ns_name, ns_members.items);
+
+        // Use the import_decl node's location from the main file for the symbol
+        const main_loc = saved_ast.getLocation(node_idx);
+
+        const result = try self.symbols.register(
+            ns_name,
+            main_loc.start,
+            .namespace,
+            .resolved,
+            ns_type_id,
+            node_idx,
+            false,
+        );
+
+        // Mark namespace symbol as imported too (name is derived from filename, not in main source)
+        if (result) |ns_sym| {
+            self.symbols.markImported(ns_sym);
+        }
+
+        if (result == null) {
+            try self.errors.add(.{
+                .kind = .duplicate_symbol,
+                .start = main_loc.start,
+                .end = main_loc.end,
             });
         }
     }
@@ -566,6 +732,31 @@ pub const SemanticContext = struct {
                     try arena_alloc.dupe(u8, ns_name);
                 const ns_members = self.ast.getExtra(ns_decl.declarations);
                 try self.collectAllStructDecls(ns_members, ns_prefix, struct_nodes, lookup_names);
+            } else if (kind == .import_decl) {
+                // Context-switch into the imported file to collect its structs
+                const ri = self.resolved_imports orelse continue;
+                const import_idx = ri.map.get(inner_idx) orelse continue;
+                const resolved = &ri.imports.items[import_idx];
+
+                const saved_ast = self.ast;
+                const saved_tokens = self.tokens;
+                const saved_src = self.src;
+                self.ast = &resolved.ast;
+                self.tokens = &resolved.tokens;
+                self.src = &resolved.src;
+
+                const program = self.ast.getProgram(self.ast.root);
+                const import_decls = self.ast.getExtra(program.declarations);
+                self.collectAllStructDecls(import_decls, resolved.namespace_name, struct_nodes, lookup_names) catch {
+                    self.ast = saved_ast;
+                    self.tokens = saved_tokens;
+                    self.src = saved_src;
+                    continue;
+                };
+
+                self.ast = saved_ast;
+                self.tokens = saved_tokens;
+                self.src = saved_src;
             }
         }
     }
@@ -887,6 +1078,9 @@ pub const SemanticContext = struct {
                 // skip already resolved symbols
                 if (self.symbols.getTypeState(idx) == .resolved) continue;
 
+                // skip imported symbols (their value_nodes reference a different AST)
+                if (self.symbols.getIsImported(idx)) continue;
+
                 const value_node = self.symbols.getValueNode(idx);
                 if (self.tryInferType(value_node)) |type_id| {
                     self.symbols.resolve(idx, type_id);
@@ -905,7 +1099,11 @@ pub const SemanticContext = struct {
             const return_type = self.types.getReturnType(func_type_id) orelse continue;
             if (return_type.isUnresolved()) continue;
 
+            // skip imported symbols (their value_nodes reference a different AST)
+            if (self.symbols.getIsImported(idx)) continue;
+
             const func_node = self.symbols.getValueNode(idx);
+
             const decl = self.ast.getFuncDecl(func_node);
 
             // external functions have no body
@@ -1116,6 +1314,9 @@ pub const SemanticContext = struct {
                 const kind = self.symbols.getKind(idx);
                 if (kind == .function or kind == .@"type" or kind == .namespace) continue;
 
+                // skip imported symbols (their value_nodes reference a different AST)
+                if (self.symbols.getIsImported(idx)) continue;
+
                 if (self.symbols.getTypeState(idx) == .resolved) {
                     const value_node = self.symbols.getValueNode(idx);
                     if (value_node != 0) {
@@ -1146,11 +1347,75 @@ pub const SemanticContext = struct {
             },
             .struct_decl => {}, // handled by two-pass struct collection
             .namespace_decl => try self.checkNamespaceDecl(node_idx, ""),
+            .import_decl => try self.checkImportDecl(node_idx),
             .pub_decl => {
                 const inner = self.unwrapPubDecl(node_idx);
                 try self.checkDeclaration(inner);
             },
             else => {}, // ignore
+        }
+    }
+
+    /// Type-check declarations from an imported file.
+    fn checkImportDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const ri = self.resolved_imports orelse return;
+        const import_idx = ri.map.get(node_idx) orelse return;
+        const resolved = &ri.imports.items[import_idx];
+
+        const saved_ast = self.ast;
+        const saved_tokens = self.tokens;
+        const saved_src = self.src;
+        const saved_node_types = self.node_types;
+        self.ast = &resolved.ast;
+        self.tokens = &resolved.tokens;
+        self.src = &resolved.src;
+
+        // Use a separate node_types map for the imported file to avoid
+        // NodeIndex collisions with the main file's AST.
+        const existing = self.import_node_types.get(import_idx);
+        self.node_types = if (existing) |e| e else .{};
+
+        defer {
+            // Save the import's node_types before restoring main's
+            self.import_node_types.put(self.allocator, import_idx, self.node_types) catch {};
+            self.ast = saved_ast;
+            self.tokens = saved_tokens;
+            self.src = saved_src;
+            self.node_types = saved_node_types;
+        }
+
+        const ns_name = resolved.namespace_name;
+
+        const saved_prefix = self.current_namespace_prefix;
+        self.current_namespace_prefix = ns_name;
+        defer self.current_namespace_prefix = saved_prefix;
+
+        const arena_alloc = self.types.arena.allocator();
+        const program = self.ast.getProgram(self.ast.root);
+        const decls = self.ast.getExtra(program.declarations);
+
+        for (decls) |decl_idx| {
+            const inner_idx = self.unwrapPubDecl(decl_idx);
+            const kind = self.ast.getKind(inner_idx);
+            switch (kind) {
+                .func_decl => {
+                    const short_name = self.getMemberName(inner_idx) orelse continue;
+                    const qualified_name = try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ ns_name, short_name });
+                    const sym_idx = self.symbols.lookup(qualified_name) orelse continue;
+                    try self.checkFuncDeclBody(inner_idx, sym_idx);
+                },
+                .const_decl => {
+                    const short_name = self.getMemberName(inner_idx) orelse continue;
+                    const qualified_name = try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ ns_name, short_name });
+                    try self.checkConstDeclWithName(inner_idx, qualified_name);
+                },
+                .var_decl => {
+                    _ = try self.checkVarDecl(inner_idx);
+                },
+                .namespace_decl => try self.checkNamespaceDecl(inner_idx, ns_name),
+                .struct_decl, .import_decl => {},
+                else => {},
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 pub const source = @import("source/source.zig");
 pub const lexer = @import("lexer/lexer.zig");
 pub const parser = @import("parser/parser.zig");
+pub const imports = @import("imports/imports.zig");
 pub const semantic = @import("semantic/semantic.zig");
 pub const comptime_ = @import("comptime/comptime.zig");
 pub const codegen = @import("codegen/codegen.zig");

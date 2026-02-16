@@ -125,6 +125,12 @@ fn getNodeInfo(
             break :blk std.fmt.bufPrint(&S.buf, "namespace {s}, members: {d}", .{ name, member_count }) catch "?";
         },
         .pub_decl => "pub",
+        .import_decl => blk: {
+            const decl = ast.getImportDecl(idx);
+            const token = tokens.items[decl.path_token];
+            const path = src.getSlice(token.start, token.start + token.len);
+            break :blk std.fmt.bufPrint(&S.buf, "import \"{s}\"", .{path}) catch "?";
+        },
         .identifier => blk: {
             const name = getIdentifierName(ast, tokens, src, idx);
             break :blk std.fmt.bufPrint(&S.buf, "\"{s}\"", .{name}) catch "?";
@@ -539,6 +545,13 @@ fn printNode(
             std.debug.print("pub:\n", .{});
             const decl = ast.getPubDecl(idx);
             printNode(ast, tokens, src, decl.inner, child_prefix, true);
+        },
+
+        .import_decl => {
+            const decl = ast.getImportDecl(idx);
+            const token = tokens.items[decl.path_token];
+            const path = src.getSlice(token.start, token.start + token.len);
+            std.debug.print("import \"{s}\"\n", .{path});
         },
 
         .identifier => {

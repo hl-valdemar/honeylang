@@ -76,8 +76,14 @@ pub const Parser = struct {
         var decls = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 10);
         defer decls.deinit(self.allocator);
 
+        // Parse imports first (must appear before other declarations)
+        while (self.check(.import)) {
+            const import_node = try self.parseImportDecl();
+            try decls.append(self.allocator, import_node);
+        }
+
         while (!self.check(.eof)) {
-            const decl = self.parseDeclaration() catch {
+            const decl = self.parseTopLevelDeclaration() catch {
                 // parsing functions already added detailed errors.
                 // just create an error node and synchronize.
                 const start = self.currentStart();
@@ -108,6 +114,46 @@ pub const Parser = struct {
         }
 
         return try self.ast.addExtra(decls.items);
+    }
+
+    fn parseImportDecl(self: *Parser) ParseError!NodeIndex {
+        const start_pos = self.currentStart();
+
+        // consume 'import'
+        try self.expectToken(.import, .unexpected_token);
+
+        // expect string literal
+        const token = self.peek() orelse {
+            try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+            return error.UnexpectedEof;
+        };
+
+        if (token.kind != .string_literal) {
+            try self.addErrorWithFound(.expected_string_literal, token.kind, token.start, token.start + token.len);
+            return error.UnexpectedToken;
+        }
+
+        const path_token_idx: u32 = @intCast(self.pos);
+        self.advance();
+
+        const end_pos = self.previousEnd();
+
+        return try self.ast.addImportDecl(path_token_idx, start_pos, end_pos);
+    }
+
+    /// Parse a top-level declaration, supporting 'pub' annotation for exported files.
+    fn parseTopLevelDeclaration(self: *Parser) ParseError!NodeIndex {
+        if (self.check(.@"pub")) {
+            const pub_start = self.currentStart();
+            self.advance(); // consume 'pub'
+
+            const inner = try self.parseDeclaration();
+
+            const pub_end = self.previousEnd();
+            return try self.ast.addPubDecl(inner, pub_start, pub_end);
+        }
+
+        return try self.parseDeclaration();
     }
 
     fn parseDeclaration(self: *Parser) !NodeIndex {
@@ -1269,8 +1315,8 @@ pub const Parser = struct {
                 }
             }
 
-            // also stop at 'mut' which starts a var decl
-            if (token.kind == .mut) return;
+            // also stop at 'mut' which starts a var decl, or 'import'
+            if (token.kind == .mut or token.kind == .import) return;
 
             self.advance();
         }
