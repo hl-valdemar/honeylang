@@ -1094,9 +1094,17 @@ pub const CodeGenContext = struct {
         switch (prim) {
             .bool => {
                 const val: i64 = if (std.mem.eql(u8, value_str, "true")) 1 else 0;
-                return try func.emitMovImm(val, .w32);
+                return try func.emitMovImm(val, .w8);
             },
-            .i8, .i16, .i32, .u8, .u16, .u32 => {
+            .i8, .u8 => {
+                const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
+                return try func.emitMovImm(val, .w8);
+            },
+            .i16, .u16 => {
+                const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
+                return try func.emitMovImm(val, .w16);
+            },
+            .i32, .u32 => {
                 const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
                 return try func.emitMovImm(val, .w32);
             },
