@@ -1946,9 +1946,16 @@ pub const SemanticContext = struct {
             // both operands unresolved (e.g. literals), result is numeric but unknown
             return null;
         } else if (binary_op.isComparison()) {
-            // infer operand types (no context)
-            const left_type = try self.checkExpression(binary_op.left, .unresolved);
-            const right_type = try self.checkExpression(binary_op.right, .unresolved);
+            // infer operand types (no context initially)
+            var left_type = try self.checkExpression(binary_op.left, .unresolved);
+            var right_type = try self.checkExpression(binary_op.right, .unresolved);
+
+            // propagate resolved type to unresolved literals (e.g. `x == 3` where x is f32)
+            if (left_type != null and right_type == null) {
+                right_type = try self.checkExpression(binary_op.right, left_type.?);
+            } else if (right_type != null and left_type == null) {
+                left_type = try self.checkExpression(binary_op.left, right_type.?);
+            }
 
             // if both sides have resolved types, they must match
             if (left_type != null and right_type != null) {
