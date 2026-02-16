@@ -125,26 +125,59 @@ pub const Parser = struct {
         // consume 'import'
         try self.expectToken(.import, .unexpected_token);
 
-        // Check for `import c include "path"` syntax
-        if (self.isIdentifierText(0, "c") and self.isIdentifierText(1, "include")) {
+        // Check for C import variants: `import c include "path"` or `import c { ... }`
+        if (self.isIdentifierText(0, "c")) {
             self.advance(); // consume 'c'
-            self.advance(); // consume 'include'
 
+            // Block form: import c { include "..." define "..." }
+            if (self.check(.left_curly)) {
+                if (name_token == null) {
+                    // Block form requires an explicit name — recover by skipping the block
+                    try self.addError(.expected_identifier, self.currentStart(), self.currentStart());
+                    self.advance(); // consume '{'
+                    var depth: u32 = 1;
+                    while (depth > 0 and !self.check(.eof)) {
+                        if (self.check(.left_curly)) depth += 1;
+                        if (self.check(.right_curly)) {
+                            depth -= 1;
+                            if (depth == 0) break;
+                        }
+                        self.advance();
+                    }
+                    if (self.check(.right_curly)) self.advance();
+                    return try self.ast.addError("c import block requires a name", start_pos, self.previousEnd());
+                }
+                return try self.parseCImportBlock(name_token.?, start_pos);
+            }
+
+            // Single include: import c include "path"
+            if (self.isIdentifierText(0, "include")) {
+                self.advance(); // consume 'include'
+
+                const token = self.peek() orelse {
+                    try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+                    return error.UnexpectedEof;
+                };
+
+                if (token.kind != .string_literal) {
+                    try self.addErrorWithFound(.expected_string_literal, token.kind, token.start, token.start + token.len);
+                    return error.UnexpectedToken;
+                }
+
+                const path_token_idx: u32 = @intCast(self.pos);
+                self.advance();
+
+                const end_pos = self.previousEnd();
+                return try self.ast.addCIncludeDecl(path_token_idx, name_token, start_pos, end_pos);
+            }
+
+            // `import c` followed by something unexpected
             const token = self.peek() orelse {
                 try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
                 return error.UnexpectedEof;
             };
-
-            if (token.kind != .string_literal) {
-                try self.addErrorWithFound(.expected_string_literal, token.kind, token.start, token.start + token.len);
-                return error.UnexpectedToken;
-            }
-
-            const path_token_idx: u32 = @intCast(self.pos);
-            self.advance();
-
-            const end_pos = self.previousEnd();
-            return try self.ast.addCIncludeDecl(path_token_idx, name_token, start_pos, end_pos);
+            try self.addErrorWithFound(.unexpected_token, token.kind, token.start, token.start + token.len);
+            return error.UnexpectedToken;
         }
 
         // Standard import: import "file.hon"
@@ -164,6 +197,64 @@ pub const Parser = struct {
         const end_pos = self.previousEnd();
 
         return try self.ast.addImportDecl(path_token_idx, name_token, start_pos, end_pos);
+    }
+
+    /// Parse `import c { include "..." define "..." }` block form.
+    fn parseCImportBlock(self: *Parser, name_token: u32, start_pos: SourceIndex) ParseError!NodeIndex {
+        // consume '{'
+        try self.expectToken(.left_curly, .expected_left_curly);
+
+        var includes = try std.ArrayList(ast.NodeIndex).initCapacity(self.allocator, 4);
+        defer includes.deinit(self.allocator);
+
+        var defines = try std.ArrayList(ast.NodeIndex).initCapacity(self.allocator, 4);
+        defer defines.deinit(self.allocator);
+
+        while (!self.check(.right_curly) and !self.check(.eof)) {
+            if (self.isIdentifierText(0, "include")) {
+                self.advance(); // consume 'include'
+
+                const token = self.peek() orelse {
+                    try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+                    return error.UnexpectedEof;
+                };
+                if (token.kind != .string_literal) {
+                    try self.addErrorWithFound(.expected_string_literal, token.kind, token.start, token.start + token.len);
+                    return error.UnexpectedToken;
+                }
+                try includes.append(self.allocator, @intCast(self.pos));
+                self.advance();
+            } else if (self.isIdentifierText(0, "define")) {
+                self.advance(); // consume 'define'
+
+                const token = self.peek() orelse {
+                    try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+                    return error.UnexpectedEof;
+                };
+                if (token.kind != .string_literal) {
+                    try self.addErrorWithFound(.expected_string_literal, token.kind, token.start, token.start + token.len);
+                    return error.UnexpectedToken;
+                }
+                try defines.append(self.allocator, @intCast(self.pos));
+                self.advance();
+            } else {
+                const token = self.peek() orelse {
+                    try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+                    return error.UnexpectedEof;
+                };
+                try self.addErrorWithFound(.unexpected_token, token.kind, token.start, token.start + token.len);
+                return error.UnexpectedToken;
+            }
+        }
+
+        try self.expectToken(.right_curly, .expected_right_curly);
+
+        const includes_range = try self.ast.addExtra(includes.items);
+        const defines_range = try self.ast.addExtra(defines.items);
+
+        const end_pos = self.previousEnd();
+
+        return try self.ast.addCImportBlock(name_token, includes_range, defines_range, start_pos, end_pos);
     }
 
     /// Check if the current position looks like `identifier :: import ...`

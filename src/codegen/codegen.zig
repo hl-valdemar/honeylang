@@ -237,7 +237,7 @@ pub const CodeGenContext = struct {
                 try self.collectGlobalConst(decl_idx, &globals_needing_init);
             } else if (kind == .namespace_decl) {
                 try self.collectNamespaceGlobals(decl_idx, "", &globals_needing_init);
-            } else if (kind == .import_decl or kind == .c_include_decl) {
+            } else if (kind == .import_decl or kind == .c_include_decl or kind == .c_import_block) {
                 try self.collectImportGlobals(decl_idx, &globals_needing_init);
             }
         }
@@ -592,7 +592,7 @@ pub const CodeGenContext = struct {
                     }
                 },
                 .namespace_decl => try self.generateNamespaceDecl(inner_idx, ns_name),
-                .const_decl, .var_decl, .struct_decl, .import_decl, .c_include_decl => {},
+                .const_decl, .var_decl, .struct_decl, .import_decl, .c_include_decl, .c_import_block => {},
                 else => {},
             }
         }
@@ -680,7 +680,7 @@ pub const CodeGenContext = struct {
                 // struct declarations are type definitions, handled at LLVM level
             },
             .namespace_decl => try self.generateNamespaceDecl(node_idx, ""),
-            .import_decl, .c_include_decl => try self.generateImportDecl(node_idx),
+            .import_decl, .c_include_decl, .c_import_block => try self.generateImportDecl(node_idx),
             .pub_decl => {
                 const pub_decl = self.ast.getPubDecl(node_idx);
                 try self.generateDeclaration(pub_decl.inner);

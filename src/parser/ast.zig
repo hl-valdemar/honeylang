@@ -18,6 +18,7 @@ pub const NodeKind = enum {
     pub_decl,
     import_decl,
     c_include_decl,
+    c_import_block,
 
     // expressions
     binary_op,
@@ -111,6 +112,12 @@ pub const PubDecl = struct {
 pub const ImportDecl = struct {
     path_token: u32, // token index of the string_literal token
     name_token: ?u32, // token index of explicit name identifier, null for bare imports
+};
+
+pub const CImportBlock = struct {
+    name_token: u32, // required explicit name identifier
+    includes: Range, // into extra_data: token indices of include string_literal tokens
+    defines: Range, // into extra_data: token indices of define string_literal tokens
 };
 
 pub const BinaryOp = struct {
@@ -276,6 +283,7 @@ pub const Ast = struct {
     namespace_decls: std.ArrayList(NamespaceDecl),
     pub_decls: std.ArrayList(PubDecl),
     import_decls: std.ArrayList(ImportDecl),
+    c_import_blocks: std.ArrayList(CImportBlock),
     binary_ops: std.ArrayList(BinaryOp),
     unary_ops: std.ArrayList(UnaryOp),
     call_exprs: std.ArrayList(CallExpr),
@@ -316,6 +324,7 @@ pub const Ast = struct {
             .namespace_decls = try std.ArrayList(NamespaceDecl).initCapacity(allocator, capacity),
             .pub_decls = try std.ArrayList(PubDecl).initCapacity(allocator, capacity),
             .import_decls = try std.ArrayList(ImportDecl).initCapacity(allocator, capacity),
+            .c_import_blocks = try std.ArrayList(CImportBlock).initCapacity(allocator, capacity),
             .binary_ops = try std.ArrayList(BinaryOp).initCapacity(allocator, capacity),
             .unary_ops = try std.ArrayList(UnaryOp).initCapacity(allocator, capacity),
             .call_exprs = try std.ArrayList(CallExpr).initCapacity(allocator, capacity),
@@ -351,6 +360,7 @@ pub const Ast = struct {
         self.namespace_decls.deinit(self.allocator);
         self.pub_decls.deinit(self.allocator);
         self.import_decls.deinit(self.allocator);
+        self.c_import_blocks.deinit(self.allocator);
         self.binary_ops.deinit(self.allocator);
         self.unary_ops.deinit(self.allocator);
         self.call_exprs.deinit(self.allocator);
@@ -565,6 +575,30 @@ pub const Ast = struct {
         try self.ends.append(self.allocator, end);
         try self.data_indices.append(self.allocator, data_idx);
         try self.import_decls.append(self.allocator, .{ .path_token = path_token, .name_token = name_token });
+
+        return node_idx;
+    }
+
+    pub fn addCImportBlock(
+        self: *Ast,
+        name_token: u32,
+        includes: Range,
+        defines: Range,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.c_import_blocks.items.len);
+
+        try self.kinds.append(self.allocator, .c_import_block);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.c_import_blocks.append(self.allocator, .{
+            .name_token = name_token,
+            .includes = includes,
+            .defines = defines,
+        });
 
         return node_idx;
     }
@@ -998,6 +1032,12 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .import_decl or self.kinds.items[idx] == .c_include_decl);
         const data_idx = self.data_indices.items[idx];
         return self.import_decls.items[data_idx];
+    }
+
+    pub fn getCImportBlock(self: *const Ast, idx: NodeIndex) CImportBlock {
+        std.debug.assert(self.kinds.items[idx] == .c_import_block);
+        const data_idx = self.data_indices.items[idx];
+        return self.c_import_blocks.items[data_idx];
     }
 
     pub fn getBinaryOp(self: *const Ast, idx: NodeIndex) BinaryOp {

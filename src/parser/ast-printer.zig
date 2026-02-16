@@ -147,6 +147,12 @@ fn getNodeInfo(
             }
             break :blk std.fmt.bufPrint(&S.buf, "import c include \"{s}\"", .{path}) catch "?";
         },
+        .c_import_block => blk: {
+            const block = ast.getCImportBlock(idx);
+            const name_tok = tokens.items[block.name_token];
+            const name = src.getSlice(name_tok.start, name_tok.start + name_tok.len);
+            break :blk std.fmt.bufPrint(&S.buf, "{s} :: import c {{ includes: {d}, defines: {d} }}", .{ name, block.includes.len, block.defines.len }) catch "?";
+        },
         .identifier => blk: {
             const name = getIdentifierName(ast, tokens, src, idx);
             break :blk std.fmt.bufPrint(&S.buf, "\"{s}\"", .{name}) catch "?";
@@ -587,6 +593,27 @@ fn printNode(
             } else {
                 std.debug.print("import c include \"{s}\"\n", .{path});
             }
+        },
+
+        .c_import_block => {
+            const block = ast.getCImportBlock(idx);
+            const name_tok = tokens.items[block.name_token];
+            const name = src.getSlice(name_tok.start, name_tok.start + name_tok.len);
+            std.debug.print("{s} :: import c {{\n", .{name});
+
+            const includes = ast.getExtra(block.includes);
+            for (includes) |inc_tok_idx| {
+                const inc_tok = tokens.items[inc_tok_idx];
+                const inc_path = src.getSlice(inc_tok.start, inc_tok.start + inc_tok.len);
+                std.debug.print("{s}    include \"{s}\"\n", .{ child_prefix, inc_path });
+            }
+            const defines = ast.getExtra(block.defines);
+            for (defines) |def_tok_idx| {
+                const def_tok = tokens.items[def_tok_idx];
+                const def_value = src.getSlice(def_tok.start, def_tok.start + def_tok.len);
+                std.debug.print("{s}    define \"{s}\"\n", .{ child_prefix, def_value });
+            }
+            std.debug.print("{s}}}\n", .{child_prefix});
         },
 
         .identifier => {
