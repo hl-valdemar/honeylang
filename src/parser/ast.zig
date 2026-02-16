@@ -110,6 +110,7 @@ pub const PubDecl = struct {
 
 pub const ImportDecl = struct {
     path_token: u32, // token index of the string_literal token
+    name_token: ?u32, // token index of explicit name identifier, null for bare imports
 };
 
 pub const BinaryOp = struct {
@@ -533,6 +534,7 @@ pub const Ast = struct {
     pub fn addImportDecl(
         self: *Ast,
         path_token: u32,
+        name_token: ?u32,
         start: SourceIndex,
         end: SourceIndex,
     ) !NodeIndex {
@@ -543,7 +545,7 @@ pub const Ast = struct {
         try self.starts.append(self.allocator, start);
         try self.ends.append(self.allocator, end);
         try self.data_indices.append(self.allocator, data_idx);
-        try self.import_decls.append(self.allocator, .{ .path_token = path_token });
+        try self.import_decls.append(self.allocator, .{ .path_token = path_token, .name_token = name_token });
 
         return node_idx;
     }
@@ -551,6 +553,7 @@ pub const Ast = struct {
     pub fn addCIncludeDecl(
         self: *Ast,
         path_token: u32,
+        name_token: ?u32,
         start: SourceIndex,
         end: SourceIndex,
     ) !NodeIndex {
@@ -561,7 +564,7 @@ pub const Ast = struct {
         try self.starts.append(self.allocator, start);
         try self.ends.append(self.allocator, end);
         try self.data_indices.append(self.allocator, data_idx);
-        try self.import_decls.append(self.allocator, .{ .path_token = path_token });
+        try self.import_decls.append(self.allocator, .{ .path_token = path_token, .name_token = name_token });
 
         return node_idx;
     }

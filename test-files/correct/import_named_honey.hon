@@ -1,0 +1,5 @@
+utils :: import "import_math.hon"
+
+main :: func() i32 {
+    return utils.add(3, utils.sub(5, 1))
+}

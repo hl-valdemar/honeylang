@@ -92,6 +92,19 @@ pub fn resolveImports(
         }
         try visited.put(abs_path, {});
 
+        // Resolve namespace name: explicit name_token takes priority, otherwise derive from filename
+        const ns_name = if (import_decl.name_token) |name_tok_idx| blk: {
+            const name_tok = tokens.items[name_tok_idx];
+            break :blk try allocator.dupe(u8, main_src.getSlice(name_tok.start, name_tok.start + name_tok.len));
+        } else blk: {
+            const basename = std.fs.path.basename(import_path);
+            const stem = if (std.mem.indexOf(u8, basename, ".")) |dot_pos|
+                basename[0..dot_pos]
+            else
+                basename;
+            break :blk try allocator.dupe(u8, stem);
+        };
+
         if (kind == .c_include_decl) {
             // C header import: validate extension, parse header, generate binding
             if (!mem.endsWith(u8, import_path, ".h")) {
@@ -154,16 +167,9 @@ pub fn resolveImports(
                 continue;
             }
 
-            // Derive namespace name from filename stem (e.g., "c_math" from "c_math.h")
-            const basename = std.fs.path.basename(import_path);
-            const ns_name = if (std.mem.indexOf(u8, basename, ".")) |dot_pos|
-                basename[0..dot_pos]
-            else
-                basename;
-
             const idx = result.imports.items.len;
             try result.imports.append(allocator, .{
-                .namespace_name = try allocator.dupe(u8, ns_name),
+                .namespace_name = ns_name,
                 .src = binding_src,
                 .tokens = lex_result.tokens,
                 .ast = parse_result.ast,
@@ -193,16 +199,9 @@ pub fn resolveImports(
                 continue;
             }
 
-            // Derive namespace name from filename stem
-            const basename = std.fs.path.basename(import_path);
-            const ns_name = if (std.mem.indexOf(u8, basename, ".")) |dot_pos|
-                basename[0..dot_pos]
-            else
-                basename;
-
             const idx = result.imports.items.len;
             try result.imports.append(allocator, .{
-                .namespace_name = try allocator.dupe(u8, ns_name),
+                .namespace_name = ns_name,
                 .src = imported_src,
                 .tokens = lex_result.tokens,
                 .ast = parse_result.ast,

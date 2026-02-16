@@ -77,8 +77,11 @@ pub const Parser = struct {
         defer decls.deinit(self.allocator);
 
         // Parse imports first (must appear before other declarations)
-        while (self.check(.import)) {
-            const import_node = try self.parseImportDecl();
+        while (self.check(.import) or self.isNamedImport()) {
+            const import_node = if (self.isNamedImport())
+                try self.parseNamedImportDecl()
+            else
+                try self.parseImportDecl(null);
             try decls.append(self.allocator, import_node);
         }
 
@@ -116,7 +119,7 @@ pub const Parser = struct {
         return try self.ast.addExtra(decls.items);
     }
 
-    fn parseImportDecl(self: *Parser) ParseError!NodeIndex {
+    fn parseImportDecl(self: *Parser, name_token: ?u32) ParseError!NodeIndex {
         const start_pos = self.currentStart();
 
         // consume 'import'
@@ -141,7 +144,7 @@ pub const Parser = struct {
             self.advance();
 
             const end_pos = self.previousEnd();
-            return try self.ast.addCIncludeDecl(path_token_idx, start_pos, end_pos);
+            return try self.ast.addCIncludeDecl(path_token_idx, name_token, start_pos, end_pos);
         }
 
         // Standard import: import "file.hon"
@@ -160,7 +163,24 @@ pub const Parser = struct {
 
         const end_pos = self.previousEnd();
 
-        return try self.ast.addImportDecl(path_token_idx, start_pos, end_pos);
+        return try self.ast.addImportDecl(path_token_idx, name_token, start_pos, end_pos);
+    }
+
+    /// Check if the current position looks like `identifier :: import ...`
+    fn isNamedImport(self: *const Parser) bool {
+        if (!self.check(.identifier)) return false;
+        const next = self.peekOffset(1) orelse return false;
+        if (next.kind != .double_colon) return false;
+        const after = self.peekOffset(2) orelse return false;
+        return after.kind == .import;
+    }
+
+    /// Parse `name :: import ...` — consume the name and ::, then delegate to parseImportDecl.
+    fn parseNamedImportDecl(self: *Parser) ParseError!NodeIndex {
+        const name_token_idx: u32 = @intCast(self.pos);
+        self.advance(); // consume identifier
+        self.advance(); // consume ::
+        return try self.parseImportDecl(name_token_idx);
     }
 
     /// Parse a top-level declaration, supporting 'pub' annotation for exported files.

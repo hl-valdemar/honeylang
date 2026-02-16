@@ -129,12 +129,22 @@ fn getNodeInfo(
             const decl = ast.getImportDecl(idx);
             const token = tokens.items[decl.path_token];
             const path = src.getSlice(token.start, token.start + token.len);
+            if (decl.name_token) |nt| {
+                const name_tok = tokens.items[nt];
+                const name = src.getSlice(name_tok.start, name_tok.start + name_tok.len);
+                break :blk std.fmt.bufPrint(&S.buf, "{s} :: import \"{s}\"", .{ name, path }) catch "?";
+            }
             break :blk std.fmt.bufPrint(&S.buf, "import \"{s}\"", .{path}) catch "?";
         },
         .c_include_decl => blk: {
             const decl = ast.getImportDecl(idx);
             const token = tokens.items[decl.path_token];
             const path = src.getSlice(token.start, token.start + token.len);
+            if (decl.name_token) |nt| {
+                const name_tok = tokens.items[nt];
+                const name = src.getSlice(name_tok.start, name_tok.start + name_tok.len);
+                break :blk std.fmt.bufPrint(&S.buf, "{s} :: import c include \"{s}\"", .{ name, path }) catch "?";
+            }
             break :blk std.fmt.bufPrint(&S.buf, "import c include \"{s}\"", .{path}) catch "?";
         },
         .identifier => blk: {
@@ -557,14 +567,26 @@ fn printNode(
             const decl = ast.getImportDecl(idx);
             const token = tokens.items[decl.path_token];
             const path = src.getSlice(token.start, token.start + token.len);
-            std.debug.print("import \"{s}\"\n", .{path});
+            if (decl.name_token) |nt| {
+                const name_tok = tokens.items[nt];
+                const name = src.getSlice(name_tok.start, name_tok.start + name_tok.len);
+                std.debug.print("{s} :: import \"{s}\"\n", .{ name, path });
+            } else {
+                std.debug.print("import \"{s}\"\n", .{path});
+            }
         },
 
         .c_include_decl => {
             const decl = ast.getImportDecl(idx);
             const token = tokens.items[decl.path_token];
             const path = src.getSlice(token.start, token.start + token.len);
-            std.debug.print("import c include \"{s}\"\n", .{path});
+            if (decl.name_token) |nt| {
+                const name_tok = tokens.items[nt];
+                const name = src.getSlice(name_tok.start, name_tok.start + name_tok.len);
+                std.debug.print("{s} :: import c include \"{s}\"\n", .{ name, path });
+            } else {
+                std.debug.print("import c include \"{s}\"\n", .{path});
+            }
         },
 
         .identifier => {

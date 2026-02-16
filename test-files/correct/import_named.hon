@@ -1,0 +1,5 @@
+math :: import c include "c_math.h"
+
+main :: func() i32 {
+    return math.add(3, math.sub(5, 1))
+}
