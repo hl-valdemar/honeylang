@@ -181,6 +181,7 @@ pub const CodeGenContext = struct {
     tokens: *const TokenList,
     src: *const SourceCode,
     resolved_imports: ?*const ResolvedImports,
+    current_import_map: ?*const std.AutoHashMapUnmanaged(NodeIndex, usize) = null,
     mir: MIRModule,
     current_func: ?*MIRFunction,
     locals: LocalVars,
@@ -210,6 +211,7 @@ pub const CodeGenContext = struct {
             .tokens = tokens,
             .src = src,
             .resolved_imports = resolved_imports,
+            .current_import_map = if (resolved_imports) |ri| &ri.map else null,
             .mir = MIRModule.init(allocator),
             .current_func = null,
             .locals = LocalVars.init(),
@@ -500,16 +502,19 @@ pub const CodeGenContext = struct {
     /// Collect global vars/consts from an imported file.
     fn collectImportGlobals(self: *CodeGenContext, node_idx: NodeIndex, needs_init: *std.ArrayList(NodeIndex)) !void {
         const ri = self.resolved_imports orelse return;
-        const import_idx = ri.map.get(node_idx) orelse return;
+        const cur_map = self.current_import_map orelse return;
+        const import_idx = cur_map.get(node_idx) orelse return;
         const resolved = &ri.imports.items[import_idx];
 
         const saved_ast = self.ast;
         const saved_tokens = self.tokens;
         const saved_src = self.src;
         const saved_node_types = self.node_types;
+        const saved_import_map = self.current_import_map;
         self.ast = &resolved.ast;
         self.tokens = &resolved.tokens;
         self.src = &resolved.src;
+        self.current_import_map = &resolved.sub_import_map;
 
         if (self.import_node_types.getPtr(import_idx)) |import_nt| {
             self.node_types = import_nt;
@@ -520,6 +525,7 @@ pub const CodeGenContext = struct {
             self.tokens = saved_tokens;
             self.src = saved_src;
             self.node_types = saved_node_types;
+            self.current_import_map = saved_import_map;
         }
 
         const ns_name = resolved.namespace_name;
@@ -540,6 +546,8 @@ pub const CodeGenContext = struct {
                 try self.collectGlobalConstByName(inner_idx, qualified_name, needs_init);
             } else if (kind == .namespace_decl) {
                 try self.collectNamespaceGlobals(inner_idx, ns_name, needs_init);
+            } else if (kind == .import_decl or kind == .c_include_decl or kind == .c_import_block) {
+                try self.collectImportGlobals(inner_idx, needs_init);
             }
         }
     }
@@ -547,16 +555,19 @@ pub const CodeGenContext = struct {
     /// Generate functions from an imported file.
     fn generateImportDecl(self: *CodeGenContext, node_idx: NodeIndex) !void {
         const ri = self.resolved_imports orelse return;
-        const import_idx = ri.map.get(node_idx) orelse return;
+        const cur_map = self.current_import_map orelse return;
+        const import_idx = cur_map.get(node_idx) orelse return;
         const resolved = &ri.imports.items[import_idx];
 
         const saved_ast = self.ast;
         const saved_tokens = self.tokens;
         const saved_src = self.src;
         const saved_node_types = self.node_types;
+        const saved_import_map = self.current_import_map;
         self.ast = &resolved.ast;
         self.tokens = &resolved.tokens;
         self.src = &resolved.src;
+        self.current_import_map = &resolved.sub_import_map;
 
         // Switch to the import's node_types map (populated during semantic analysis)
         if (self.import_node_types.getPtr(import_idx)) |import_nt| {
@@ -568,6 +579,7 @@ pub const CodeGenContext = struct {
             self.tokens = saved_tokens;
             self.src = saved_src;
             self.node_types = saved_node_types;
+            self.current_import_map = saved_import_map;
         }
 
         const ns_name = resolved.namespace_name;
@@ -584,15 +596,14 @@ pub const CodeGenContext = struct {
                     const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ ns_name, short_name });
                     const func_ast = self.ast.getFuncDecl(inner_idx);
                     if (func_ast.body == null) {
-                        // Extern C function: use unqualified name for the extern declaration
-                        // so it matches the actual C symbol name
                         try self.collectExternFunctionByName(inner_idx, short_name);
                     } else {
                         try self.generateFunctionByName(inner_idx, qualified_name);
                     }
                 },
                 .namespace_decl => try self.generateNamespaceDecl(inner_idx, ns_name),
-                .const_decl, .var_decl, .struct_decl, .import_decl, .c_include_decl, .c_import_block => {},
+                .import_decl, .c_include_decl, .c_import_block => try self.generateImportDecl(inner_idx),
+                .const_decl, .var_decl, .struct_decl => {},
                 else => {},
             }
         }

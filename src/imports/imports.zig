@@ -17,6 +17,7 @@ pub const ResolvedImport = struct {
     tokens: TokenList,
     ast: Ast,
     file_path: []const u8,
+    sub_import_map: std.AutoHashMapUnmanaged(NodeIndex, usize),
 };
 
 pub const ResolvedImports = struct {
@@ -50,51 +51,72 @@ pub fn resolveImports(
         .has_errors = false,
     };
 
-    // Track visited files to detect circular imports
-    var visited = std.StringHashMap(void).init(allocator);
-    defer visited.deinit();
+    // Stack-based import chain for circular import detection.
+    // Files are added before recursing and removed after, so diamond imports work.
+    var import_chain = std.StringHashMap(void).init(allocator);
+    defer import_chain.deinit();
 
-    // Mark main file as visited
     const abs_main = fs.cwd().realpathAlloc(allocator, main_file_path) catch main_file_path;
-    try visited.put(abs_main, {});
+    try import_chain.put(abs_main, {});
 
-    // Get the directory of the main file
     const main_dir = std.fs.path.dirname(main_file_path) orelse ".";
+    var next_src_id: source.Id = 1;
+
+    result.map = try resolveImportsInner(
+        allocator,
+        ast,
+        tokens,
+        main_src,
+        main_dir,
+        &result,
+        &import_chain,
+        &next_src_id,
+    );
+
+    return result;
+}
+
+/// Resolve imports for a single file's AST. Returns a map from that file's
+/// import NodeIndex values to global indices in result.imports.
+fn resolveImportsInner(
+    allocator: mem.Allocator,
+    ast: *const Ast,
+    tokens: *const TokenList,
+    file_src: *const SourceCode,
+    file_dir: []const u8,
+    result: *ResolvedImports,
+    import_chain: *std.StringHashMap(void),
+    next_src_id: *source.Id,
+) !std.AutoHashMapUnmanaged(NodeIndex, usize) {
+    var local_map = std.AutoHashMapUnmanaged(NodeIndex, usize){};
 
     const program = ast.getProgram(ast.root);
     const decls = ast.getExtra(program.declarations);
-
-    var next_src_id: source.Id = 1;
 
     for (decls) |decl_idx| {
         const kind = ast.getKind(decl_idx);
 
         if (kind == .c_import_block) {
-            // Handle multi-include C import block
             const block = ast.getCImportBlock(decl_idx);
             const include_indices = ast.getExtra(block.includes);
             const define_indices = ast.getExtra(block.defines);
 
-            // Get namespace name (required for block form)
             const name_tok = tokens.items[block.name_token];
-            const ns_name = try allocator.dupe(u8, main_src.getSlice(name_tok.start, name_tok.start + name_tok.len));
+            const ns_name = try allocator.dupe(u8, file_src.getSlice(name_tok.start, name_tok.start + name_tok.len));
 
-            // Build combined C source from all includes
             var combined = try std.ArrayList(u8).initCapacity(allocator, 1024);
             const c_writer = combined.writer(allocator);
 
-            // Prepend defines
             for (define_indices) |def_tok_idx| {
                 const def_tok = tokens.items[def_tok_idx];
-                const def_value = main_src.getSlice(def_tok.start, def_tok.start + def_tok.len);
+                const def_value = file_src.getSlice(def_tok.start, def_tok.start + def_tok.len);
                 try c_writer.print("#define {s}\n", .{def_value});
             }
 
-            // Read and concatenate all included headers
             var block_has_errors = false;
             for (include_indices) |inc_tok_idx| {
                 const inc_tok = tokens.items[inc_tok_idx];
-                const inc_path = main_src.getSlice(inc_tok.start, inc_tok.start + inc_tok.len);
+                const inc_path = file_src.getSlice(inc_tok.start, inc_tok.start + inc_tok.len);
 
                 if (!mem.endsWith(u8, inc_path, ".h")) {
                     std.debug.print("error: import c include requires a .h header file, got: {s}\n", .{inc_path});
@@ -102,25 +124,16 @@ pub fn resolveImports(
                     continue;
                 }
 
-                const inc_full_path = try std.fs.path.join(allocator, &.{ main_dir, inc_path });
+                const inc_full_path = try std.fs.path.join(allocator, &.{ file_dir, inc_path });
                 const file = fs.cwd().openFile(inc_full_path, .{ .mode = .read_only }) catch {
                     std.debug.print("error: cannot read C header file: {s}\n", .{inc_path});
                     block_has_errors = true;
                     continue;
                 };
                 defer file.close();
-                const file_size = file.getEndPos() catch {
-                    block_has_errors = true;
-                    continue;
-                };
-                const header_buf = allocator.alloc(u8, file_size) catch {
-                    block_has_errors = true;
-                    continue;
-                };
-                _ = file.readAll(header_buf) catch {
-                    block_has_errors = true;
-                    continue;
-                };
+                const file_size = file.getEndPos() catch { block_has_errors = true; continue; };
+                const header_buf = allocator.alloc(u8, file_size) catch { block_has_errors = true; continue; };
+                _ = file.readAll(header_buf) catch { block_has_errors = true; continue; };
                 try c_writer.writeAll(header_buf);
                 try c_writer.writeAll("\n");
             }
@@ -131,7 +144,6 @@ pub fn resolveImports(
             }
 
             const c_source = try combined.toOwnedSlice(allocator);
-
             const functions = c_parser.parse(allocator, c_source) catch {
                 std.debug.print("error: failed to parse C headers in import block\n", .{});
                 result.has_errors = true;
@@ -145,8 +157,8 @@ pub fn resolveImports(
 
             writeBindingFile(allocator, ns_name, binding_source);
 
-            const binding_src = source.fromStr(binding_source, next_src_id);
-            next_src_id += 1;
+            const binding_src = source.fromStr(binding_source, next_src_id.*);
+            next_src_id.* += 1;
 
             const lex_result = try lexer.scan(allocator, &binding_src);
             if (lex_result.errors.hasErrors()) {
@@ -162,15 +174,16 @@ pub fn resolveImports(
                 continue;
             }
 
-            const import_result_idx = result.imports.items.len;
+            const global_idx = result.imports.items.len;
             try result.imports.append(allocator, .{
                 .namespace_name = ns_name,
                 .src = binding_src,
                 .tokens = lex_result.tokens,
                 .ast = parse_result.ast,
                 .file_path = try std.fmt.allocPrint(allocator, "<c_import_block:{s}>", .{ns_name}),
+                .sub_import_map = .{},
             });
-            try result.map.put(allocator, decl_idx, import_result_idx);
+            try local_map.put(allocator, decl_idx, global_idx);
             continue;
         }
 
@@ -178,30 +191,27 @@ pub fn resolveImports(
 
         const import_decl = ast.getImportDecl(decl_idx);
         const path_token = tokens.items[import_decl.path_token];
-        const import_path = main_src.getSlice(path_token.start, path_token.start + path_token.len);
+        const import_path = file_src.getSlice(path_token.start, path_token.start + path_token.len);
 
-        // Resolve path relative to main file's directory
-        const full_path = try std.fs.path.join(allocator, &.{ main_dir, import_path });
+        const full_path = try std.fs.path.join(allocator, &.{ file_dir, import_path });
 
-        // Check for circular imports
         const abs_path = fs.cwd().realpathAlloc(allocator, full_path) catch {
-            // File doesn't exist
             std.debug.print("error: import file not found: {s}\n", .{import_path});
             result.has_errors = true;
             continue;
         };
 
-        if (visited.contains(abs_path)) {
+        // Check for circular imports (file is currently being resolved up the call stack)
+        if (import_chain.contains(abs_path)) {
             std.debug.print("error: circular import detected: {s}\n", .{import_path});
             result.has_errors = true;
             continue;
         }
-        try visited.put(abs_path, {});
 
         // Resolve namespace name: explicit name_token takes priority, otherwise derive from filename
         const ns_name = if (import_decl.name_token) |name_tok_idx| blk: {
             const name_tok = tokens.items[name_tok_idx];
-            break :blk try allocator.dupe(u8, main_src.getSlice(name_tok.start, name_tok.start + name_tok.len));
+            break :blk try allocator.dupe(u8, file_src.getSlice(name_tok.start, name_tok.start + name_tok.len));
         } else blk: {
             const basename = std.fs.path.basename(import_path);
             const stem = if (std.mem.indexOf(u8, basename, ".")) |dot_pos|
@@ -212,7 +222,6 @@ pub fn resolveImports(
         };
 
         if (kind == .c_include_decl) {
-            // C header import: validate extension, parse header, generate binding
             if (!mem.endsWith(u8, import_path, ".h")) {
                 std.debug.print("error: import c include requires a .h header file, got: {s}\n", .{import_path});
                 result.has_errors = true;
@@ -226,18 +235,9 @@ pub fn resolveImports(
                     continue;
                 };
                 defer file.close();
-                const file_size = file.getEndPos() catch {
-                    result.has_errors = true;
-                    continue;
-                };
-                const buf = allocator.alloc(u8, file_size) catch {
-                    result.has_errors = true;
-                    continue;
-                };
-                _ = file.readAll(buf) catch {
-                    result.has_errors = true;
-                    continue;
-                };
+                const file_size = file.getEndPos() catch { result.has_errors = true; continue; };
+                const buf = allocator.alloc(u8, file_size) catch { result.has_errors = true; continue; };
+                _ = file.readAll(buf) catch { result.has_errors = true; continue; };
                 break :blk buf;
             };
 
@@ -252,12 +252,10 @@ pub fn resolveImports(
                 continue;
             };
 
-            // Write binding file to zig-out/ for inspection
             writeBindingFile(allocator, import_path, binding_source);
 
-            // Lex and parse the generated binding
-            const binding_src = source.fromStr(binding_source, next_src_id);
-            next_src_id += 1;
+            const binding_src = source.fromStr(binding_source, next_src_id.*);
+            next_src_id.* += 1;
 
             const lex_result = try lexer.scan(allocator, &binding_src);
             if (lex_result.errors.hasErrors()) {
@@ -273,23 +271,24 @@ pub fn resolveImports(
                 continue;
             }
 
-            const idx = result.imports.items.len;
+            const global_idx = result.imports.items.len;
             try result.imports.append(allocator, .{
                 .namespace_name = ns_name,
                 .src = binding_src,
                 .tokens = lex_result.tokens,
                 .ast = parse_result.ast,
                 .file_path = full_path,
+                .sub_import_map = .{},
             });
-            try result.map.put(allocator, decl_idx, idx);
+            try local_map.put(allocator, decl_idx, global_idx);
         } else {
             // Native Honey import
-            const imported_src = source.fromFile(allocator, full_path, next_src_id) catch {
+            const imported_src = source.fromFile(allocator, full_path, next_src_id.*) catch {
                 std.debug.print("error: cannot read import file: {s}\n", .{import_path});
                 result.has_errors = true;
                 continue;
             };
-            next_src_id += 1;
+            next_src_id.* += 1;
 
             const lex_result = try lexer.scan(allocator, &imported_src);
             if (lex_result.errors.hasErrors()) {
@@ -305,19 +304,42 @@ pub fn resolveImports(
                 continue;
             }
 
-            const idx = result.imports.items.len;
+            const global_idx = result.imports.items.len;
             try result.imports.append(allocator, .{
                 .namespace_name = ns_name,
                 .src = imported_src,
                 .tokens = lex_result.tokens,
                 .ast = parse_result.ast,
                 .file_path = full_path,
+                .sub_import_map = .{},
             });
-            try result.map.put(allocator, decl_idx, idx);
+            try local_map.put(allocator, decl_idx, global_idx);
+
+            // Recursively resolve imports within this Honey file.
+            // Copy AST/tokens/src to stack locals to survive ArrayList reallocation during recursion.
+            const sub_ast = result.imports.items[global_idx].ast;
+            const sub_tokens = result.imports.items[global_idx].tokens;
+            const sub_src = result.imports.items[global_idx].src;
+            const sub_dir = std.fs.path.dirname(full_path) orelse ".";
+
+            try import_chain.put(abs_path, {});
+            const sub_map = try resolveImportsInner(
+                allocator,
+                &sub_ast,
+                &sub_tokens,
+                &sub_src,
+                sub_dir,
+                result,
+                import_chain,
+                next_src_id,
+            );
+            _ = import_chain.remove(abs_path);
+
+            result.imports.items[global_idx].sub_import_map = sub_map;
         }
     }
 
-    return result;
+    return local_map;
 }
 
 /// Generate Honey binding source from extracted C functions.

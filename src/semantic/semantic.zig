@@ -61,6 +61,7 @@ pub const SemanticContext = struct {
     errors: ErrorList,
 
     resolved_imports: ?*const ResolvedImports,
+    current_import_map: ?*const std.AutoHashMapUnmanaged(NodeIndex, usize) = null,
 
     current_ret_type: TypeId = TypeId.void,
     current_namespace_prefix: []const u8 = "",
@@ -85,6 +86,7 @@ pub const SemanticContext = struct {
             .scopes = try std.ArrayList(Scope).initCapacity(allocator, 4),
             .errors = try ErrorList.init(allocator),
             .resolved_imports = resolved_imports,
+            .current_import_map = if (resolved_imports) |ri| &ri.map else null,
         };
     }
 
@@ -295,19 +297,23 @@ pub const SemanticContext = struct {
     /// Forward-declare structs from an imported file.
     fn forwardDeclareImportStructs(self: *SemanticContext, node_idx: NodeIndex) !void {
         const ri = self.resolved_imports orelse return;
-        const import_idx = ri.map.get(node_idx) orelse return;
+        const import_map = self.current_import_map orelse return;
+        const import_idx = import_map.get(node_idx) orelse return;
         const resolved = &ri.imports.items[import_idx];
 
         const saved_ast = self.ast;
         const saved_tokens = self.tokens;
         const saved_src = self.src;
+        const saved_import_map = self.current_import_map;
         self.ast = &resolved.ast;
         self.tokens = &resolved.tokens;
         self.src = &resolved.src;
+        self.current_import_map = &resolved.sub_import_map;
         defer {
             self.ast = saved_ast;
             self.tokens = saved_tokens;
             self.src = saved_src;
+            self.current_import_map = saved_import_map;
         }
 
         const ns_name = resolved.namespace_name;
@@ -323,6 +329,8 @@ pub const SemanticContext = struct {
                 try self.forwardDeclareStructWithPrefix(inner_idx, ns_name);
             } else if (inner_kind == .namespace_decl) {
                 try self.forwardDeclareStructsInNamespace(inner_idx, ns_name);
+            } else if (inner_kind == .import_decl or inner_kind == .c_include_decl or inner_kind == .c_import_block) {
+                try self.forwardDeclareImportStructs(inner_idx);
             }
         }
 
@@ -335,19 +343,23 @@ pub const SemanticContext = struct {
     /// Process an import declaration: collect all declarations as namespace members.
     fn processImportDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
         const ri = self.resolved_imports orelse return;
-        const import_idx = ri.map.get(node_idx) orelse return;
+        const import_map = self.current_import_map orelse return;
+        const import_idx = import_map.get(node_idx) orelse return;
         const resolved = &ri.imports.items[import_idx];
 
         const saved_ast = self.ast;
         const saved_tokens = self.tokens;
         const saved_src = self.src;
+        const saved_import_map = self.current_import_map;
         self.ast = &resolved.ast;
         self.tokens = &resolved.tokens;
         self.src = &resolved.src;
+        self.current_import_map = &resolved.sub_import_map;
         defer {
             self.ast = saved_ast;
             self.tokens = saved_tokens;
             self.src = saved_src;
+            self.current_import_map = saved_import_map;
         }
 
         const ns_name = resolved.namespace_name;
@@ -370,8 +382,25 @@ pub const SemanticContext = struct {
             const inner_idx = self.unwrapPubDecl(decl_idx);
             const inner_kind = self.ast.getKind(inner_idx);
 
-            // Skip import_decl nodes in imported files (no recursive imports yet)
-            if (inner_kind == .import_decl or inner_kind == .c_include_decl or inner_kind == .c_import_block) continue;
+            if (inner_kind == .import_decl or inner_kind == .c_include_decl or inner_kind == .c_import_block) {
+                // Recursively process nested imports
+                try self.processImportDecl(inner_idx);
+                // Register the nested import's namespace as a member of this namespace
+                const nested_ri = self.current_import_map orelse continue;
+                const nested_import_idx = nested_ri.get(inner_idx) orelse continue;
+                const nested_resolved = &ri.imports.items[nested_import_idx];
+                const nested_ns_name = nested_resolved.namespace_name;
+                const nested_qualified = try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ ns_name, nested_ns_name });
+                _ = nested_qualified;
+                if (self.symbols.lookup(nested_ns_name)) |sym_idx| {
+                    try ns_members.append(self.allocator, .{
+                        .name = nested_ns_name,
+                        .symbol_idx = sym_idx,
+                        .is_pub = is_pub,
+                    });
+                }
+                continue;
+            }
 
             const member_short_name = self.getMemberName(inner_idx) orelse continue;
             const qualified_name = try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ ns_name, member_short_name });
@@ -425,7 +454,7 @@ pub const SemanticContext = struct {
         // Use the import_decl node's location from the main file for the symbol
         const main_loc = saved_ast.getLocation(node_idx);
 
-        const result = try self.symbols.register(
+        const register_result = try self.symbols.register(
             ns_name,
             main_loc.start,
             .namespace,
@@ -436,11 +465,11 @@ pub const SemanticContext = struct {
         );
 
         // Mark namespace symbol as imported too (name is derived from filename, not in main source)
-        if (result) |ns_sym| {
+        if (register_result) |ns_sym| {
             self.symbols.markImported(ns_sym);
         }
 
-        if (result == null) {
+        if (register_result == null) {
             try self.errors.add(.{
                 .kind = .duplicate_symbol,
                 .start = main_loc.start,
@@ -744,28 +773,33 @@ pub const SemanticContext = struct {
             } else if (kind == .import_decl or kind == .c_include_decl or kind == .c_import_block) {
                 // Context-switch into the imported file to collect its structs
                 const ri = self.resolved_imports orelse continue;
-                const import_idx = ri.map.get(inner_idx) orelse continue;
+                const cur_map = self.current_import_map orelse continue;
+                const import_idx = cur_map.get(inner_idx) orelse continue;
                 const resolved = &ri.imports.items[import_idx];
 
                 const saved_ast = self.ast;
                 const saved_tokens = self.tokens;
                 const saved_src = self.src;
+                const saved_import_map = self.current_import_map;
                 self.ast = &resolved.ast;
                 self.tokens = &resolved.tokens;
                 self.src = &resolved.src;
+                self.current_import_map = &resolved.sub_import_map;
 
-                const program = self.ast.getProgram(self.ast.root);
-                const import_decls = self.ast.getExtra(program.declarations);
+                const program_node = self.ast.getProgram(self.ast.root);
+                const import_decls = self.ast.getExtra(program_node.declarations);
                 self.collectAllStructDecls(import_decls, resolved.namespace_name, struct_nodes, lookup_names) catch {
                     self.ast = saved_ast;
                     self.tokens = saved_tokens;
                     self.src = saved_src;
+                    self.current_import_map = saved_import_map;
                     continue;
                 };
 
                 self.ast = saved_ast;
                 self.tokens = saved_tokens;
                 self.src = saved_src;
+                self.current_import_map = saved_import_map;
             }
         }
     }
@@ -1368,16 +1402,19 @@ pub const SemanticContext = struct {
     /// Type-check declarations from an imported file.
     fn checkImportDecl(self: *SemanticContext, node_idx: NodeIndex) !void {
         const ri = self.resolved_imports orelse return;
-        const import_idx = ri.map.get(node_idx) orelse return;
+        const cur_map = self.current_import_map orelse return;
+        const import_idx = cur_map.get(node_idx) orelse return;
         const resolved = &ri.imports.items[import_idx];
 
         const saved_ast = self.ast;
         const saved_tokens = self.tokens;
         const saved_src = self.src;
         const saved_node_types = self.node_types;
+        const saved_import_map = self.current_import_map;
         self.ast = &resolved.ast;
         self.tokens = &resolved.tokens;
         self.src = &resolved.src;
+        self.current_import_map = &resolved.sub_import_map;
 
         // Use a separate node_types map for the imported file to avoid
         // NodeIndex collisions with the main file's AST.
@@ -1391,6 +1428,7 @@ pub const SemanticContext = struct {
             self.tokens = saved_tokens;
             self.src = saved_src;
             self.node_types = saved_node_types;
+            self.current_import_map = saved_import_map;
         }
 
         const ns_name = resolved.namespace_name;
@@ -1422,7 +1460,8 @@ pub const SemanticContext = struct {
                     _ = try self.checkVarDecl(inner_idx);
                 },
                 .namespace_decl => try self.checkNamespaceDecl(inner_idx, ns_name),
-                .struct_decl, .import_decl, .c_include_decl, .c_import_block => {},
+                .import_decl, .c_include_decl, .c_import_block => try self.checkImportDecl(inner_idx),
+                .struct_decl => {},
                 else => {},
             }
         }
