@@ -237,7 +237,7 @@ pub const CodeGenContext = struct {
                 try self.collectGlobalConst(decl_idx, &globals_needing_init);
             } else if (kind == .namespace_decl) {
                 try self.collectNamespaceGlobals(decl_idx, "", &globals_needing_init);
-            } else if (kind == .import_decl) {
+            } else if (kind == .import_decl or kind == .c_include_decl) {
                 try self.collectImportGlobals(decl_idx, &globals_needing_init);
             }
         }
@@ -584,13 +584,15 @@ pub const CodeGenContext = struct {
                     const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ ns_name, short_name });
                     const func_ast = self.ast.getFuncDecl(inner_idx);
                     if (func_ast.body == null) {
-                        try self.collectExternFunctionByName(inner_idx, qualified_name);
+                        // Extern C function: use unqualified name for the extern declaration
+                        // so it matches the actual C symbol name
+                        try self.collectExternFunctionByName(inner_idx, short_name);
                     } else {
                         try self.generateFunctionByName(inner_idx, qualified_name);
                     }
                 },
                 .namespace_decl => try self.generateNamespaceDecl(inner_idx, ns_name),
-                .const_decl, .var_decl, .struct_decl, .import_decl => {},
+                .const_decl, .var_decl, .struct_decl, .import_decl, .c_include_decl => {},
                 else => {},
             }
         }
@@ -678,7 +680,7 @@ pub const CodeGenContext = struct {
                 // struct declarations are type definitions, handled at LLVM level
             },
             .namespace_decl => try self.generateNamespaceDecl(node_idx, ""),
-            .import_decl => try self.generateImportDecl(node_idx),
+            .import_decl, .c_include_decl => try self.generateImportDecl(node_idx),
             .pub_decl => {
                 const pub_decl = self.ast.getPubDecl(node_idx);
                 try self.generateDeclaration(pub_decl.inner);
@@ -1310,13 +1312,16 @@ pub const CodeGenContext = struct {
             break :blk try self.buildQualifiedName(call.func) orelse return null;
         } else return null;
 
-        // 2. Look up function to get calling convention
+        // 2. Look up function to get calling convention and extern name
         const sym_idx = self.symbols.lookup(func_name) orelse return null;
         const func_type_id = self.symbols.getTypeId(sym_idx);
         const call_conv = if (self.types.getFunctionType(func_type_id)) |ft|
             ft.calling_conv
         else
             .honey;
+
+        // Use extern_name for imported extern C functions (unqualified symbol name)
+        const emit_name = self.symbols.getExternName(sym_idx) orelse func_name;
 
         // 3. Generate argument expressions
         const arg_nodes = self.ast.getExtra(call.args);
@@ -1369,7 +1374,7 @@ pub const CodeGenContext = struct {
             for (arg_struct_indices.items) |s| try sret_struct_indices.append(self.allocator, s);
 
             // call returns void; the struct is written via sret pointer
-            _ = try func.emitCall(func_name, sret_args.items, sret_widths.items, sret_struct_indices.items, call_conv, null, struct_idx);
+            _ = try func.emitCall(emit_name, sret_args.items, sret_widths.items, sret_struct_indices.items, call_conv, null, struct_idx);
 
             return result_ptr;
         }
@@ -1381,7 +1386,7 @@ pub const CodeGenContext = struct {
             break :blk typeIdToWidth(rt);
         } else .w32;
 
-        return try func.emitCall(func_name, arg_regs.items, arg_widths.items, arg_struct_indices.items, call_conv, return_width, null);
+        return try func.emitCall(emit_name, arg_regs.items, arg_widths.items, arg_struct_indices.items, call_conv, return_width, null);
     }
 
     fn generateFieldAccess(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {

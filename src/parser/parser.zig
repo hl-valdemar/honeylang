@@ -122,7 +122,29 @@ pub const Parser = struct {
         // consume 'import'
         try self.expectToken(.import, .unexpected_token);
 
-        // expect string literal
+        // Check for `import c include "path"` syntax
+        if (self.isIdentifierText(0, "c") and self.isIdentifierText(1, "include")) {
+            self.advance(); // consume 'c'
+            self.advance(); // consume 'include'
+
+            const token = self.peek() orelse {
+                try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+                return error.UnexpectedEof;
+            };
+
+            if (token.kind != .string_literal) {
+                try self.addErrorWithFound(.expected_string_literal, token.kind, token.start, token.start + token.len);
+                return error.UnexpectedToken;
+            }
+
+            const path_token_idx: u32 = @intCast(self.pos);
+            self.advance();
+
+            const end_pos = self.previousEnd();
+            return try self.ast.addCIncludeDecl(path_token_idx, start_pos, end_pos);
+        }
+
+        // Standard import: import "file.hon"
         const token = self.peek() orelse {
             try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
             return error.UnexpectedEof;

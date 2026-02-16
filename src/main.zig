@@ -20,19 +20,40 @@ pub fn main() !void {
     // parse arguments
     var file_path: ?[]const u8 = null;
     var target: ?honey.codegen.Target = null;
+    var c_sources = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    defer c_sources.deinit(allocator);
+    var link_libs = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    defer link_libs.deinit(allocator);
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         if (mem.startsWith(u8, arg, "--target=")) {
             target = parseTarget(arg[9..]);
+        } else if (mem.eql(u8, arg, "--c-source")) {
+            i += 1;
+            while (i < args.len and !mem.startsWith(u8, args[i], "--")) : (i += 1) {
+                try c_sources.append(allocator, args[i]);
+            }
+            // Back up so the outer loop's increment processes the next --flag
+            if (i < args.len and mem.startsWith(u8, args[i], "--")) i -= 1;
+        } else if (mem.eql(u8, arg, "--link-lib")) {
+            i += 1;
+            while (i < args.len and !mem.startsWith(u8, args[i], "--")) : (i += 1) {
+                try link_libs.append(allocator, args[i]);
+            }
+            if (i < args.len and mem.startsWith(u8, args[i], "--")) i -= 1;
         } else if (!mem.startsWith(u8, arg, "-")) {
             file_path = arg;
         }
     }
 
     if (file_path == null) {
-        std.debug.print("Usage: {s} [--target=<arch>-<os>] <file>\n", .{args[0]});
+        std.debug.print("Usage: {s} [options] <file>\n\n", .{args[0]});
+        std.debug.print("Options:\n", .{});
+        std.debug.print("  --target=<arch>-<os>    Set compilation target\n", .{});
+        std.debug.print("  --c-source <files...>   C source files to compile and link\n", .{});
+        std.debug.print("  --link-lib <libs...>    Libraries to link (-l)\n", .{});
         std.debug.print("\nTargets:\n", .{});
         std.debug.print("  aarch64-darwin  ARM64 macOS\n", .{});
         std.debug.print("  aarch64-linux   ARM64 Linux\n", .{});
@@ -45,8 +66,8 @@ pub fn main() !void {
     const final_target = target orelse getNativeTarget();
 
     switch (builtin.mode) {
-        .Debug => try compileDebug(allocator, file_path.?, final_target),
-        else => try compileRelease(allocator, file_path.?, final_target),
+        .Debug => try compileDebug(allocator, file_path.?, final_target, c_sources.items, link_libs.items),
+        else => try compileRelease(allocator, file_path.?, final_target, c_sources.items, link_libs.items),
     }
 }
 
@@ -93,7 +114,7 @@ fn getNativeTarget() honey.codegen.Target {
     return .{ .arch = native_arch, .os = getNativeOs() };
 }
 
-pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.codegen.Target) !void {
+pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.codegen.Target, c_sources: []const []const u8, link_libs: []const []const u8) !void {
     const ansi = honey.ansi;
 
     // 1. read source
@@ -228,11 +249,20 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     std.debug.print("{s}", .{codegen_result.output});
 
     // 7. link into executable
+    if (c_sources.len > 0) {
+        std.debug.print("\n{s}::[[ C Sources ]]::{s}\n\n", .{ ansi.magenta(), ansi.reset() });
+        for (c_sources) |c_path| {
+            std.debug.print("  - {s}\n", .{c_path});
+        }
+    }
+
     const link_result = honey.codegen.linker.link(
         codegen_arena.allocator(),
         codegen_result.output,
         target.getLLVMTriple(),
         "program",
+        c_sources,
+        link_libs,
     );
 
     if (link_result) |result| {
@@ -244,7 +274,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     }
 }
 
-pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.codegen.Target) !void {
+pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.codegen.Target, c_sources: []const []const u8, link_libs: []const []const u8) !void {
     const ansi = honey.ansi;
 
     // 1. read source
@@ -340,6 +370,8 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
         codegen_result.output,
         target.getLLVMTriple(),
         "program",
+        c_sources,
+        link_libs,
     );
 
     if (link_result) |result| {

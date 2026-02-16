@@ -17,6 +17,7 @@ pub const NodeKind = enum {
     namespace_decl,
     pub_decl,
     import_decl,
+    c_include_decl,
 
     // expressions
     binary_op,
@@ -547,6 +548,24 @@ pub const Ast = struct {
         return node_idx;
     }
 
+    pub fn addCIncludeDecl(
+        self: *Ast,
+        path_token: u32,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.import_decls.items.len);
+
+        try self.kinds.append(self.allocator, .c_include_decl);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.import_decls.append(self.allocator, .{ .path_token = path_token });
+
+        return node_idx;
+    }
+
     pub fn addBinaryOp(
         self: *Ast,
         op: BinaryOp.Op,
@@ -973,7 +992,7 @@ pub const Ast = struct {
     }
 
     pub fn getImportDecl(self: *const Ast, idx: NodeIndex) ImportDecl {
-        std.debug.assert(self.kinds.items[idx] == .import_decl);
+        std.debug.assert(self.kinds.items[idx] == .import_decl or self.kinds.items[idx] == .c_include_decl);
         const data_idx = self.data_indices.items[idx];
         return self.import_decls.items[data_idx];
     }

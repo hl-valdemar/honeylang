@@ -56,6 +56,9 @@ pub const SymbolTable = struct {
     name_starts: std.ArrayList(SourceIndex),
     name_lengths: std.ArrayList(u16),
 
+    // extern name override (for imported C functions: emit unqualified name)
+    extern_names: std.ArrayList(?[]const u8),
+
     // name lookup
     name_map: std.StringHashMap(SymbolIndex),
 
@@ -70,6 +73,7 @@ pub const SymbolTable = struct {
             .mutabilities = try std.ArrayList(bool).initCapacity(allocator, capacity),
             .referenced = try std.ArrayList(bool).initCapacity(allocator, capacity),
             .is_imported = try std.ArrayList(bool).initCapacity(allocator, capacity),
+            .extern_names = try std.ArrayList(?[]const u8).initCapacity(allocator, capacity),
             .name_starts = try std.ArrayList(SourceIndex).initCapacity(allocator, capacity),
             .name_lengths = try std.ArrayList(u16).initCapacity(allocator, capacity),
             .name_map = std.StringHashMap(SymbolIndex).init(allocator),
@@ -84,6 +88,7 @@ pub const SymbolTable = struct {
         self.mutabilities.deinit(self.allocator);
         self.referenced.deinit(self.allocator);
         self.is_imported.deinit(self.allocator);
+        self.extern_names.deinit(self.allocator);
         self.name_starts.deinit(self.allocator);
         self.name_lengths.deinit(self.allocator);
         self.name_map.deinit();
@@ -112,6 +117,7 @@ pub const SymbolTable = struct {
         try self.mutabilities.append(self.allocator, is_mutable);
         try self.referenced.append(self.allocator, false);
         try self.is_imported.append(self.allocator, false);
+        try self.extern_names.append(self.allocator, null);
         try self.name_starts.append(self.allocator, name_start);
         try self.name_lengths.append(self.allocator, @intCast(name.len));
         try self.name_map.put(name, idx);
@@ -182,6 +188,14 @@ pub const SymbolTable = struct {
 
     pub fn getIsImported(self: *const SymbolTable, idx: SymbolIndex) bool {
         return self.is_imported.items[idx];
+    }
+
+    pub fn setExternName(self: *SymbolTable, idx: SymbolIndex, name: []const u8) void {
+        self.extern_names.items[idx] = name;
+    }
+
+    pub fn getExternName(self: *const SymbolTable, idx: SymbolIndex) ?[]const u8 {
+        return self.extern_names.items[idx];
     }
 
     /// Look up a symbol's name via the name_map (reverse lookup).

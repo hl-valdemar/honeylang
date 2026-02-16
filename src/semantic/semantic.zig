@@ -185,7 +185,7 @@ pub const SemanticContext = struct {
                 try self.forwardDeclareStruct(decl_idx);
             } else if (self.ast.getKind(decl_idx) == .namespace_decl) {
                 try self.forwardDeclareStructsInNamespace(decl_idx, "");
-            } else if (self.ast.getKind(decl_idx) == .import_decl) {
+            } else if (self.ast.getKind(decl_idx) == .import_decl or self.ast.getKind(decl_idx) == .c_include_decl) {
                 try self.forwardDeclareImportStructs(decl_idx);
             }
         }
@@ -198,7 +198,7 @@ pub const SemanticContext = struct {
             const kind = self.ast.getKind(decl_idx);
             if (kind == .namespace_decl) {
                 try self.collectNamespaceDecl(decl_idx, "");
-            } else if (kind == .import_decl) {
+            } else if (kind == .import_decl or kind == .c_include_decl) {
                 try self.processImportDecl(decl_idx);
             } else if (kind != .struct_decl) {
                 try self.collectDeclaration(decl_idx);
@@ -371,7 +371,7 @@ pub const SemanticContext = struct {
             const inner_kind = self.ast.getKind(inner_idx);
 
             // Skip import_decl nodes in imported files (no recursive imports yet)
-            if (inner_kind == .import_decl) continue;
+            if (inner_kind == .import_decl or inner_kind == .c_include_decl) continue;
 
             const member_short_name = self.getMemberName(inner_idx) orelse continue;
             const qualified_name = try std.fmt.allocPrint(arena_alloc, "{s}.{s}", .{ ns_name, member_short_name });
@@ -396,6 +396,15 @@ pub const SemanticContext = struct {
             } else {
                 const sym_idx = try self.collectMemberDecl(inner_idx, qualified_name);
                 if (sym_idx) |si| {
+                    // Set extern_name for imported bodyless c func declarations
+                    // so codegen emits the unqualified C symbol name
+                    if (inner_kind == .func_decl) {
+                        const func_ast = self.ast.getFuncDecl(inner_idx);
+                        if (func_ast.body == null) {
+                            self.symbols.setExternName(si, member_short_name);
+                        }
+                    }
+
                     try ns_members.append(self.allocator, .{
                         .name = member_short_name,
                         .symbol_idx = si,
@@ -732,7 +741,7 @@ pub const SemanticContext = struct {
                     try arena_alloc.dupe(u8, ns_name);
                 const ns_members = self.ast.getExtra(ns_decl.declarations);
                 try self.collectAllStructDecls(ns_members, ns_prefix, struct_nodes, lookup_names);
-            } else if (kind == .import_decl) {
+            } else if (kind == .import_decl or kind == .c_include_decl) {
                 // Context-switch into the imported file to collect its structs
                 const ri = self.resolved_imports orelse continue;
                 const import_idx = ri.map.get(inner_idx) orelse continue;
@@ -1347,7 +1356,7 @@ pub const SemanticContext = struct {
             },
             .struct_decl => {}, // handled by two-pass struct collection
             .namespace_decl => try self.checkNamespaceDecl(node_idx, ""),
-            .import_decl => try self.checkImportDecl(node_idx),
+            .import_decl, .c_include_decl => try self.checkImportDecl(node_idx),
             .pub_decl => {
                 const inner = self.unwrapPubDecl(node_idx);
                 try self.checkDeclaration(inner);
@@ -1413,7 +1422,7 @@ pub const SemanticContext = struct {
                     _ = try self.checkVarDecl(inner_idx);
                 },
                 .namespace_decl => try self.checkNamespaceDecl(inner_idx, ns_name),
-                .struct_decl, .import_decl => {},
+                .struct_decl, .import_decl, .c_include_decl => {},
                 else => {},
             }
         }
