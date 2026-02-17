@@ -150,25 +150,24 @@ pub const Parser = struct {
                 return try self.parseCImportBlock(name_token.?, start_pos);
             }
 
-            // Single include: import c include "path"
+            // Single include: `import c include "path"` or `import c "path"`
             if (self.isIdentifierText(0, "include")) {
-                self.advance(); // consume 'include'
+                self.advance(); // consume optional 'include'
+            }
 
+            {
                 const token = self.peek() orelse {
                     try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
                     return error.UnexpectedEof;
                 };
 
-                if (token.kind != .string_literal) {
-                    try self.addErrorWithFound(.expected_string_literal, token.kind, token.start, token.start + token.len);
-                    return error.UnexpectedToken;
+                if (token.kind == .string_literal) {
+                    const path_token_idx: u32 = @intCast(self.pos);
+                    self.advance();
+
+                    const end_pos = self.previousEnd();
+                    return try self.ast.addCIncludeDecl(path_token_idx, name_token, start_pos, end_pos);
                 }
-
-                const path_token_idx: u32 = @intCast(self.pos);
-                self.advance();
-
-                const end_pos = self.previousEnd();
-                return try self.ast.addCIncludeDecl(path_token_idx, name_token, start_pos, end_pos);
             }
 
             // `import c` followed by something unexpected
