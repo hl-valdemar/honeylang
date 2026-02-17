@@ -1,0 +1,6 @@
+gfx :: import c include "c_structs.h"
+
+main :: func() i32 {
+    v := gfx.vec2{ .x = 3.0, .y = 4.0 }
+    return 0
+}

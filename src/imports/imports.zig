@@ -140,7 +140,7 @@ fn resolveImportsInner(
             }
 
             const c_source = try combined.toOwnedSlice(allocator);
-            const functions = c_parser.parse(allocator, c_source) catch {
+            const c_parsed = c_parser.parse(allocator, c_source) catch {
                 std.debug.print("error: failed to parse C headers in import block\n", .{});
                 result.has_errors = true;
                 continue;
@@ -148,7 +148,7 @@ fn resolveImportsInner(
 
             const define_constants = try collectDefineConstants(allocator, c_source);
 
-            const binding_source = generateBindingSource(allocator, functions, define_constants) catch {
+            const binding_source = generateBindingSource(allocator, c_parsed.functions, c_parsed.structs, define_constants) catch {
                 result.has_errors = true;
                 continue;
             };
@@ -232,7 +232,7 @@ fn resolveImportsInner(
                 continue;
             };
 
-            const functions = c_parser.parse(allocator, c_source) catch {
+            const c_parsed = c_parser.parse(allocator, c_source) catch {
                 std.debug.print("error: failed to parse C header: {s}\n", .{import_path});
                 result.has_errors = true;
                 continue;
@@ -240,7 +240,7 @@ fn resolveImportsInner(
 
             const define_constants = try collectDefineConstants(allocator, c_source);
 
-            const binding_source = generateBindingSource(allocator, functions, define_constants) catch {
+            const binding_source = generateBindingSource(allocator, c_parsed.functions, c_parsed.structs, define_constants) catch {
                 result.has_errors = true;
                 continue;
             };
@@ -448,10 +448,26 @@ fn resolveIncludesInner(
     return try result.toOwnedSlice(allocator);
 }
 
-/// Generate Honey binding source from extracted C functions and define constants.
-fn generateBindingSource(allocator: mem.Allocator, functions: []const c_parser.CFunction, defines: []const CDefine) ![]const u8 {
+/// Generate Honey binding source from extracted C functions, structs, and define constants.
+fn generateBindingSource(
+    allocator: mem.Allocator,
+    functions: []const c_parser.CFunction,
+    structs: []const c_parser.CStruct,
+    defines: []const CDefine,
+) ![]const u8 {
     var buf = try std.ArrayList(u8).initCapacity(allocator, 256);
     const writer = buf.writer(allocator);
+
+    // Emit struct declarations first (functions may reference them)
+    for (structs) |s| {
+        try writer.print("pub {s} :: c struct {{ ", .{s.name});
+        for (s.fields) |field| {
+            const type_str = try c_parser.formatHoneyType(allocator, field.c_type, field.struct_type_name, field.pointee_type, field.pointee_struct_name);
+            defer allocator.free(type_str);
+            try writer.print("{s}: {s}, ", .{ field.name, type_str });
+        }
+        try writer.writeAll("}\n");
+    }
 
     for (functions) |func| {
         // pub <name> :: c func(<params>) <return_type>
@@ -459,10 +475,14 @@ fn generateBindingSource(allocator: mem.Allocator, functions: []const c_parser.C
 
         for (func.params, 0..) |param, i| {
             if (i > 0) try writer.writeAll(", ");
-            try writer.print("{s}: {s}", .{ param.name, c_parser.typeToHoneyStr(param.c_type) });
+            const type_str = try c_parser.formatHoneyType(allocator, param.c_type, param.struct_type_name, param.pointee_type, param.pointee_struct_name);
+            defer allocator.free(type_str);
+            try writer.print("{s}: {s}", .{ param.name, type_str });
         }
 
-        try writer.print(") {s}\n", .{c_parser.typeToHoneyStr(func.return_type)});
+        const ret_str = try c_parser.formatHoneyType(allocator, func.return_type, func.return_struct_name, null, null);
+        defer allocator.free(ret_str);
+        try writer.print(") {s}\n", .{ret_str});
     }
 
     for (defines) |def| {
@@ -531,13 +551,35 @@ test "collectDefineConstants extracts numeric defines from source" {
 }
 
 test "generateBindingSource includes define constants" {
-    const result = try generateBindingSource(std.testing.allocator, &.{}, &.{
+    const result = try generateBindingSource(std.testing.allocator, &.{}, &.{}, &.{
         .{ .name = "PI", .value = "3.14" },
         .{ .name = "MAX_SIZE", .value = "1024" },
     });
     defer std.testing.allocator.free(result);
     try std.testing.expect(mem.indexOf(u8, result, "pub PI: f32 :: 3.14") != null);
     try std.testing.expect(mem.indexOf(u8, result, "pub MAX_SIZE: i32 :: 1024") != null);
+}
+
+test "generateBindingSource includes struct declarations" {
+    const result = try generateBindingSource(std.testing.allocator, &.{}, &.{
+        .{ .name = "vec2", .fields = &.{
+            .{ .name = "x", .c_type = .f32 },
+            .{ .name = "y", .c_type = .f32 },
+        } },
+    }, &.{});
+    defer std.testing.allocator.free(result);
+    try std.testing.expect(mem.indexOf(u8, result, "pub vec2 :: c struct { x: f32, y: f32, }") != null);
+}
+
+test "generateBindingSource structs with pointer fields" {
+    const result = try generateBindingSource(std.testing.allocator, &.{}, &.{
+        .{ .name = "node", .fields = &.{
+            .{ .name = "value", .c_type = .i32 },
+            .{ .name = "next", .c_type = .ptr, .pointee_struct_name = "node" },
+        } },
+    }, &.{});
+    defer std.testing.allocator.free(result);
+    try std.testing.expect(mem.indexOf(u8, result, "next: *mut node") != null);
 }
 
 /// Write the generated binding file to zig-out/ for debugging/inspection.

@@ -20,18 +20,28 @@ pub const CType = enum {
 pub const CParam = struct {
     name: []const u8,
     c_type: CType,
+    /// Non-null when the type is a named struct (c_type is unused in that case).
+    struct_type_name: ?[]const u8 = null,
+    /// For pointer types: the pointee primitive type (null if pointee is a struct).
+    pointee_type: ?CType = null,
+    /// For pointer-to-struct: the pointee struct name.
+    pointee_struct_name: ?[]const u8 = null,
 };
 
 pub const CFunction = struct {
     name: []const u8,
     return_type: CType,
+    return_struct_name: ?[]const u8 = null,
     params: []const CParam,
 
     pub fn freeAll(functions: []const CFunction, allocator: mem.Allocator) void {
         for (functions) |func| {
             allocator.free(func.name);
+            if (func.return_struct_name) |n| allocator.free(n);
             for (func.params) |param| {
                 allocator.free(param.name);
+                if (param.struct_type_name) |n| allocator.free(n);
+                if (param.pointee_struct_name) |n| allocator.free(n);
             }
             allocator.free(func.params);
         }
@@ -39,9 +49,40 @@ pub const CFunction = struct {
     }
 };
 
-/// Parse C source and extract non-static function signatures.
+pub const CStructField = struct {
+    name: []const u8,
+    c_type: CType,
+    struct_type_name: ?[]const u8 = null,
+    pointee_type: ?CType = null,
+    pointee_struct_name: ?[]const u8 = null,
+};
+
+pub const CStruct = struct {
+    name: []const u8,
+    fields: []const CStructField,
+
+    pub fn freeAll(structs: []const CStruct, allocator: mem.Allocator) void {
+        for (structs) |s| {
+            allocator.free(s.name);
+            for (s.fields) |field| {
+                allocator.free(field.name);
+                if (field.struct_type_name) |n| allocator.free(n);
+                if (field.pointee_struct_name) |n| allocator.free(n);
+            }
+            allocator.free(s.fields);
+        }
+        allocator.free(structs);
+    }
+};
+
+pub const CParseResult = struct {
+    functions: []const CFunction,
+    structs: []const CStruct,
+};
+
+/// Parse C source and extract function signatures and struct definitions.
 /// All returned name strings are duped and owned by the caller's allocator.
-pub fn parse(allocator: mem.Allocator, source: []const u8) ![]CFunction {
+pub fn parse(allocator: mem.Allocator, source: []const u8) !CParseResult {
     // Strip comments first
     const stripped = try stripComments(allocator, source);
     defer allocator.free(stripped);
@@ -52,6 +93,13 @@ pub fn parse(allocator: mem.Allocator, source: []const u8) ![]CFunction {
 
     var functions = try std.ArrayList(CFunction).initCapacity(allocator, 4);
     defer functions.deinit(allocator);
+
+    var structs = try std.ArrayList(CStruct).initCapacity(allocator, 4);
+    defer structs.deinit(allocator);
+
+    // Track known struct/typedef names so they can be recognized as types in function signatures
+    var known_structs = std.StringHashMap(void).init(allocator);
+    defer known_structs.deinit();
 
     var pos: usize = 0;
     while (pos < preprocessed.len) {
@@ -65,8 +113,27 @@ pub fn parse(allocator: mem.Allocator, source: []const u8) ![]CFunction {
             continue;
         }
 
-        // Try to parse a top-level declaration
-        const result = tryParseFunction(allocator, preprocessed, pos) catch {
+        // Try to parse a struct definition first
+        if (tryParseStruct(allocator, preprocessed, pos, &known_structs) catch null) |struct_result| {
+            pos = struct_result.end_pos;
+            const duped_name = try allocator.dupe(u8, struct_result.struc.name);
+            var duped_fields = try allocator.alloc(CStructField, struct_result.struc.fields.len);
+            for (struct_result.struc.fields, 0..) |field, i| {
+                duped_fields[i] = .{
+                    .name = try allocator.dupe(u8, field.name),
+                    .c_type = field.c_type,
+                    .struct_type_name = if (field.struct_type_name) |n| try allocator.dupe(u8, n) else null,
+                    .pointee_type = field.pointee_type,
+                    .pointee_struct_name = if (field.pointee_struct_name) |n| try allocator.dupe(u8, n) else null,
+                };
+            }
+            allocator.free(struct_result.struc.fields);
+            try structs.append(allocator, .{ .name = duped_name, .fields = duped_fields });
+            continue;
+        }
+
+        // Try to parse a top-level function declaration
+        const result = tryParseFunction(allocator, preprocessed, pos, &known_structs) catch {
             // Skip to next semicolon or closing brace at depth 0
             pos = skipToNextDecl(preprocessed, pos);
             continue;
@@ -80,11 +147,15 @@ pub fn parse(allocator: mem.Allocator, source: []const u8) ![]CFunction {
 
             // Dupe all name strings so they survive stripped buffer deallocation
             const duped_name = try allocator.dupe(u8, func_result.func.name);
+            const duped_ret_struct = if (func_result.func.return_struct_name) |n| try allocator.dupe(u8, n) else null;
             var duped_params = try allocator.alloc(CParam, func_result.func.params.len);
             for (func_result.func.params, 0..) |param, i| {
                 duped_params[i] = .{
                     .name = try allocator.dupe(u8, param.name),
                     .c_type = param.c_type,
+                    .struct_type_name = if (param.struct_type_name) |n| try allocator.dupe(u8, n) else null,
+                    .pointee_type = param.pointee_type,
+                    .pointee_struct_name = if (param.pointee_struct_name) |n| try allocator.dupe(u8, n) else null,
                 };
             }
             // Free the intermediate params slice from parseParams
@@ -92,6 +163,7 @@ pub fn parse(allocator: mem.Allocator, source: []const u8) ![]CFunction {
             try functions.append(allocator, .{
                 .name = duped_name,
                 .return_type = func_result.func.return_type,
+                .return_struct_name = duped_ret_struct,
                 .params = duped_params,
             });
         } else {
@@ -99,7 +171,10 @@ pub fn parse(allocator: mem.Allocator, source: []const u8) ![]CFunction {
         }
     }
 
-    return try allocator.dupe(CFunction, functions.items);
+    return .{
+        .functions = try allocator.dupe(CFunction, functions.items),
+        .structs = try allocator.dupe(CStruct, structs.items),
+    };
 }
 
 const FuncParseResult = struct {
@@ -107,7 +182,7 @@ const FuncParseResult = struct {
     end_pos: usize,
 };
 
-fn tryParseFunction(allocator: mem.Allocator, src: []const u8, start: usize) !?FuncParseResult {
+fn tryParseFunction(allocator: mem.Allocator, src: []const u8, start: usize, known_structs: *std.StringHashMap(void)) !?FuncParseResult {
     var pos = start;
 
     // Collect tokens before '('
@@ -115,6 +190,7 @@ fn tryParseFunction(allocator: mem.Allocator, src: []const u8, start: usize) !?F
     defer tokens.deinit(allocator);
 
     var is_static = false;
+    var has_ret_pointer = false;
 
     while (pos < src.len) {
         pos = skipWhitespace(src, pos);
@@ -123,11 +199,16 @@ fn tryParseFunction(allocator: mem.Allocator, src: []const u8, start: usize) !?F
         if (src[pos] == '(') break;
         if (src[pos] == ';' or src[pos] == '{' or src[pos] == '}' or src[pos] == '#') return null;
 
+        if (src[pos] == '*') {
+            has_ret_pointer = true;
+            pos += 1;
+            continue;
+        }
+
         const tok = readToken(src, pos) orelse return null;
 
         // Check for keywords that indicate this is not a function
         if (mem.eql(u8, tok.text, "typedef") or
-            mem.eql(u8, tok.text, "struct") or
             mem.eql(u8, tok.text, "enum") or
             mem.eql(u8, tok.text, "union"))
         {
@@ -136,6 +217,12 @@ fn tryParseFunction(allocator: mem.Allocator, src: []const u8, start: usize) !?F
 
         if (mem.eql(u8, tok.text, "static")) {
             is_static = true;
+            pos = tok.end;
+            continue;
+        }
+
+        // Skip 'const' qualifier
+        if (mem.eql(u8, tok.text, "const")) {
             pos = tok.end;
             continue;
         }
@@ -159,11 +246,24 @@ fn tryParseFunction(allocator: mem.Allocator, src: []const u8, start: usize) !?F
     // Check if name starts with '*' (pointer return, name is after *)
     if (func_name[0] == '*') return null;
 
-    const return_type = mapReturnType(tokens.items[0 .. tokens.items.len - 1]);
+    const ret_type_tokens = tokens.items[0 .. tokens.items.len - 1];
+
+    // Resolve return type, handling struct types and pointers
+    var return_type: CType = undefined;
+    var return_struct_name: ?[]const u8 = null;
+
+    if (has_ret_pointer) {
+        return_type = .ptr;
+    } else if (isStructType(ret_type_tokens, known_structs)) {
+        return_struct_name = ret_type_tokens[ret_type_tokens.len - 1];
+        return_type = .i32; // placeholder, unused when struct_name is set
+    } else {
+        return_type = mapReturnType(ret_type_tokens);
+    }
 
     // Parse parameters
     pos += 1; // skip '('
-    const params_result = try parseParams(allocator, src, pos);
+    const params_result = try parseParams(allocator, src, pos, known_structs);
 
     pos = params_result.end_pos;
     if (pos < src.len and src[pos] == ')') pos += 1;
@@ -182,13 +282,14 @@ fn tryParseFunction(allocator: mem.Allocator, src: []const u8, start: usize) !?F
         .func = .{
             .name = func_name,
             .return_type = return_type,
+            .return_struct_name = return_struct_name,
             .params = params_result.params,
         },
         .end_pos = pos,
     };
 }
 
-fn parseParams(allocator: mem.Allocator, src: []const u8, start: usize) !struct { params: []const CParam, end_pos: usize } {
+fn parseParams(allocator: mem.Allocator, src: []const u8, start: usize, known_structs: *std.StringHashMap(void)) !struct { params: []const CParam, end_pos: usize } {
     var params = try std.ArrayList(CParam).initCapacity(allocator, 4);
     defer params.deinit(allocator);
     var pos = start;
@@ -230,6 +331,11 @@ fn parseParams(allocator: mem.Allocator, src: []const u8, start: usize) !struct 
             }
 
             const tok = readToken(src, pos) orelse break;
+            // Skip 'const' qualifier
+            if (mem.eql(u8, tok.text, "const")) {
+                pos = tok.end;
+                continue;
+            }
             try param_tokens.append(allocator, tok.text);
             pos = tok.end;
         }
@@ -237,8 +343,7 @@ fn parseParams(allocator: mem.Allocator, src: []const u8, start: usize) !struct 
         if (param_tokens.items.len >= 2) {
             const param_name = param_tokens.items[param_tokens.items.len - 1];
             const type_tokens = param_tokens.items[0 .. param_tokens.items.len - 1];
-            const param_type = if (has_pointer) CType.ptr else mapReturnType(type_tokens);
-            try params.append(allocator, .{ .name = param_name, .c_type = param_type });
+            try params.append(allocator, resolveParamType(param_name, type_tokens, has_pointer, known_structs));
         } else if (param_tokens.items.len == 1 and has_pointer) {
             // e.g., `void *` with no name — skip
         }
@@ -248,6 +353,157 @@ fn parseParams(allocator: mem.Allocator, src: []const u8, start: usize) !struct 
 
     return .{ .params = try allocator.dupe(CParam, params.items), .end_pos = pos };
 }
+
+/// Resolve a parameter's type info from its tokens, pointer flag, and known struct names.
+fn resolveParamType(name: []const u8, type_tokens: []const []const u8, has_pointer: bool, known_structs: *std.StringHashMap(void)) CParam {
+    if (has_pointer) {
+        // Pointer type — figure out pointee
+        if (isStructType(type_tokens, known_structs)) {
+            return .{ .name = name, .c_type = .ptr, .pointee_struct_name = type_tokens[type_tokens.len - 1] };
+        }
+        const pointee = mapReturnType(type_tokens);
+        return .{ .name = name, .c_type = .ptr, .pointee_type = if (pointee != .ptr) pointee else null };
+    }
+    if (isStructType(type_tokens, known_structs)) {
+        return .{ .name = name, .c_type = .i32, .struct_type_name = type_tokens[type_tokens.len - 1] };
+    }
+    return .{ .name = name, .c_type = mapReturnType(type_tokens) };
+}
+
+/// Check if type tokens refer to a struct type:
+/// - `struct TypeName` (first token is "struct")
+/// - bare typedef name (single token in known_structs)
+fn isStructType(type_tokens: []const []const u8, known_structs: *std.StringHashMap(void)) bool {
+    if (type_tokens.len >= 2 and mem.eql(u8, type_tokens[0], "struct")) return true;
+    if (type_tokens.len == 1 and known_structs.contains(type_tokens[0])) return true;
+    return false;
+}
+
+// ── Struct parsing ──────────────────────────────────────────
+
+const StructParseResult = struct {
+    struc: CStruct,
+    end_pos: usize,
+};
+
+/// Try to parse a C struct definition at `start`. Handles:
+///   struct name { fields };
+///   typedef struct { fields } name;
+///   typedef struct name { fields } name;
+fn tryParseStruct(allocator: mem.Allocator, src: []const u8, start: usize, known_structs: *std.StringHashMap(void)) !?StructParseResult {
+    var pos = skipWhitespace(src, start);
+    if (pos >= src.len) return null;
+
+    var tok = readToken(src, pos) orelse return null;
+    var is_typedef = false;
+
+    if (mem.eql(u8, tok.text, "typedef")) {
+        is_typedef = true;
+        pos = skipWhitespace(src, tok.end);
+        tok = readToken(src, pos) orelse return null;
+    }
+
+    if (!mem.eql(u8, tok.text, "struct")) return null;
+    pos = skipWhitespace(src, tok.end);
+    if (pos >= src.len) return null;
+
+    // Read optional struct tag name (absent for anonymous typedef structs)
+    var struct_tag: ?[]const u8 = null;
+    if (src[pos] != '{') {
+        const name_tok = readToken(src, pos) orelse return null;
+        // Forward declaration `struct name;` — skip
+        if (name_tok.text[0] == ';') return null;
+        struct_tag = name_tok.text;
+        pos = skipWhitespace(src, name_tok.end);
+    }
+
+    if (pos >= src.len or src[pos] != '{') return null;
+    pos += 1; // skip '{'
+
+    const fields_result = try parseStructFields(allocator, src, pos, known_structs);
+    pos = fields_result.end_pos;
+
+    pos = skipWhitespace(src, pos);
+    if (pos >= src.len or src[pos] != '}') return null;
+    pos += 1; // skip '}'
+    pos = skipWhitespace(src, pos);
+
+    var final_name: []const u8 = undefined;
+    if (is_typedef) {
+        // After '}', read the typedef alias name
+        const alias_tok = readToken(src, pos) orelse return null;
+        final_name = alias_tok.text;
+        pos = alias_tok.end;
+    } else {
+        final_name = struct_tag orelse return null;
+    }
+
+    // Register so subsequent functions/structs can reference this type
+    try known_structs.put(final_name, {});
+
+    // Consume trailing semicolon
+    pos = skipWhitespace(src, pos);
+    if (pos < src.len and src[pos] == ';') pos += 1;
+
+    return StructParseResult{
+        .struc = .{ .name = final_name, .fields = fields_result.fields },
+        .end_pos = pos,
+    };
+}
+
+/// Parse struct fields between { and }. Fields are `type name;` separated by semicolons.
+fn parseStructFields(allocator: mem.Allocator, src: []const u8, start: usize, known_structs: *std.StringHashMap(void)) !struct { fields: []const CStructField, end_pos: usize } {
+    var fields = try std.ArrayList(CStructField).initCapacity(allocator, 4);
+    defer fields.deinit(allocator);
+    var pos = start;
+
+    while (pos < src.len and src[pos] != '}') {
+        pos = skipWhitespace(src, pos);
+        if (pos >= src.len or src[pos] == '}') break;
+
+        var field_tokens = try std.ArrayList([]const u8).initCapacity(allocator, 4);
+        defer field_tokens.deinit(allocator);
+        var has_pointer = false;
+
+        while (pos < src.len and src[pos] != ';' and src[pos] != '}') {
+            pos = skipWhitespace(src, pos);
+            if (pos >= src.len or src[pos] == ';' or src[pos] == '}') break;
+
+            if (src[pos] == '*') {
+                has_pointer = true;
+                pos += 1;
+                continue;
+            }
+
+            const tok = readToken(src, pos) orelse break;
+            if (mem.eql(u8, tok.text, "const")) {
+                pos = tok.end;
+                continue;
+            }
+            try field_tokens.append(allocator, tok.text);
+            pos = tok.end;
+        }
+
+        if (pos < src.len and src[pos] == ';') pos += 1;
+
+        if (field_tokens.items.len >= 2) {
+            const field_name = field_tokens.items[field_tokens.items.len - 1];
+            const type_tokens = field_tokens.items[0 .. field_tokens.items.len - 1];
+            const param = resolveParamType(field_name, type_tokens, has_pointer, known_structs);
+            try fields.append(allocator, .{
+                .name = param.name,
+                .c_type = param.c_type,
+                .struct_type_name = param.struct_type_name,
+                .pointee_type = param.pointee_type,
+                .pointee_struct_name = param.pointee_struct_name,
+            });
+        }
+    }
+
+    return .{ .fields = try allocator.dupe(CStructField, fields.items), .end_pos = pos };
+}
+
+// ── Type mapping ────────────────────────────────────────────
 
 fn mapReturnType(tokens: []const []const u8) CType {
     if (tokens.len == 0) return .i32; // default: int
@@ -341,6 +597,17 @@ pub fn typeToHoneyStr(t: CType) []const u8 {
         .f64 => "f64",
         .ptr => "i64",
     };
+}
+
+/// Format a CParam/CStructField type as a Honey type string. Handles struct names and pointers.
+pub fn formatHoneyType(allocator: mem.Allocator, c_type: CType, struct_type_name: ?[]const u8, pointee_type: ?CType, pointee_struct_name: ?[]const u8) ![]const u8 {
+    if (struct_type_name) |name| return try allocator.dupe(u8, name);
+    if (c_type == .ptr) {
+        if (pointee_struct_name) |name| return try std.fmt.allocPrint(allocator, "*mut {s}", .{name});
+        if (pointee_type) |pt| return try std.fmt.allocPrint(allocator, "*mut {s}", .{typeToHoneyStr(pt)});
+        return try allocator.dupe(u8, "*mut i8"); // fallback: void* → *mut i8
+    }
+    return try allocator.dupe(u8, typeToHoneyStr(c_type));
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -538,6 +805,19 @@ fn stripComments(allocator: mem.Allocator, src: []const u8) ![]u8 {
 
 // ── Tests ──────────────────────────────────────────────────
 
+// ── Helpers for tests ───────────────────────────────────────
+
+fn expectParseResult(src: []const u8) !CParseResult {
+    return parse(std.testing.allocator, src);
+}
+
+fn freeResult(result: CParseResult) void {
+    CFunction.freeAll(result.functions, std.testing.allocator);
+    CStruct.freeAll(result.structs, std.testing.allocator);
+}
+
+// ── Function parsing tests ──────────────────────────────────
+
 test "parse simple C functions" {
     const src =
         \\int add(int a, int b) {
@@ -548,14 +828,14 @@ test "parse simple C functions" {
         \\    return a - b;
         \\}
     ;
-    const functions = try parse(std.testing.allocator, src);
-    defer CFunction.freeAll(functions, std.testing.allocator);
+    const result = try expectParseResult(src);
+    defer freeResult(result);
 
-    try std.testing.expectEqual(@as(usize, 2), functions.len);
-    try std.testing.expectEqualStrings("add", functions[0].name);
-    try std.testing.expectEqual(CType.i32, functions[0].return_type);
-    try std.testing.expectEqual(@as(usize, 2), functions[0].params.len);
-    try std.testing.expectEqualStrings("sub", functions[1].name);
+    try std.testing.expectEqual(@as(usize, 2), result.functions.len);
+    try std.testing.expectEqualStrings("add", result.functions[0].name);
+    try std.testing.expectEqual(CType.i32, result.functions[0].return_type);
+    try std.testing.expectEqual(@as(usize, 2), result.functions[0].params.len);
+    try std.testing.expectEqualStrings("sub", result.functions[1].name);
 }
 
 test "parse skips static functions" {
@@ -563,24 +843,24 @@ test "parse skips static functions" {
         \\int add(int a, int b) { return a + b; }
         \\static int helper(int x) { return x * 2; }
     ;
-    const functions = try parse(std.testing.allocator, src);
-    defer CFunction.freeAll(functions, std.testing.allocator);
+    const result = try expectParseResult(src);
+    defer freeResult(result);
 
-    try std.testing.expectEqual(@as(usize, 1), functions.len);
-    try std.testing.expectEqualStrings("add", functions[0].name);
+    try std.testing.expectEqual(@as(usize, 1), result.functions.len);
+    try std.testing.expectEqualStrings("add", result.functions[0].name);
 }
 
 test "parse void function with void params" {
     const src =
         \\void init(void) { }
     ;
-    const functions = try parse(std.testing.allocator, src);
-    defer CFunction.freeAll(functions, std.testing.allocator);
+    const result = try expectParseResult(src);
+    defer freeResult(result);
 
-    try std.testing.expectEqual(@as(usize, 1), functions.len);
-    try std.testing.expectEqualStrings("init", functions[0].name);
-    try std.testing.expectEqual(CType.void, functions[0].return_type);
-    try std.testing.expectEqual(@as(usize, 0), functions[0].params.len);
+    try std.testing.expectEqual(@as(usize, 1), result.functions.len);
+    try std.testing.expectEqualStrings("init", result.functions[0].name);
+    try std.testing.expectEqual(CType.void, result.functions[0].return_type);
+    try std.testing.expectEqual(@as(usize, 0), result.functions[0].params.len);
 }
 
 test "parse with comments" {
@@ -591,11 +871,11 @@ test "parse with comments" {
         \\    return a + b;
         \\}
     ;
-    const functions = try parse(std.testing.allocator, src);
-    defer CFunction.freeAll(functions, std.testing.allocator);
+    const result = try expectParseResult(src);
+    defer freeResult(result);
 
-    try std.testing.expectEqual(@as(usize, 1), functions.len);
-    try std.testing.expectEqualStrings("add", functions[0].name);
+    try std.testing.expectEqual(@as(usize, 1), result.functions.len);
+    try std.testing.expectEqualStrings("add", result.functions[0].name);
 }
 
 test "parse function declarations (no body)" {
@@ -603,27 +883,27 @@ test "parse function declarations (no body)" {
         \\int add(int a, int b);
         \\void exit(int code);
     ;
-    const functions = try parse(std.testing.allocator, src);
-    defer CFunction.freeAll(functions, std.testing.allocator);
+    const result = try expectParseResult(src);
+    defer freeResult(result);
 
-    try std.testing.expectEqual(@as(usize, 2), functions.len);
-    try std.testing.expectEqualStrings("add", functions[0].name);
-    try std.testing.expectEqualStrings("exit", functions[1].name);
-    try std.testing.expectEqual(CType.void, functions[1].return_type);
+    try std.testing.expectEqual(@as(usize, 2), result.functions.len);
+    try std.testing.expectEqualStrings("add", result.functions[0].name);
+    try std.testing.expectEqualStrings("exit", result.functions[1].name);
+    try std.testing.expectEqual(CType.void, result.functions[1].return_type);
 }
 
 test "parse fixed-width types" {
     const src =
         \\int32_t process(uint8_t tag, int64_t value) { return 0; }
     ;
-    const functions = try parse(std.testing.allocator, src);
-    defer CFunction.freeAll(functions, std.testing.allocator);
+    const result = try expectParseResult(src);
+    defer freeResult(result);
 
-    try std.testing.expectEqual(@as(usize, 1), functions.len);
-    try std.testing.expectEqual(CType.i32, functions[0].return_type);
-    try std.testing.expectEqual(@as(usize, 2), functions[0].params.len);
-    try std.testing.expectEqual(CType.u8, functions[0].params[0].c_type);
-    try std.testing.expectEqual(CType.i64, functions[0].params[1].c_type);
+    try std.testing.expectEqual(@as(usize, 1), result.functions.len);
+    try std.testing.expectEqual(CType.i32, result.functions[0].return_type);
+    try std.testing.expectEqual(@as(usize, 2), result.functions[0].params.len);
+    try std.testing.expectEqual(CType.u8, result.functions[0].params[0].c_type);
+    try std.testing.expectEqual(CType.i64, result.functions[0].params[1].c_type);
 }
 
 test "type to honey string" {
@@ -631,4 +911,144 @@ test "type to honey string" {
     try std.testing.expectEqualStrings("void", typeToHoneyStr(.void));
     try std.testing.expectEqualStrings("f64", typeToHoneyStr(.f64));
     try std.testing.expectEqualStrings("i64", typeToHoneyStr(.ptr));
+}
+
+// ── Struct parsing tests ────────────────────────────────────
+
+test "parse named C struct" {
+    const src = "struct vec2 { float x; float y; };";
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(@as(usize, 0), result.functions.len);
+    try std.testing.expectEqual(@as(usize, 1), result.structs.len);
+    try std.testing.expectEqualStrings("vec2", result.structs[0].name);
+    try std.testing.expectEqual(@as(usize, 2), result.structs[0].fields.len);
+    try std.testing.expectEqualStrings("x", result.structs[0].fields[0].name);
+    try std.testing.expectEqual(CType.f32, result.structs[0].fields[0].c_type);
+    try std.testing.expectEqualStrings("y", result.structs[0].fields[1].name);
+    try std.testing.expectEqual(CType.f32, result.structs[0].fields[1].c_type);
+}
+
+test "parse typedef anonymous struct" {
+    const src = "typedef struct { int width; int height; } Size;";
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(@as(usize, 1), result.structs.len);
+    try std.testing.expectEqualStrings("Size", result.structs[0].name);
+    try std.testing.expectEqual(@as(usize, 2), result.structs[0].fields.len);
+    try std.testing.expectEqualStrings("width", result.structs[0].fields[0].name);
+    try std.testing.expectEqual(CType.i32, result.structs[0].fields[0].c_type);
+}
+
+test "parse typedef named struct" {
+    const src = "typedef struct vec2 { float x; float y; } vec2;";
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(@as(usize, 1), result.structs.len);
+    try std.testing.expectEqualStrings("vec2", result.structs[0].name);
+}
+
+test "parse struct with struct-typed field" {
+    const src =
+        \\struct vec2 { float x; float y; };
+        \\struct rect { struct vec2 origin; struct vec2 size; };
+    ;
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(@as(usize, 2), result.structs.len);
+    try std.testing.expectEqualStrings("rect", result.structs[1].name);
+    try std.testing.expectEqualStrings("vec2", result.structs[1].fields[0].struct_type_name.?);
+    try std.testing.expectEqualStrings("vec2", result.structs[1].fields[1].struct_type_name.?);
+}
+
+test "parse function with struct param" {
+    const src =
+        \\struct vec2 { float x; float y; };
+        \\void draw(struct vec2 pos);
+    ;
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(@as(usize, 1), result.functions.len);
+    try std.testing.expectEqualStrings("draw", result.functions[0].name);
+    try std.testing.expectEqualStrings("vec2", result.functions[0].params[0].struct_type_name.?);
+}
+
+test "parse function with struct pointer param" {
+    const src =
+        \\struct vec2 { float x; float y; };
+        \\void modify(struct vec2 *v);
+    ;
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(CType.ptr, result.functions[0].params[0].c_type);
+    try std.testing.expect(result.functions[0].params[0].struct_type_name == null);
+    try std.testing.expectEqualStrings("vec2", result.functions[0].params[0].pointee_struct_name.?);
+}
+
+test "parse function returning struct" {
+    const src =
+        \\struct vec2 { float x; float y; };
+        \\struct vec2 make_vec(float x, float y);
+    ;
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(@as(usize, 1), result.functions.len);
+    try std.testing.expectEqualStrings("vec2", result.functions[0].return_struct_name.?);
+}
+
+test "parse function with typedef struct param" {
+    const src =
+        \\typedef struct { float x; float y; } Vec2;
+        \\float length(Vec2 v);
+    ;
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(@as(usize, 1), result.functions.len);
+    try std.testing.expectEqualStrings("Vec2", result.functions[0].params[0].struct_type_name.?);
+}
+
+test "parse struct and function together" {
+    const src =
+        \\struct vec2 { float x; float y; };
+        \\void print_hello(int n);
+    ;
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(@as(usize, 1), result.structs.len);
+    try std.testing.expectEqual(@as(usize, 1), result.functions.len);
+    try std.testing.expectEqualStrings("vec2", result.structs[0].name);
+    try std.testing.expectEqualStrings("print_hello", result.functions[0].name);
+}
+
+test "formatHoneyType" {
+    const alloc = std.testing.allocator;
+
+    const t1 = try formatHoneyType(alloc, .i32, null, null, null);
+    defer alloc.free(t1);
+    try std.testing.expectEqualStrings("i32", t1);
+
+    const t2 = try formatHoneyType(alloc, .i32, "vec2", null, null);
+    defer alloc.free(t2);
+    try std.testing.expectEqualStrings("vec2", t2);
+
+    const t3 = try formatHoneyType(alloc, .ptr, null, .i32, null);
+    defer alloc.free(t3);
+    try std.testing.expectEqualStrings("*mut i32", t3);
+
+    const t4 = try formatHoneyType(alloc, .ptr, null, null, "vec2");
+    defer alloc.free(t4);
+    try std.testing.expectEqualStrings("*mut vec2", t4);
+
+    const t5 = try formatHoneyType(alloc, .ptr, null, null, null);
+    defer alloc.free(t5);
+    try std.testing.expectEqualStrings("*mut i8", t5);
 }

@@ -261,12 +261,25 @@ test "single-item pointer arithmetic still rejected" {
     try r.expectSemanticError(.pointer_arithmetic);
 }
 
-test "many-item and single-item pointers are distinct types" {
+test "many-item to single-item pointer coercion is allowed (tightening)" {
     var r = try compileTo(.semantic,
         \\main :: func() void {
         \\    mut x: i32 = 42
         \\    p: *i32 = &x
         \\    q: @i32 = p
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "single-item to many-item pointer coercion is rejected (loosening)" {
+    var r = try compileTo(.semantic,
+        \\main :: func() void {
+        \\    mut x: i32 = 42
+        \\    p: @i32 = &x
+        \\    q: *i32 = p
         \\}
         \\
     );

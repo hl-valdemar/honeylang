@@ -1583,8 +1583,13 @@ pub const CodeGenContext = struct {
             // find field index in struct definition
             for (struct_type.fields, 0..) |field, i| {
                 if (mem.eql(u8, field.name, field_name)) {
-                    const value_reg = try self.generateExpression(field_value_idx) orelse continue;
+                    // Skip store if value type doesn't match field type (error already reported by sema)
+                    const value_type = self.node_types.get(field_value_idx) orelse break;
                     const field_width = typeIdToWidth(field.type_id);
+                    const value_width = typeIdToWidth(value_type);
+                    if (field_width != value_width) break;
+
+                    const value_reg = try self.generateExpression(field_value_idx) orelse continue;
                     try func.emitStoreField(base, value_reg, struct_idx, @intCast(i), field_width);
                     break;
                 }

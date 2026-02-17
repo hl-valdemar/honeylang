@@ -66,6 +66,13 @@ pub const SemanticContext = struct {
     current_ret_type: TypeId = TypeId.void,
     current_namespace_prefix: []const u8 = "",
 
+    // Tracks which import we're currently collecting structs from (null = main file)
+    current_collecting_import: ?ImportContext = null,
+    // Saved context for import context switching during struct finalization
+    saved_ast: ?*const Ast = null,
+    saved_tokens: ?*const TokenList = null,
+    saved_src: ?*const SourceCode = null,
+
     pub fn init(
         allocator: mem.Allocator,
         ast: *const Ast,
@@ -684,16 +691,23 @@ pub const SemanticContext = struct {
         return result;
     }
 
+    /// Context needed to access a struct node that may live in an imported file's AST.
+    const ImportContext = struct {
+        import_idx: usize,
+    };
+
     /// Finalize struct types iteratively until all are done.
     /// Each pass finalizes structs whose field types are already finalized.
     fn finalizeStructTypes(self: *SemanticContext, decls: []const NodeIndex) !void {
-        // collect all struct declaration nodes (including those inside namespaces)
+        // collect all struct declaration nodes (including those inside namespaces and imports)
         var struct_nodes = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
         defer struct_nodes.deinit(self.allocator);
         var lookup_names = try std.ArrayList([]const u8).initCapacity(self.allocator, 4);
         defer lookup_names.deinit(self.allocator);
+        var import_contexts = try std.ArrayList(?ImportContext).initCapacity(self.allocator, 4);
+        defer import_contexts.deinit(self.allocator);
 
-        try self.collectAllStructDecls(decls, "", &struct_nodes, &lookup_names);
+        try self.collectAllStructDecls(decls, "", &struct_nodes, &lookup_names, &import_contexts);
 
         var finalized = try std.ArrayList(bool).initCapacity(self.allocator, struct_nodes.items.len);
         defer finalized.deinit(self.allocator);
@@ -711,6 +725,8 @@ pub const SemanticContext = struct {
                 if (finalized.items[si]) continue;
 
                 self.current_namespace_prefix = self.namespaceFromQualified(lookup_names.items[si]);
+                self.switchToImportContext(import_contexts.items[si]);
+                defer self.restoreFromImportContext(import_contexts.items[si]);
                 if (self.canFinalizeStruct(decl_idx)) {
                     try self.finalizeStructByName(decl_idx, lookup_names.items[si]);
                     finalized.items[si] = true;
@@ -723,11 +739,34 @@ pub const SemanticContext = struct {
         for (struct_nodes.items, 0..) |decl_idx, si| {
             if (!finalized.items[si]) {
                 self.current_namespace_prefix = self.namespaceFromQualified(lookup_names.items[si]);
+                self.switchToImportContext(import_contexts.items[si]);
+                defer self.restoreFromImportContext(import_contexts.items[si]);
                 try self.finalizeStructByName(decl_idx, lookup_names.items[si]);
             }
         }
 
         self.current_namespace_prefix = "";
+    }
+
+    /// Switch AST/tokens/src to an imported file's context. Saves the current context
+    /// so it can be restored with restoreFromImportContext.
+    fn switchToImportContext(self: *SemanticContext, ctx: ?ImportContext) void {
+        const ri = self.resolved_imports orelse return;
+        const ic = ctx orelse return;
+        const resolved = &ri.imports.items[ic.import_idx];
+        self.saved_ast = self.ast;
+        self.saved_tokens = self.tokens;
+        self.saved_src = self.src;
+        self.ast = &resolved.ast;
+        self.tokens = &resolved.tokens;
+        self.src = &resolved.src;
+    }
+
+    fn restoreFromImportContext(self: *SemanticContext, ctx: ?ImportContext) void {
+        if (ctx == null) return;
+        self.ast = self.saved_ast.?;
+        self.tokens = self.saved_tokens.?;
+        self.src = self.saved_src.?;
     }
 
     /// Extract namespace prefix from a qualified name (e.g. "geometry.Vec2" -> "geometry").
@@ -742,12 +781,14 @@ pub const SemanticContext = struct {
     }
 
     /// Recursively collect all struct_decl nodes from declarations, including inside namespaces.
+    /// Also tracks which import context each struct belongs to (null for main file structs).
     fn collectAllStructDecls(
         self: *SemanticContext,
         decls: []const NodeIndex,
         prefix: []const u8,
         struct_nodes: *std.ArrayList(NodeIndex),
         lookup_names: *std.ArrayList([]const u8),
+        import_contexts: *std.ArrayList(?ImportContext),
     ) !void {
         const arena_alloc = self.types.arena.allocator();
         for (decls) |decl_idx| {
@@ -761,6 +802,7 @@ pub const SemanticContext = struct {
                     short_name;
                 try struct_nodes.append(self.allocator, inner_idx);
                 try lookup_names.append(self.allocator, lookup_name);
+                try import_contexts.append(self.allocator, self.current_collecting_import);
             } else if (kind == .namespace_decl) {
                 const ns_decl = self.ast.getNamespaceDecl(inner_idx);
                 const ns_name = self.getMemberName(inner_idx) orelse continue;
@@ -769,7 +811,7 @@ pub const SemanticContext = struct {
                 else
                     try arena_alloc.dupe(u8, ns_name);
                 const ns_members = self.ast.getExtra(ns_decl.declarations);
-                try self.collectAllStructDecls(ns_members, ns_prefix, struct_nodes, lookup_names);
+                try self.collectAllStructDecls(ns_members, ns_prefix, struct_nodes, lookup_names, import_contexts);
             } else if (kind == .import_decl or kind == .c_include_decl or kind == .c_import_block) {
                 // Context-switch into the imported file to collect its structs
                 const ri = self.resolved_imports orelse continue;
@@ -781,18 +823,21 @@ pub const SemanticContext = struct {
                 const saved_tokens = self.tokens;
                 const saved_src = self.src;
                 const saved_import_map = self.current_import_map;
+                const saved_collecting_import = self.current_collecting_import;
                 self.ast = &resolved.ast;
                 self.tokens = &resolved.tokens;
                 self.src = &resolved.src;
                 self.current_import_map = &resolved.sub_import_map;
+                self.current_collecting_import = .{ .import_idx = import_idx };
 
                 const program_node = self.ast.getProgram(self.ast.root);
                 const import_decls = self.ast.getExtra(program_node.declarations);
-                self.collectAllStructDecls(import_decls, resolved.namespace_name, struct_nodes, lookup_names) catch {
+                self.collectAllStructDecls(import_decls, resolved.namespace_name, struct_nodes, lookup_names, import_contexts) catch {
                     self.ast = saved_ast;
                     self.tokens = saved_tokens;
                     self.src = saved_src;
                     self.current_import_map = saved_import_map;
+                    self.current_collecting_import = saved_collecting_import;
                     continue;
                 };
 
@@ -800,6 +845,7 @@ pub const SemanticContext = struct {
                 self.tokens = saved_tokens;
                 self.src = saved_src;
                 self.current_import_map = saved_import_map;
+                self.current_collecting_import = saved_collecting_import;
             }
         }
     }
@@ -2463,6 +2509,8 @@ pub const SemanticContext = struct {
                         .start = arg_loc.start,
                         .end = arg_loc.end,
                     });
+                    // Mark as unresolved so codegen traps (width .w32 ≠ .ptr)
+                    try self.node_types.put(self.allocator, arg_idx, .unresolved);
                 }
             }
         }
@@ -2677,12 +2725,12 @@ pub const SemanticContext = struct {
             return true;
         }
 
-        // pointer types: structural comparison, mut → immutable is allowed, same pointer kind required
+        // pointer types: structural comparison, mut → immutable is allowed
         if (left.isPointer() and right.isPointer()) {
             const lp = self.types.getPointerType(left) orelse return false;
             const rp = self.types.getPointerType(right) orelse return false;
-            // @T and *T are distinct kinds
-            if (lp.is_many_item != rp.is_many_item) return false;
+            // single-item → many-item is not allowed (loosening); reverse is fine (tightening)
+            if (lp.is_many_item and !rp.is_many_item) return false;
             // mut T → T is allowed (mutable to immutable)
             // T → mut T is not allowed
             if (lp.is_mutable and !rp.is_mutable) {
