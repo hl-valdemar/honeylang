@@ -46,25 +46,29 @@ pub fn parse(allocator: mem.Allocator, source: []const u8) ![]CFunction {
     const stripped = try stripComments(allocator, source);
     defer allocator.free(stripped);
 
+    // Evaluate preprocessor conditionals (#ifdef, #ifndef, #else, #endif)
+    const preprocessed = try preprocessConditionals(allocator, stripped);
+    defer allocator.free(preprocessed);
+
     var functions = try std.ArrayList(CFunction).initCapacity(allocator, 4);
     defer functions.deinit(allocator);
 
     var pos: usize = 0;
-    while (pos < stripped.len) {
+    while (pos < preprocessed.len) {
         // Skip whitespace
-        pos = skipWhitespace(stripped, pos);
-        if (pos >= stripped.len) break;
+        pos = skipWhitespace(preprocessed, pos);
+        if (pos >= preprocessed.len) break;
 
         // Skip preprocessor lines
-        if (stripped[pos] == '#') {
-            pos = skipToNewline(stripped, pos);
+        if (preprocessed[pos] == '#') {
+            pos = skipToNewline(preprocessed, pos);
             continue;
         }
 
         // Try to parse a top-level declaration
-        const result = tryParseFunction(allocator, stripped, pos) catch {
+        const result = tryParseFunction(allocator, preprocessed, pos) catch {
             // Skip to next semicolon or closing brace at depth 0
-            pos = skipToNextDecl(stripped, pos);
+            pos = skipToNextDecl(preprocessed, pos);
             continue;
         };
 
@@ -91,7 +95,7 @@ pub fn parse(allocator: mem.Allocator, source: []const u8) ![]CFunction {
                 .params = duped_params,
             });
         } else {
-            pos = skipToNextDecl(stripped, pos);
+            pos = skipToNextDecl(preprocessed, pos);
         }
     }
 
@@ -417,6 +421,72 @@ fn skipToNextDecl(src: []const u8, pos: usize) usize {
         if (src[p] == ';' and depth == 0) return p + 1;
     }
     return p;
+}
+
+/// Evaluate C preprocessor conditionals. Strips false branches and passes
+/// through all lines in active branches (including #define lines).
+fn preprocessConditionals(allocator: mem.Allocator, src: []const u8) ![]u8 {
+    var defined = std.StringHashMap(void).init(allocator);
+    defer defined.deinit();
+
+    // Stack tracks whether we're in an active branch at each nesting level.
+    // Each entry: .{ .active = is this branch active?, .seen_true = has any branch been true? }
+    var stack = try std.ArrayList(struct { active: bool, seen_true: bool }).initCapacity(allocator, 4);
+    defer stack.deinit(allocator);
+
+    var result = try std.ArrayList(u8).initCapacity(allocator, src.len);
+    const writer = result.writer(allocator);
+
+    var line_start: usize = 0;
+    while (line_start <= src.len) {
+        const line_end = mem.indexOfScalarPos(u8, src, line_start, '\n') orelse src.len;
+        const line = mem.trimLeft(u8, src[line_start..line_end], " \t");
+
+        const all_active = for (stack.items) |entry| {
+            if (!entry.active) break false;
+        } else true;
+
+        if (mem.startsWith(u8, line, "#ifdef ")) {
+            const name = mem.trim(u8, line["#ifdef ".len..], " \t\r");
+            const is_defined = defined.contains(name);
+            try stack.append(allocator, .{ .active = all_active and is_defined, .seen_true = is_defined });
+        } else if (mem.startsWith(u8, line, "#ifndef ")) {
+            const name = mem.trim(u8, line["#ifndef ".len..], " \t\r");
+            const is_defined = defined.contains(name);
+            try stack.append(allocator, .{ .active = all_active and !is_defined, .seen_true = !is_defined });
+        } else if (mem.startsWith(u8, line, "#else")) {
+            if (stack.items.len > 0) {
+                const top = &stack.items[stack.items.len - 1];
+                // Check parent is active
+                const parent_active = for (stack.items[0 .. stack.items.len - 1]) |entry| {
+                    if (!entry.active) break false;
+                } else true;
+                top.active = parent_active and !top.seen_true;
+                if (top.active) top.seen_true = true;
+            }
+        } else if (mem.startsWith(u8, line, "#endif")) {
+            if (stack.items.len > 0) {
+                _ = stack.pop();
+            }
+        } else if (all_active) {
+            // Active branch — output the line
+            if (mem.startsWith(u8, line, "#define ")) {
+                // Track the defined name
+                const after_define = mem.trimLeft(u8, line["#define ".len..], " \t");
+                const name_end = mem.indexOfAny(u8, after_define, " \t\r") orelse after_define.len;
+                if (name_end > 0) {
+                    try defined.put(after_define[0..name_end], {});
+                }
+            }
+            try writer.writeAll(src[line_start..line_end]);
+            try writer.writeAll("\n");
+        }
+
+        if (line_end >= src.len) break;
+        line_start = line_end + 1;
+    }
+
+    return try result.toOwnedSlice(allocator);
 }
 
 fn stripComments(allocator: mem.Allocator, src: []const u8) ![]u8 {

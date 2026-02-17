@@ -302,6 +302,41 @@ test "condition must be bool" {
     try r.expectSemanticError(.condition_not_bool);
 }
 
+test "missing return in non-void function" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\  if true { return 0 }
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.missing_return);
+}
+
+test "missing return with else-if but no else" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\  if true { return 0 }
+        \\  else if false { return 1 }
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.missing_return);
+}
+
+test "no missing return when all branches return" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\  if true { return 0 }
+        \\  else { return 1 }
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
 // ============================================================
 // codegen: error recovery traps
 // ============================================================

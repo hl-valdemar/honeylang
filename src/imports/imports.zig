@@ -107,16 +107,11 @@ fn resolveImportsInner(
             var combined = try std.ArrayList(u8).initCapacity(allocator, 1024);
             const c_writer = combined.writer(allocator);
 
-            var define_strings = try std.ArrayList([]const u8).initCapacity(allocator, define_indices.len);
-
             for (define_indices) |def_tok_idx| {
                 const def_tok = tokens.items[def_tok_idx];
                 const def_value = file_src.getSlice(def_tok.start, def_tok.start + def_tok.len);
                 try c_writer.print("#define {s}\n", .{def_value});
-                try define_strings.append(allocator, def_value);
             }
-
-            const define_constants = try collectDefineConstants(allocator, define_strings.items);
 
             var block_has_errors = false;
             for (include_indices) |inc_tok_idx| {
@@ -130,16 +125,12 @@ fn resolveImportsInner(
                 }
 
                 const inc_full_path = try std.fs.path.join(allocator, &.{ file_dir, inc_path });
-                const file = fs.cwd().openFile(inc_full_path, .{ .mode = .read_only }) catch {
+                const resolved = resolveIncludes(allocator, inc_full_path) catch {
                     std.debug.print("error: cannot read C header file: {s}\n", .{inc_path});
                     block_has_errors = true;
                     continue;
                 };
-                defer file.close();
-                const file_size = file.getEndPos() catch { block_has_errors = true; continue; };
-                const header_buf = allocator.alloc(u8, file_size) catch { block_has_errors = true; continue; };
-                _ = file.readAll(header_buf) catch { block_has_errors = true; continue; };
-                try c_writer.writeAll(header_buf);
+                try c_writer.writeAll(resolved);
                 try c_writer.writeAll("\n");
             }
 
@@ -154,6 +145,8 @@ fn resolveImportsInner(
                 result.has_errors = true;
                 continue;
             };
+
+            const define_constants = try collectDefineConstants(allocator, c_source);
 
             const binding_source = generateBindingSource(allocator, functions, define_constants) catch {
                 result.has_errors = true;
@@ -233,17 +226,10 @@ fn resolveImportsInner(
                 continue;
             }
 
-            const c_source = blk: {
-                const file = fs.cwd().openFile(full_path, .{ .mode = .read_only }) catch {
-                    std.debug.print("error: cannot read C header file: {s}\n", .{import_path});
-                    result.has_errors = true;
-                    continue;
-                };
-                defer file.close();
-                const file_size = file.getEndPos() catch { result.has_errors = true; continue; };
-                const buf = allocator.alloc(u8, file_size) catch { result.has_errors = true; continue; };
-                _ = file.readAll(buf) catch { result.has_errors = true; continue; };
-                break :blk buf;
+            const c_source = resolveIncludes(allocator, full_path) catch {
+                std.debug.print("error: cannot read C header file: {s}\n", .{import_path});
+                result.has_errors = true;
+                continue;
             };
 
             const functions = c_parser.parse(allocator, c_source) catch {
@@ -252,7 +238,9 @@ fn resolveImportsInner(
                 continue;
             };
 
-            const binding_source = generateBindingSource(allocator, functions, &.{}) catch {
+            const define_constants = try collectDefineConstants(allocator, c_source);
+
+            const binding_source = generateBindingSource(allocator, functions, define_constants) catch {
                 result.has_errors = true;
                 continue;
             };
@@ -375,26 +363,89 @@ fn isNumericLiteral(s: []const u8) bool {
     return has_digit;
 }
 
-/// Parse define strings into name/value pairs, keeping only those with numeric values.
+/// Scan C source text for `#define NAME VALUE` lines and collect numeric constants.
 fn collectDefineConstants(
     allocator: mem.Allocator,
-    define_strings: []const []const u8,
+    c_source: []const u8,
 ) ![]const CDefine {
-    var defines = try std.ArrayList(CDefine).initCapacity(allocator, define_strings.len);
+    var defines = try std.ArrayList(CDefine).initCapacity(allocator, 8);
 
-    for (define_strings) |def_str| {
-        // Split at first space: "PI 3.14" -> name="PI", value="3.14"
-        if (mem.indexOfScalar(u8, def_str, ' ')) |space_idx| {
-            const name = def_str[0..space_idx];
-            const value = mem.trim(u8, def_str[space_idx + 1 ..], " \t");
-            if (value.len > 0 and isNumericLiteral(value)) {
-                try defines.append(allocator, .{ .name = name, .value = value });
+    var line_start: usize = 0;
+    while (line_start < c_source.len) {
+        // Find end of line
+        const line_end = mem.indexOfScalarPos(u8, c_source, line_start, '\n') orelse c_source.len;
+        const line = mem.trim(u8, c_source[line_start..line_end], " \t\r");
+
+        if (mem.startsWith(u8, line, "#define ")) {
+            const after_define = mem.trimLeft(u8, line["#define ".len..], " \t");
+            // Split at first whitespace: NAME VALUE
+            if (mem.indexOfAny(u8, after_define, " \t")) |space_idx| {
+                const name = after_define[0..space_idx];
+                const value = mem.trim(u8, after_define[space_idx + 1 ..], " \t");
+                if (value.len > 0 and isNumericLiteral(value)) {
+                    try defines.append(allocator, .{ .name = name, .value = value });
+                }
             }
         }
-        // No space means no value (e.g., "DEBUG") — skip
+
+        line_start = line_end + 1;
     }
 
     return try defines.toOwnedSlice(allocator);
+}
+
+/// Read a C header file and recursively expand `#include "..."` directives.
+/// System includes (`#include <...>`) are kept as-is (skipped by the c_parser).
+fn resolveIncludes(allocator: mem.Allocator, file_path: []const u8) ![]const u8 {
+    var visited = std.StringHashMap(void).init(allocator);
+    defer visited.deinit();
+    return resolveIncludesInner(allocator, file_path, &visited);
+}
+
+fn resolveIncludesInner(
+    allocator: mem.Allocator,
+    file_path: []const u8,
+    visited: *std.StringHashMap(void),
+) ![]const u8 {
+    const abs_path = fs.cwd().realpathAlloc(allocator, file_path) catch file_path;
+    if (visited.contains(abs_path)) return "";
+    try visited.put(abs_path, {});
+
+    const file = try fs.cwd().openFile(file_path, .{ .mode = .read_only });
+    defer file.close();
+    const file_size = try file.getEndPos();
+    const content = try allocator.alloc(u8, file_size);
+    _ = try file.readAll(content);
+
+    const file_dir = std.fs.path.dirname(file_path) orelse ".";
+
+    var result = try std.ArrayList(u8).initCapacity(allocator, content.len);
+    const writer = result.writer(allocator);
+
+    var line_start: usize = 0;
+    while (line_start < content.len) {
+        const line_end = mem.indexOfScalarPos(u8, content, line_start, '\n') orelse content.len;
+        const line = mem.trimLeft(u8, content[line_start..line_end], " \t");
+
+        if (mem.startsWith(u8, line, "#include \"")) {
+            const path_start = mem.indexOf(u8, line, "\"").? + 1;
+            if (mem.indexOfScalarPos(u8, line, path_start, '"')) |path_end| {
+                const inc_path = line[path_start..path_end];
+                const inc_full = try std.fs.path.join(allocator, &.{ file_dir, inc_path });
+                const inc_content = resolveIncludesInner(allocator, inc_full, visited) catch "";
+                try writer.writeAll(inc_content);
+                try writer.writeAll("\n");
+                line_start = line_end + 1;
+                continue;
+            }
+        }
+
+        // Keep the line as-is (including other #include <...>, #define, etc.)
+        try writer.writeAll(content[line_start .. line_end + @as(usize, if (line_end < content.len) 1 else 0)]);
+        line_start = line_end + 1;
+    }
+
+    return try result.toOwnedSlice(allocator);
 }
 
 /// Generate Honey binding source from extracted C functions and define constants.
@@ -457,18 +508,20 @@ test "isNumericLiteral rejects non-numeric" {
 }
 
 test "collectDefineConstants skips valueless defines" {
-    const defines = try collectDefineConstants(std.testing.allocator, &.{"DEBUG"});
+    const defines = try collectDefineConstants(std.testing.allocator, "#define DEBUG\n");
     defer std.testing.allocator.free(defines);
     try std.testing.expectEqual(@as(usize, 0), defines.len);
 }
 
-test "collectDefineConstants extracts numeric defines" {
-    const defines = try collectDefineConstants(std.testing.allocator, &.{
-        "PI 3.14",
-        "MAX_SIZE 1024",
-        "DEBUG",
-        "VERSION hello",
-    });
+test "collectDefineConstants extracts numeric defines from source" {
+    const c_source =
+        \\#define PI 3.14
+        \\#define MAX_SIZE 1024
+        \\#define DEBUG
+        \\#define VERSION hello
+        \\int add(int a, int b);
+    ;
+    const defines = try collectDefineConstants(std.testing.allocator, c_source);
     defer std.testing.allocator.free(defines);
     try std.testing.expectEqual(@as(usize, 2), defines.len);
     try std.testing.expectEqualStrings("PI", defines[0].name);

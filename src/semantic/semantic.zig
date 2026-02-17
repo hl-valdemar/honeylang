@@ -1660,6 +1660,18 @@ pub const SemanticContext = struct {
 
         // check function body
         try self.checkBlock(decl.body.?);
+
+        // check that non-void functions return on all code paths
+        if (!expected_return_type.isVoid() and !expected_return_type.isUnresolved()) {
+            if (!self.blockAlwaysReturns(decl.body.?)) {
+                const loc = self.ast.getLocation(node_idx);
+                try self.errors.add(.{
+                    .kind = .missing_return,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+        }
     }
 
     fn checkVarDecl(self: *SemanticContext, node_idx: NodeIndex) !TypeId {
@@ -1753,6 +1765,44 @@ pub const SemanticContext = struct {
         for (deferred) |stmt_idx| {
             try self.checkStatement(stmt_idx);
         }
+    }
+
+    /// Returns true if the block is guaranteed to return on all code paths.
+    fn blockAlwaysReturns(self: *SemanticContext, node_idx: NodeIndex) bool {
+        const block = self.ast.getBlock(node_idx);
+        const statements = self.ast.getExtra(block.statements);
+        if (statements.len == 0) return false;
+
+        // check the last statement
+        const last = statements[statements.len - 1];
+        const kind = self.ast.getKind(last);
+
+        return switch (kind) {
+            .return_stmt => true,
+            .if_stmt => self.ifAlwaysReturns(last),
+            .block => self.blockAlwaysReturns(last),
+            else => false,
+        };
+    }
+
+    /// Returns true if an if-statement returns on all branches.
+    fn ifAlwaysReturns(self: *SemanticContext, node_idx: NodeIndex) bool {
+        const if_stmt = self.ast.getIf(node_idx);
+
+        // must have an else branch to cover all paths
+        const else_blk = if_stmt.else_block orelse return false;
+
+        // check the if-block
+        if (!self.blockAlwaysReturns(if_stmt.if_block)) return false;
+
+        // check all else-if blocks
+        for (0..if_stmt.elseIfCount()) |i| {
+            const pair = if_stmt.getElseIf(self.ast, i) orelse return false;
+            if (!self.blockAlwaysReturns(pair.block)) return false;
+        }
+
+        // check the else block
+        return self.blockAlwaysReturns(else_blk);
     }
 
     fn checkStatement(self: *SemanticContext, node_idx: NodeIndex) !void {

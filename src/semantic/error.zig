@@ -61,6 +61,9 @@ pub const SemanticErrorKind = enum {
     import_file_not_found,
     circular_import,
 
+    // control flow errors
+    missing_return,
+
     // pointer errors
     cannot_take_address,
     deref_non_pointer,
@@ -219,16 +222,6 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .message = "duplicate field in struct literal",
         .help = "field already specified in this literal",
     },
-    .import_file_not_found = .{
-        .code = "S034",
-        .message = "import file not found",
-        .help = "check that the import path is correct",
-    },
-    .circular_import = .{
-        .code = "S035",
-        .message = "circular import detected",
-        .help = "files cannot import each other",
-    },
     .cannot_take_address = .{
         .code = "S028",
         .message = "cannot take address of expression",
@@ -259,6 +252,21 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .message = "unused namespace",
         .help = "remove or use this namespace",
         .severity = .warning,
+    },
+    .import_file_not_found = .{
+        .code = "S034",
+        .message = "import file not found",
+        .help = "check that the import path is correct",
+    },
+    .circular_import = .{
+        .code = "S035",
+        .message = "circular import detected",
+        .help = "files cannot import each other",
+    },
+    .missing_return = .{
+        .code = "S036",
+        .message = "missing return in non-void function",
+        .help = "not all code paths return a value",
     },
 });
 
