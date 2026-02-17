@@ -70,6 +70,9 @@ pub const SemanticErrorKind = enum {
     assign_through_immutable_ptr,
     pointer_arithmetic,
 
+    // mutability errors
+    mutability_mismatch,
+
     pub fn info(self: SemanticErrorKind) ErrorInfo {
         return error_info.get(self);
     }
@@ -267,6 +270,11 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .code = "S036",
         .message = "missing return in non-void function",
         .help = "not all code paths return a value",
+    },
+    .mutability_mismatch = .{
+        .code = "S037",
+        .message = "mutability mismatch",
+        .help = "expected mutable value, but value is immutable; declare with 'mut' to allow mutation",
     },
 });
 

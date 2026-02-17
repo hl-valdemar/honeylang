@@ -1739,11 +1739,16 @@ pub const SemanticContext = struct {
         if (!expected_type.isUnresolved()) {
             if (value_type != null and !value_type.?.isUnresolved()) {
                 if (!self.typesCompatible(expected_type, value_type.?)) {
-                    const loc = self.ast.getLocation(node_idx);
+                    const err_kind: @import("error.zig").SemanticErrorKind = if (expected_type.isPointer() and value_type.?.isPointer()) blk: {
+                        const lp = self.types.getPointerType(expected_type) orelse break :blk .type_mismatch;
+                        const rp = self.types.getPointerType(value_type.?) orelse break :blk .type_mismatch;
+                        break :blk if (lp.is_mutable and !rp.is_mutable) .mutability_mismatch else .type_mismatch;
+                    } else .type_mismatch;
+                    const val_loc = self.ast.getLocation(decl.value);
                     try self.errors.add(.{
-                        .kind = .type_mismatch,
-                        .start = loc.start,
-                        .end = loc.end,
+                        .kind = err_kind,
+                        .start = val_loc.start,
+                        .end = val_loc.end,
                     });
                 }
             } else if (value_type == null) {
@@ -2504,8 +2509,13 @@ pub const SemanticContext = struct {
             if (arg_type) |at| {
                 if (!self.typesCompatible(expected_type, at)) {
                     const arg_loc = self.ast.getLocation(arg_idx);
+                    const err_kind: @import("error.zig").SemanticErrorKind = if (expected_type.isPointer() and at.isPointer()) blk: {
+                        const lp = self.types.getPointerType(expected_type) orelse break :blk .argument_type_mismatch;
+                        const rp = self.types.getPointerType(at) orelse break :blk .argument_type_mismatch;
+                        break :blk if (lp.is_mutable and !rp.is_mutable) .mutability_mismatch else .argument_type_mismatch;
+                    } else .argument_type_mismatch;
                     try self.errors.add(.{
-                        .kind = .argument_type_mismatch,
+                        .kind = err_kind,
                         .start = arg_loc.start,
                         .end = arg_loc.end,
                     });
