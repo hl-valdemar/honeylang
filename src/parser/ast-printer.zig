@@ -143,9 +143,9 @@ fn getNodeInfo(
             if (decl.name_token) |nt| {
                 const name_tok = tokens.items[nt];
                 const name = src.getSlice(name_tok.start, name_tok.start + name_tok.len);
-                break :blk std.fmt.bufPrint(&S.buf, "{s} :: import c include \"{s}\"", .{ name, path }) catch "?";
+                break :blk std.fmt.bufPrint(&S.buf, "{s} :: import c \"{s}\"", .{ name, path }) catch "?";
             }
-            break :blk std.fmt.bufPrint(&S.buf, "import c include \"{s}\"", .{path}) catch "?";
+            break :blk std.fmt.bufPrint(&S.buf, "import c \"{s}\"", .{path}) catch "?";
         },
         .c_import_block => blk: {
             const block = ast.getCImportBlock(idx);
@@ -589,9 +589,9 @@ fn printNode(
             if (decl.name_token) |nt| {
                 const name_tok = tokens.items[nt];
                 const name = src.getSlice(name_tok.start, name_tok.start + name_tok.len);
-                std.debug.print("{s} :: import c include \"{s}\"\n", .{ name, path });
+                std.debug.print("{s} :: import c \"{s}\"\n", .{ name, path });
             } else {
-                std.debug.print("import c include \"{s}\"\n", .{path});
+                std.debug.print("import c \"{s}\"\n", .{path});
             }
         },
 

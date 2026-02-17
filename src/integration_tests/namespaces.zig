@@ -5,7 +5,7 @@ const NodeKind = @import("../parser/ast.zig").NodeKind;
 
 test "named import c header" {
     var r = try compileTo(.parser,
-        \\math :: import c include "math.h"
+        \\math :: import c "math.h"
         \\
     );
     defer r.deinit();
@@ -32,7 +32,7 @@ test "bare import still works" {
 
 test "bare c import still works" {
     var r = try compileTo(.parser,
-        \\import c include "math.h"
+        \\import c "math.h"
         \\
     );
     defer r.deinit();
@@ -60,7 +60,7 @@ test "named import produces correct AST node kind" {
 
 test "named c import produces correct AST node kind" {
     var r = try compileTo(.parser,
-        \\math :: import c include "math.h"
+        \\math :: import c "math.h"
         \\
     );
     defer r.deinit();

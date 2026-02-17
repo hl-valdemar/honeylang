@@ -150,11 +150,14 @@ pub const Parser = struct {
                 return try self.parseCImportBlock(name_token.?, start_pos);
             }
 
-            // Single include: `import c include "path"` or `import c "path"`
+            // Reject `import c include "path"` — use `import c "path"` instead
             if (self.isIdentifierText(0, "include")) {
-                self.advance(); // consume optional 'include'
+                const tok = self.peek().?;
+                try self.addError(.unexpected_token, tok.start, tok.start + tok.len);
+                return error.UnexpectedToken;
             }
 
+            // Simple include: `import c "path"`
             {
                 const token = self.peek() orelse {
                     try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());

@@ -122,7 +122,7 @@ fn resolveImportsInner(
                 const inc_path = file_src.getSlice(inc_tok.start, inc_tok.start + inc_tok.len);
 
                 if (!mem.endsWith(u8, inc_path, ".h")) {
-                    std.debug.print("error: import c include requires a .h header file, got: {s}\n", .{inc_path});
+                    std.debug.print("error: import c requires a .h header file, got: {s}\n", .{inc_path});
                     block_has_errors = true;
                     continue;
                 }
@@ -212,7 +212,7 @@ fn resolveImportsInner(
 
         if (kind == .c_include_decl) {
             if (!mem.endsWith(u8, import_path, ".h")) {
-                std.debug.print("error: import c include requires a .h header file, got: {s}\n", .{import_path});
+                std.debug.print("error: import c requires a .h header file, got: {s}\n", .{import_path});
                 result.has_errors = true;
                 continue;
             }
