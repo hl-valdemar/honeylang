@@ -1097,8 +1097,27 @@ pub const CodeGenContext = struct {
             .struct_literal => try self.generateStructLiteral(node_idx),
             .address_of => try self.generateAddressOf(node_idx),
             .deref => try self.generateDeref(node_idx),
+            .unary_op => try self.generateUnaryOp(node_idx),
             else => null,
         };
+    }
+
+    fn generateUnaryOp(self: *CodeGenContext, node_idx: NodeIndex) !?VReg {
+        const func = self.current_func.?;
+        const unary = self.ast.getUnaryOp(node_idx);
+        const operand_reg = try self.generateExpression(unary.operand) orelse return null;
+        const width = if (self.node_types.get(node_idx)) |tid| typeIdToWidth(tid) else Width.w32;
+
+        switch (unary.op) {
+            .negate => {
+                const zero = try func.emitMovImm(0, width);
+                return try func.emitBinOp(.sub, zero, operand_reg, width);
+            },
+            .not => {
+                const zero = try func.emitMovImm(0, width);
+                return try func.emitCmp(.eq, operand_reg, zero, width);
+            },
+        }
     }
 
     fn generateLiteral(self: *CodeGenContext, node_idx: NodeIndex) !?VReg {

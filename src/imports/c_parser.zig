@@ -221,9 +221,33 @@ fn tryParseFunction(allocator: mem.Allocator, src: []const u8, start: usize, kno
             continue;
         }
 
-        // Skip 'const' qualifier
-        if (mem.eql(u8, tok.text, "const")) {
+        // Skip qualifiers and GCC extensions
+        if (mem.eql(u8, tok.text, "const") or
+            mem.eql(u8, tok.text, "extern") or
+            mem.eql(u8, tok.text, "inline") or
+            mem.eql(u8, tok.text, "__inline") or
+            mem.eql(u8, tok.text, "__inline__") or
+            mem.eql(u8, tok.text, "__extension__") or
+            mem.eql(u8, tok.text, "volatile") or
+            mem.eql(u8, tok.text, "__volatile__") or
+            mem.eql(u8, tok.text, "restrict") or
+            mem.eql(u8, tok.text, "__restrict") or
+            mem.eql(u8, tok.text, "_Nonnull") or
+            mem.eql(u8, tok.text, "_Nullable"))
+        {
             pos = tok.end;
+            continue;
+        }
+
+        // Skip __attribute__((...)) blocks
+        if (mem.eql(u8, tok.text, "__attribute__")) {
+            pos = skipBalancedParens(src, tok.end);
+            continue;
+        }
+
+        // Skip __asm__(...) blocks
+        if (mem.eql(u8, tok.text, "__asm__") or mem.eql(u8, tok.text, "__asm") or mem.eql(u8, tok.text, "asm")) {
+            pos = skipBalancedParens(src, tok.end);
             continue;
         }
 
@@ -267,6 +291,9 @@ fn tryParseFunction(allocator: mem.Allocator, src: []const u8, start: usize, kno
 
     pos = params_result.end_pos;
     if (pos < src.len and src[pos] == ')') pos += 1;
+
+    // Skip __attribute__, __asm__ and other trailing annotations before ; or {
+    pos = skipTrailingAnnotations(src, pos);
 
     // Skip body or semicolon
     pos = skipWhitespace(src, pos);
@@ -324,18 +351,56 @@ fn parseParams(allocator: mem.Allocator, src: []const u8, start: usize, known_st
             pos = skipWhitespace(src, pos);
             if (pos >= src.len or src[pos] == ',' or src[pos] == ')') break;
 
+            // Variadic `...` — skip and mark parameter as variadic
+            if (pos + 2 < src.len and src[pos] == '.' and src[pos + 1] == '.' and src[pos + 2] == '.') {
+                pos += 3;
+                param_tokens.clearRetainingCapacity();
+                break;
+            }
+
             if (src[pos] == '*') {
                 has_pointer = true;
                 pos += 1;
                 continue;
             }
 
-            const tok = readToken(src, pos) orelse break;
-            // Skip 'const' qualifier
-            if (mem.eql(u8, tok.text, "const")) {
+            // Function pointer or grouped type — skip balanced parens
+            if (src[pos] == '(') {
+                pos = skipBalancedParens(src, pos);
+                continue;
+            }
+
+            // Array parameter — skip balanced brackets
+            if (src[pos] == '[') {
+                pos = skipBalancedBrackets(src, pos);
+                continue;
+            }
+
+            const tok = readToken(src, pos) orelse {
+                pos += 1; // skip unknown character to avoid infinite loop
+                continue;
+            };
+
+            // Skip qualifiers and GCC extensions
+            if (mem.eql(u8, tok.text, "const") or
+                mem.eql(u8, tok.text, "restrict") or
+                mem.eql(u8, tok.text, "__restrict") or
+                mem.eql(u8, tok.text, "_Nonnull") or
+                mem.eql(u8, tok.text, "_Nullable") or
+                mem.eql(u8, tok.text, "volatile") or
+                mem.eql(u8, tok.text, "__volatile__") or
+                mem.eql(u8, tok.text, "__extension__"))
+            {
                 pos = tok.end;
                 continue;
             }
+
+            // Skip __attribute__((...)) blocks
+            if (mem.eql(u8, tok.text, "__attribute__")) {
+                pos = skipBalancedParens(src, tok.end);
+                continue;
+            }
+
             try param_tokens.append(allocator, tok.text);
             pos = tok.end;
         }
@@ -344,8 +409,16 @@ fn parseParams(allocator: mem.Allocator, src: []const u8, start: usize, known_st
             const param_name = param_tokens.items[param_tokens.items.len - 1];
             const type_tokens = param_tokens.items[0 .. param_tokens.items.len - 1];
             try params.append(allocator, resolveParamType(param_name, type_tokens, has_pointer, known_structs));
-        } else if (param_tokens.items.len == 1 and has_pointer) {
-            // e.g., `void *` with no name — skip
+        } else if (param_tokens.items.len == 1) {
+            // Nameless parameter (e.g. `int` in `int abs(int);`) — use synthetic name
+            const synth_names = [_][]const u8{ "_0", "_1", "_2", "_3", "_4", "_5", "_6", "_7" };
+            const synth_name = if (params.items.len < synth_names.len) synth_names[params.items.len] else "_";
+            if (has_pointer) {
+                const pointee = mapReturnType(param_tokens.items[0..1]);
+                try params.append(allocator, .{ .name = synth_name, .c_type = .ptr, .pointee_type = if (pointee != .ptr) pointee else null });
+            } else {
+                try params.append(allocator, .{ .name = synth_name, .c_type = mapReturnType(param_tokens.items[0..1]) });
+            }
         }
 
         if (pos < src.len and src[pos] == ',') pos += 1;
@@ -475,11 +548,42 @@ fn parseStructFields(allocator: mem.Allocator, src: []const u8, start: usize, kn
                 continue;
             }
 
-            const tok = readToken(src, pos) orelse break;
-            if (mem.eql(u8, tok.text, "const")) {
-                pos = tok.end;
+            // Function pointer field — skip balanced parens
+            if (src[pos] == '(') {
+                pos = skipBalancedParens(src, pos);
                 continue;
             }
+
+            // Array field — skip balanced brackets
+            if (src[pos] == '[') {
+                pos = skipBalancedBrackets(src, pos);
+                continue;
+            }
+
+            const tok = readToken(src, pos) orelse {
+                pos += 1;
+                continue;
+            };
+
+            // Skip qualifiers and GCC extensions
+            if (mem.eql(u8, tok.text, "const") or
+                mem.eql(u8, tok.text, "restrict") or
+                mem.eql(u8, tok.text, "__restrict") or
+                mem.eql(u8, tok.text, "_Nonnull") or
+                mem.eql(u8, tok.text, "_Nullable") or
+                mem.eql(u8, tok.text, "volatile") or
+                mem.eql(u8, tok.text, "__volatile__") or
+                mem.eql(u8, tok.text, "__extension__") or
+                mem.eql(u8, tok.text, "__attribute__"))
+            {
+                if (mem.eql(u8, tok.text, "__attribute__")) {
+                    pos = skipBalancedParens(src, tok.end);
+                } else {
+                    pos = tok.end;
+                }
+                continue;
+            }
+
             try field_tokens.append(allocator, tok.text);
             pos = tok.end;
         }
@@ -672,6 +776,54 @@ fn skipPastBody(src: []const u8, pos: usize) usize {
     while (p < src.len) : (p += 1) {
         if (src[p] == '{') return skipBracedBlock(src, p);
         if (src[p] == ';') return p + 1;
+    }
+    return p;
+}
+
+/// Skip balanced parentheses: advances past the first `(` and matches to its `)`.
+fn skipBalancedParens(src: []const u8, pos: usize) usize {
+    var p = skipWhitespace(src, pos);
+    if (p >= src.len or src[p] != '(') return p;
+    p += 1;
+    var depth: usize = 1;
+    while (p < src.len and depth > 0) : (p += 1) {
+        if (src[p] == '(') depth += 1;
+        if (src[p] == ')') depth -= 1;
+    }
+    return p;
+}
+
+/// Skip balanced brackets: advances past the first `[` and matches to its `]`.
+fn skipBalancedBrackets(src: []const u8, pos: usize) usize {
+    var p = pos;
+    if (p >= src.len or src[p] != '[') return p;
+    p += 1;
+    var depth: usize = 1;
+    while (p < src.len and depth > 0) : (p += 1) {
+        if (src[p] == '[') depth += 1;
+        if (src[p] == ']') depth -= 1;
+    }
+    return p;
+}
+
+/// Skip trailing __attribute__((...)), __asm__(...), etc. between ) and ; or {.
+fn skipTrailingAnnotations(src: []const u8, pos: usize) usize {
+    var p = skipWhitespace(src, pos);
+    while (p < src.len) {
+        if (src[p] == ';' or src[p] == '{') break;
+        const tok = readToken(src, p) orelse break;
+        if (mem.eql(u8, tok.text, "__attribute__") or
+            mem.eql(u8, tok.text, "__asm__") or
+            mem.eql(u8, tok.text, "__asm") or
+            mem.eql(u8, tok.text, "asm"))
+        {
+            p = skipBalancedParens(src, tok.end);
+            p = skipWhitespace(src, p);
+            continue;
+        }
+        // Unknown annotation — skip the token
+        p = tok.end;
+        p = skipWhitespace(src, p);
     }
     return p;
 }
@@ -1027,6 +1179,88 @@ test "parse struct and function together" {
     try std.testing.expectEqual(@as(usize, 1), result.functions.len);
     try std.testing.expectEqualStrings("vec2", result.structs[0].name);
     try std.testing.expectEqualStrings("print_hello", result.functions[0].name);
+}
+
+test "parse function with variadic params" {
+    const src =
+        \\int printf(const char *fmt, ...);
+    ;
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(@as(usize, 1), result.functions.len);
+    try std.testing.expectEqualStrings("printf", result.functions[0].name);
+    try std.testing.expectEqual(CType.i32, result.functions[0].return_type);
+    // Only the non-variadic params are captured
+    try std.testing.expectEqual(@as(usize, 1), result.functions[0].params.len);
+    try std.testing.expectEqualStrings("fmt", result.functions[0].params[0].name);
+    try std.testing.expectEqual(CType.ptr, result.functions[0].params[0].c_type);
+}
+
+test "parse function with __attribute__" {
+    const src =
+        \\int printf(const char * restrict, ...) __attribute__((__format__ (__printf__, 1, 2)));
+        \\void exit(int status) __attribute__((__noreturn__));
+    ;
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(@as(usize, 2), result.functions.len);
+    try std.testing.expectEqualStrings("printf", result.functions[0].name);
+    try std.testing.expectEqualStrings("exit", result.functions[1].name);
+}
+
+test "parse function with __asm__" {
+    const src =
+        \\int getrlimit(int resource, void *rlim) __asm("_" "getrlimit");
+    ;
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(@as(usize, 1), result.functions.len);
+    try std.testing.expectEqualStrings("getrlimit", result.functions[0].name);
+}
+
+test "parse skips function pointer declarations" {
+    const src =
+        \\void (*signal(int sig, void (*handler)(int)))(int);
+        \\int normal_func(int a);
+    ;
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    // signal is a function-pointer-returning function — should be skipped (tokens < 2)
+    // normal_func should be parsed
+    try std.testing.expectEqual(@as(usize, 1), result.functions.len);
+    try std.testing.expectEqualStrings("normal_func", result.functions[0].name);
+}
+
+test "parse function with nameless params" {
+    const src =
+        \\int abs(int);
+        \\long labs(long);
+    ;
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(@as(usize, 2), result.functions.len);
+    try std.testing.expectEqualStrings("abs", result.functions[0].name);
+    try std.testing.expectEqual(@as(usize, 1), result.functions[0].params.len);
+    try std.testing.expectEqualStrings("_0", result.functions[0].params[0].name);
+    try std.testing.expectEqual(CType.i32, result.functions[0].params[0].c_type);
+}
+
+test "parse function with restrict and qualifiers in params" {
+    const src =
+        \\int snprintf(char * restrict str, unsigned long size, const char * restrict fmt, ...);
+    ;
+    const result = try expectParseResult(src);
+    defer freeResult(result);
+
+    try std.testing.expectEqual(@as(usize, 1), result.functions.len);
+    try std.testing.expectEqualStrings("snprintf", result.functions[0].name);
+    // str, size, fmt (variadic ... is skipped)
+    try std.testing.expectEqual(@as(usize, 3), result.functions[0].params.len);
 }
 
 test "formatHoneyType" {

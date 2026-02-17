@@ -44,6 +44,7 @@ pub fn resolveImports(
     tokens: *const TokenList,
     main_src: *const SourceCode,
     main_file_path: []const u8,
+    include_paths: []const []const u8,
 ) !ResolvedImports {
     var result = ResolvedImports{
         .imports = try std.ArrayList(ResolvedImport).initCapacity(allocator, 4),
@@ -71,6 +72,7 @@ pub fn resolveImports(
         &result,
         &import_chain,
         &next_src_id,
+        include_paths,
     );
 
     return result;
@@ -87,6 +89,7 @@ fn resolveImportsInner(
     result: *ResolvedImports,
     import_chain: *std.StringHashMap(void),
     next_src_id: *source.Id,
+    include_paths: []const []const u8,
 ) !std.AutoHashMapUnmanaged(NodeIndex, usize) {
     var local_map = std.AutoHashMapUnmanaged(NodeIndex, usize){};
 
@@ -124,29 +127,30 @@ fn resolveImportsInner(
                     continue;
                 }
 
-                const inc_full_path = try std.fs.path.join(allocator, &.{ file_dir, inc_path });
-                const resolved = resolveIncludes(allocator, inc_full_path) catch {
-                    std.debug.print("error: cannot read C header file: {s}\n", .{inc_path});
-                    block_has_errors = true;
-                    continue;
-                };
-                try c_writer.writeAll(resolved);
-                try c_writer.writeAll("\n");
+                try c_writer.print("#include \"{s}\"\n", .{inc_path});
             }
+
+            // Preprocess all includes in one pass
+            const combined_source = try combined.toOwnedSlice(allocator);
+            const preprocessed = preprocessHeader(allocator, null, combined_source, file_dir, include_paths) catch {
+                std.debug.print("error: failed to preprocess C headers in import block\n", .{});
+                block_has_errors = true;
+                result.has_errors = true;
+                continue;
+            };
 
             if (block_has_errors) {
                 result.has_errors = true;
                 continue;
             }
 
-            const c_source = try combined.toOwnedSlice(allocator);
-            const c_parsed = c_parser.parse(allocator, c_source) catch {
+            const c_parsed = c_parser.parse(allocator, preprocessed) catch {
                 std.debug.print("error: failed to parse C headers in import block\n", .{});
                 result.has_errors = true;
                 continue;
             };
 
-            const define_constants = try collectDefineConstants(allocator, c_source);
+            const define_constants = try collectDefineConstants(allocator, preprocessed);
 
             const binding_source = generateBindingSource(allocator, c_parsed.functions, c_parsed.structs, define_constants) catch {
                 result.has_errors = true;
@@ -193,19 +197,6 @@ fn resolveImportsInner(
 
         const full_path = try std.fs.path.join(allocator, &.{ file_dir, import_path });
 
-        const abs_path = fs.cwd().realpathAlloc(allocator, full_path) catch {
-            std.debug.print("error: import file not found: {s}\n", .{import_path});
-            result.has_errors = true;
-            continue;
-        };
-
-        // Check for circular imports (file is currently being resolved up the call stack)
-        if (import_chain.contains(abs_path)) {
-            std.debug.print("error: circular import detected: {s}\n", .{import_path});
-            result.has_errors = true;
-            continue;
-        }
-
         // Resolve namespace name: explicit name_token takes priority, otherwise derive from filename
         const ns_name = if (import_decl.name_token) |name_tok_idx| blk: {
             const name_tok = tokens.items[name_tok_idx];
@@ -226,8 +217,11 @@ fn resolveImportsInner(
                 continue;
             }
 
-            const c_source = resolveIncludes(allocator, full_path) catch {
-                std.debug.print("error: cannot read C header file: {s}\n", .{import_path});
+            // Generate #include directive and let zig cc -E resolve the path
+            // (searches source_dir first via -I, then system include paths)
+            const include_directive = try std.fmt.allocPrint(allocator, "#include \"{s}\"\n", .{import_path});
+            const c_source = preprocessHeader(allocator, null, include_directive, file_dir, include_paths) catch {
+                std.debug.print("error: failed to preprocess C header: {s}\n", .{import_path});
                 result.has_errors = true;
                 continue;
             };
@@ -275,7 +269,19 @@ fn resolveImportsInner(
             });
             try local_map.put(allocator, decl_idx, global_idx);
         } else {
-            // Native Honey import
+            // Native Honey import — resolve path and check for circular imports
+            const abs_path = fs.cwd().realpathAlloc(allocator, full_path) catch {
+                std.debug.print("error: import file not found: {s}\n", .{import_path});
+                result.has_errors = true;
+                continue;
+            };
+
+            if (import_chain.contains(abs_path)) {
+                std.debug.print("error: circular import detected: {s}\n", .{import_path});
+                result.has_errors = true;
+                continue;
+            }
+
             const imported_src = source.fromFile(allocator, full_path, next_src_id.*) catch {
                 std.debug.print("error: cannot read import file: {s}\n", .{import_path});
                 result.has_errors = true;
@@ -325,6 +331,7 @@ fn resolveImportsInner(
                 result,
                 import_chain,
                 next_src_id,
+                include_paths,
             );
             _ = import_chain.remove(abs_path);
 
@@ -394,54 +401,89 @@ fn collectDefineConstants(
     return try defines.toOwnedSlice(allocator);
 }
 
-/// Read a C header file and recursively expand `#include "..."` directives.
-/// System includes (`#include <...>`) are kept as-is (skipped by the c_parser).
-fn resolveIncludes(allocator: mem.Allocator, file_path: []const u8) ![]const u8 {
-    var visited = std.StringHashMap(void).init(allocator);
-    defer visited.deinit();
-    return resolveIncludesInner(allocator, file_path, &visited);
+/// Preprocess a C header using `zig cc -E` (Zig's bundled clang).
+/// Either `file_path` (for a single header file) or `source_text` (for inline
+/// C source, e.g. from a c_import_block) must be provided.
+/// Strips `# <linenum> "file" ...` line markers from the output.
+fn preprocessHeader(
+    allocator: mem.Allocator,
+    file_path: ?[]const u8,
+    source_text: ?[]const u8,
+    source_dir: []const u8,
+    extra_include_paths: []const []const u8,
+) ![]const u8 {
+    var argv = try std.ArrayList([]const u8).initCapacity(allocator, 16);
+    defer argv.deinit(allocator);
+
+    try argv.append(allocator, "zig");
+    try argv.append(allocator, "cc");
+    try argv.append(allocator, "-E");
+
+    // Add source directory as first include path so local headers are found
+    try argv.append(allocator, "-I");
+    try argv.append(allocator, source_dir);
+
+    // Add extra include paths
+    for (extra_include_paths) |path| {
+        try argv.append(allocator, "-I");
+        try argv.append(allocator, path);
+    }
+
+    if (file_path) |fp| {
+        try argv.append(allocator, fp);
+    } else if (source_text != null) {
+        // Write source text to a temp file (Child.run doesn't support stdin piping)
+        const tmp_path = "zig-out/_honey_pp_tmp.h";
+        const tmp_file = fs.cwd().createFile(tmp_path, .{}) catch return error.PreprocessFailed;
+        tmp_file.writeAll(source_text.?) catch {
+            tmp_file.close();
+            return error.PreprocessFailed;
+        };
+        tmp_file.close();
+        try argv.append(allocator, tmp_path);
+    } else {
+        return error.PreprocessFailed;
+    }
+
+    const result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = argv.items,
+        .max_output_bytes = 10 * 1024 * 1024, // 10 MB — system headers can be large
+    }) catch return error.PreprocessFailed;
+    defer allocator.free(result.stderr);
+
+    if (result.term.Exited != 0) {
+        if (result.stderr.len > 0) {
+            std.debug.print("{s}", .{result.stderr});
+        }
+        allocator.free(result.stdout);
+        return error.PreprocessFailed;
+    }
+
+    const raw_output = result.stdout;
+
+    // Strip # line markers (lines starting with "# <digit>")
+    return stripLineMarkers(allocator, raw_output);
 }
 
-fn resolveIncludesInner(
-    allocator: mem.Allocator,
-    file_path: []const u8,
-    visited: *std.StringHashMap(void),
-) ![]const u8 {
-    const abs_path = fs.cwd().realpathAlloc(allocator, file_path) catch file_path;
-    if (visited.contains(abs_path)) return "";
-    try visited.put(abs_path, {});
-
-    const file = try fs.cwd().openFile(file_path, .{ .mode = .read_only });
-    defer file.close();
-    const file_size = try file.getEndPos();
-    const content = try allocator.alloc(u8, file_size);
-    _ = try file.readAll(content);
-
-    const file_dir = std.fs.path.dirname(file_path) orelse ".";
-
-    var result = try std.ArrayList(u8).initCapacity(allocator, content.len);
+/// Remove `# <linenum> "file" ...` line markers from preprocessor output.
+fn stripLineMarkers(allocator: mem.Allocator, input: []const u8) ![]const u8 {
+    var result = try std.ArrayList(u8).initCapacity(allocator, input.len);
     const writer = result.writer(allocator);
 
     var line_start: usize = 0;
-    while (line_start < content.len) {
-        const line_end = mem.indexOfScalarPos(u8, content, line_start, '\n') orelse content.len;
-        const line = mem.trimLeft(u8, content[line_start..line_end], " \t");
+    while (line_start < input.len) {
+        const line_end = mem.indexOfScalarPos(u8, input, line_start, '\n') orelse input.len;
+        const line = input[line_start..line_end];
 
-        if (mem.startsWith(u8, line, "#include \"")) {
-            const path_start = mem.indexOf(u8, line, "\"").? + 1;
-            if (mem.indexOfScalarPos(u8, line, path_start, '"')) |path_end| {
-                const inc_path = line[path_start..path_end];
-                const inc_full = try std.fs.path.join(allocator, &.{ file_dir, inc_path });
-                const inc_content = resolveIncludesInner(allocator, inc_full, visited) catch "";
-                try writer.writeAll(inc_content);
-                try writer.writeAll("\n");
-                line_start = line_end + 1;
-                continue;
-            }
+        // Skip lines like: # 123 "/path/to/file.h" 3 4
+        const is_line_marker = line.len >= 2 and line[0] == '#' and (line[1] == ' ' and line.len > 2 and line[2] >= '0' and line[2] <= '9');
+
+        if (!is_line_marker) {
+            try writer.writeAll(line);
+            try writer.writeByte('\n');
         }
 
-        // Keep the line as-is (including other #include <...>, #define, etc.)
-        try writer.writeAll(content[line_start .. line_end + @as(usize, if (line_end < content.len) 1 else 0)]);
         line_start = line_end + 1;
     }
 
