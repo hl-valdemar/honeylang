@@ -107,11 +107,16 @@ fn resolveImportsInner(
             var combined = try std.ArrayList(u8).initCapacity(allocator, 1024);
             const c_writer = combined.writer(allocator);
 
+            var define_strings = try std.ArrayList([]const u8).initCapacity(allocator, define_indices.len);
+
             for (define_indices) |def_tok_idx| {
                 const def_tok = tokens.items[def_tok_idx];
                 const def_value = file_src.getSlice(def_tok.start, def_tok.start + def_tok.len);
                 try c_writer.print("#define {s}\n", .{def_value});
+                try define_strings.append(allocator, def_value);
             }
+
+            const define_constants = try collectDefineConstants(allocator, define_strings.items);
 
             var block_has_errors = false;
             for (include_indices) |inc_tok_idx| {
@@ -150,7 +155,7 @@ fn resolveImportsInner(
                 continue;
             };
 
-            const binding_source = generateBindingSource(allocator, functions) catch {
+            const binding_source = generateBindingSource(allocator, functions, define_constants) catch {
                 result.has_errors = true;
                 continue;
             };
@@ -247,7 +252,7 @@ fn resolveImportsInner(
                 continue;
             };
 
-            const binding_source = generateBindingSource(allocator, functions) catch {
+            const binding_source = generateBindingSource(allocator, functions, &.{}) catch {
                 result.has_errors = true;
                 continue;
             };
@@ -342,8 +347,58 @@ fn resolveImportsInner(
     return local_map;
 }
 
-/// Generate Honey binding source from extracted C functions.
-fn generateBindingSource(allocator: mem.Allocator, functions: []const c_parser.CFunction) ![]const u8 {
+const CDefine = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
+/// Check if a string is a simple numeric literal (integer or float, optionally negative).
+fn isNumericLiteral(s: []const u8) bool {
+    if (s.len == 0) return false;
+    var i: usize = 0;
+    // optional leading minus
+    if (s[i] == '-') {
+        i += 1;
+        if (i >= s.len) return false;
+    }
+    var has_digit = false;
+    var has_dot = false;
+    while (i < s.len) : (i += 1) {
+        if (s[i] >= '0' and s[i] <= '9') {
+            has_digit = true;
+        } else if (s[i] == '.' and !has_dot) {
+            has_dot = true;
+        } else {
+            return false;
+        }
+    }
+    return has_digit;
+}
+
+/// Parse define strings into name/value pairs, keeping only those with numeric values.
+fn collectDefineConstants(
+    allocator: mem.Allocator,
+    define_strings: []const []const u8,
+) ![]const CDefine {
+    var defines = try std.ArrayList(CDefine).initCapacity(allocator, define_strings.len);
+
+    for (define_strings) |def_str| {
+        // Split at first space: "PI 3.14" -> name="PI", value="3.14"
+        if (mem.indexOfScalar(u8, def_str, ' ')) |space_idx| {
+            const name = def_str[0..space_idx];
+            const value = mem.trim(u8, def_str[space_idx + 1 ..], " \t");
+            if (value.len > 0 and isNumericLiteral(value)) {
+                try defines.append(allocator, .{ .name = name, .value = value });
+            }
+        }
+        // No space means no value (e.g., "DEBUG") — skip
+    }
+
+    return try defines.toOwnedSlice(allocator);
+}
+
+/// Generate Honey binding source from extracted C functions and define constants.
+fn generateBindingSource(allocator: mem.Allocator, functions: []const c_parser.CFunction, defines: []const CDefine) ![]const u8 {
     var buf = try std.ArrayList(u8).initCapacity(allocator, 256);
     const writer = buf.writer(allocator);
 
@@ -359,7 +414,77 @@ fn generateBindingSource(allocator: mem.Allocator, functions: []const c_parser.C
         try writer.print(") {s}\n", .{c_parser.typeToHoneyStr(func.return_type)});
     }
 
+    for (defines) |def| {
+        // pub <NAME>: <type> :: <VALUE>
+        const is_float = mem.indexOfScalar(u8, def.value, '.') != null;
+        const type_str: []const u8 = if (is_float) blk: {
+            _ = std.fmt.parseFloat(f32, def.value) catch break :blk "f64";
+            break :blk "f32";
+        } else blk: {
+            _ = std.fmt.parseInt(i32, def.value, 10) catch break :blk "i64";
+            break :blk "i32";
+        };
+        try writer.print("pub {s}: {s} :: {s}\n", .{ def.name, type_str, def.value });
+    }
+
     return try buf.toOwnedSlice(allocator);
+}
+
+test "isNumericLiteral accepts integers" {
+    try std.testing.expect(isNumericLiteral("0"));
+    try std.testing.expect(isNumericLiteral("42"));
+    try std.testing.expect(isNumericLiteral("1024"));
+}
+
+test "isNumericLiteral accepts floats" {
+    try std.testing.expect(isNumericLiteral("3.14"));
+    try std.testing.expect(isNumericLiteral("0.5"));
+    try std.testing.expect(isNumericLiteral("100.0"));
+}
+
+test "isNumericLiteral accepts negative numbers" {
+    try std.testing.expect(isNumericLiteral("-1"));
+    try std.testing.expect(isNumericLiteral("-3.14"));
+}
+
+test "isNumericLiteral rejects non-numeric" {
+    try std.testing.expect(!isNumericLiteral(""));
+    try std.testing.expect(!isNumericLiteral("abc"));
+    try std.testing.expect(!isNumericLiteral("3.14.15"));
+    try std.testing.expect(!isNumericLiteral("-"));
+    try std.testing.expect(!isNumericLiteral("(1 + 2)"));
+    try std.testing.expect(!isNumericLiteral("0xFF"));
+}
+
+test "collectDefineConstants skips valueless defines" {
+    const defines = try collectDefineConstants(std.testing.allocator, &.{"DEBUG"});
+    defer std.testing.allocator.free(defines);
+    try std.testing.expectEqual(@as(usize, 0), defines.len);
+}
+
+test "collectDefineConstants extracts numeric defines" {
+    const defines = try collectDefineConstants(std.testing.allocator, &.{
+        "PI 3.14",
+        "MAX_SIZE 1024",
+        "DEBUG",
+        "VERSION hello",
+    });
+    defer std.testing.allocator.free(defines);
+    try std.testing.expectEqual(@as(usize, 2), defines.len);
+    try std.testing.expectEqualStrings("PI", defines[0].name);
+    try std.testing.expectEqualStrings("3.14", defines[0].value);
+    try std.testing.expectEqualStrings("MAX_SIZE", defines[1].name);
+    try std.testing.expectEqualStrings("1024", defines[1].value);
+}
+
+test "generateBindingSource includes define constants" {
+    const result = try generateBindingSource(std.testing.allocator, &.{}, &.{
+        .{ .name = "PI", .value = "3.14" },
+        .{ .name = "MAX_SIZE", .value = "1024" },
+    });
+    defer std.testing.allocator.free(result);
+    try std.testing.expect(mem.indexOf(u8, result, "pub PI: f32 :: 3.14") != null);
+    try std.testing.expect(mem.indexOf(u8, result, "pub MAX_SIZE: i32 :: 1024") != null);
 }
 
 /// Write the generated binding file to zig-out/ for debugging/inspection.

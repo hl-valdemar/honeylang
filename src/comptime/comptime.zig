@@ -9,6 +9,7 @@ const SymbolIndex = @import("../semantic/symbols.zig").SymbolIndex;
 const SymbolTable = @import("../semantic/symbols.zig").SymbolTable;
 const TypeId = @import("../semantic/types.zig").TypeId;
 const ComptimeErrorList = @import("error.zig").ComptimeErrorList;
+const ResolvedImports = @import("../imports/imports.zig").ResolvedImports;
 
 pub const LiteralIndex = u32;
 
@@ -83,8 +84,9 @@ pub fn evaluate(
     tokens: *const TokenList,
     src: *const SourceCode,
     symbols: *const SymbolTable,
+    resolved_imports: ?*const ResolvedImports,
 ) !ComptimeResult {
-    var ctx = ComptimeContext.init(allocator, ast, tokens, src, symbols);
+    var ctx = ComptimeContext.init(allocator, ast, tokens, src, symbols, resolved_imports);
     return ctx.evaluate();
 }
 
@@ -94,6 +96,7 @@ pub const ComptimeContext = struct {
     tokens: *const TokenList,
     src: *const SourceCode,
     symbols: *const SymbolTable,
+    resolved_imports: ?*const ResolvedImports,
     result: ComptimeResult,
 
     pub fn init(
@@ -102,6 +105,7 @@ pub const ComptimeContext = struct {
         tokens: *const TokenList,
         src: *const SourceCode,
         symbols: *const SymbolTable,
+        resolved_imports: ?*const ResolvedImports,
     ) ComptimeContext {
         return .{
             .allocator = allocator,
@@ -109,6 +113,7 @@ pub const ComptimeContext = struct {
             .tokens = tokens,
             .src = src,
             .symbols = symbols,
+            .resolved_imports = resolved_imports,
             .result = ComptimeResult.init(allocator, symbols.count()) catch unreachable,
         };
     }
@@ -165,6 +170,26 @@ pub const ComptimeContext = struct {
         // mark as evaluating (for cycle detection)
         self.result.eval_states.items[sym_idx] = .evaluating;
 
+        // For imported symbols, switch to the imported file's AST/tokens/src
+        const is_imported = self.symbols.getIsImported(sym_idx);
+        const saved_ast = self.ast;
+        const saved_tokens = self.tokens;
+        const saved_src = self.src;
+
+        if (is_imported) {
+            if (self.findImportForSymbol(sym_idx)) |resolved| {
+                self.ast = &resolved.ast;
+                self.tokens = &resolved.tokens;
+                self.src = &resolved.src;
+            }
+        }
+
+        defer {
+            self.ast = saved_ast;
+            self.tokens = saved_tokens;
+            self.src = saved_src;
+        }
+
         // get the value expression
         const value_node = self.symbols.getValueNode(sym_idx);
         const type_id = self.symbols.getTypeId(sym_idx);
@@ -180,6 +205,22 @@ pub const ComptimeContext = struct {
         }
 
         self.result.eval_states.items[sym_idx] = .evaluated;
+    }
+
+    /// Find the resolved import that an imported symbol belongs to by matching
+    /// the namespace prefix of the symbol's qualified name.
+    fn findImportForSymbol(self: *ComptimeContext, sym_idx: SymbolIndex) ?*const @import("../imports/imports.zig").ResolvedImport {
+        const ri = self.resolved_imports orelse return null;
+        const qualified_name = self.symbols.getNameFromMap(sym_idx) orelse return null;
+
+        // Extract namespace prefix: "math.PI" -> "math"
+        const dot_pos = std.mem.indexOfScalar(u8, qualified_name, '.') orelse return null;
+        const ns_prefix = qualified_name[0..dot_pos];
+
+        for (ri.imports.items) |*imp| {
+            if (std.mem.eql(u8, imp.namespace_name, ns_prefix)) return imp;
+        }
+        return null;
     }
 
     fn evaluateExpr(self: *ComptimeContext, node_idx: NodeIndex, type_id: TypeId) EvalError!?[]const u8 {

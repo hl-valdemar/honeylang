@@ -1359,7 +1359,22 @@ pub const CodeGenContext = struct {
             try arg_struct_indices.append(self.allocator, if (arg_type.isStruct()) arg_type.struct_type else null);
         }
 
-        // 4. Determine return type and check for sret
+        // 4. Check for argument type mismatches — emit trap if any arg width
+        //    doesn't match the expected parameter width (error already reported
+        //    by semantic analysis; always-compile inserts a runtime trap).
+        if (self.types.getParamTypes(func_type_id)) |param_types| {
+            const check_count = @min(arg_widths.items.len, param_types.len);
+            for (0..check_count) |i| {
+                const expected_width = typeIdToWidth(param_types[i]);
+                if (arg_widths.items[i] != expected_width) {
+                    try func.emitTrap();
+                    // Return a zero register as placeholder for the call result
+                    return try func.emitMovImm(0, .w32);
+                }
+            }
+        }
+
+        // 5. Determine return type and check for sret
         const return_type = self.node_types.get(node_idx);
         const callee_returns_struct = if (return_type) |rt| rt.isStruct() else false;
 

@@ -212,6 +212,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
         &lexer_result.tokens,
         &src,
         &sem_result.symbols,
+        &resolved_imports,
     );
 
     // print generated symbol table
@@ -343,6 +344,7 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
         &lexer_result.tokens,
         &src,
         &sem_result.symbols,
+        &resolved_imports,
     );
 
     // 6. code emission

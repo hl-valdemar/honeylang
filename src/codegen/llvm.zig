@@ -240,6 +240,9 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
 
     for (func.instructions.items) |inst| {
         try lowerInst(emitter, inst, &ssa_map, &alloca_map, func, globals, types);
+        // After a trap (which emits `unreachable`), no more instructions
+        // can appear in the same basic block.
+        if (inst == .trap) break;
     }
 
     // If the last instruction is not a terminator, add an implicit return
@@ -276,8 +279,15 @@ fn lowerInst(
             const ssa_name = ssa_map.allocFor(op.dst);
             const type_str = widthToLLVMType(op.width);
             if (op.width.isFloat()) {
-                // Float immediate: value holds IEEE 754 bits, emit as LLVM hex float
-                const bits: u64 = @bitCast(op.value);
+                // Float immediate: value holds IEEE 754 bits, emit as LLVM hex float.
+                // LLVM requires all hex float constants in 64-bit (double) format,
+                // even for float types. Convert f32 bits to f64 bits.
+                const bits: u64 = if (op.width == .wf32) blk: {
+                    const f32_bits: u32 = @truncate(@as(u64, @bitCast(op.value)));
+                    const f32_val: f32 = @bitCast(f32_bits);
+                    const f64_val: f64 = @floatCast(f32_val);
+                    break :blk @bitCast(f64_val);
+                } else @bitCast(op.value);
                 try emitter.appendFmt("  %{d} = fadd {s} 0.0, 0x{X:0>16}\n", .{ ssa_name, type_str, bits });
             } else {
                 try emitter.appendFmt("  %{d} = add {s} 0, {d}\n", .{ ssa_name, type_str, op.value });

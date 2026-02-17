@@ -77,7 +77,7 @@ pub fn compileTo(phase: Phase, src_input: []const u8) !CompileResult {
     if (phase == .semantic) return .{ .arena = arena, .lex = lex, .parse = parse, .sem = sem, .codegen = null };
 
     // comptime
-    const comptime_result = try honey.comptime_.evaluate(allocator, &parse.ast, &lex.tokens, &src, &sem.symbols);
+    const comptime_result = try honey.comptime_.evaluate(allocator, &parse.ast, &lex.tokens, &src, &sem.symbols, null);
 
     // codegen
     const target: honey.codegen.Target = .{ .arch = .aarch64, .os = .darwin };

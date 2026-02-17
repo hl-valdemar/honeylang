@@ -26,6 +26,17 @@ pub const CFunction = struct {
     name: []const u8,
     return_type: CType,
     params: []const CParam,
+
+    pub fn freeAll(functions: []const CFunction, allocator: mem.Allocator) void {
+        for (functions) |func| {
+            allocator.free(func.name);
+            for (func.params) |param| {
+                allocator.free(param.name);
+            }
+            allocator.free(func.params);
+        }
+        allocator.free(functions);
+    }
 };
 
 /// Parse C source and extract non-static function signatures.
@@ -36,6 +47,7 @@ pub fn parse(allocator: mem.Allocator, source: []const u8) ![]CFunction {
     defer allocator.free(stripped);
 
     var functions = try std.ArrayList(CFunction).initCapacity(allocator, 4);
+    defer functions.deinit(allocator);
 
     var pos: usize = 0;
     while (pos < stripped.len) {
@@ -71,6 +83,8 @@ pub fn parse(allocator: mem.Allocator, source: []const u8) ![]CFunction {
                     .c_type = param.c_type,
                 };
             }
+            // Free the intermediate params slice from parseParams
+            allocator.free(func_result.func.params);
             try functions.append(allocator, .{
                 .name = duped_name,
                 .return_type = func_result.func.return_type,
@@ -172,6 +186,7 @@ fn tryParseFunction(allocator: mem.Allocator, src: []const u8, start: usize) !?F
 
 fn parseParams(allocator: mem.Allocator, src: []const u8, start: usize) !struct { params: []const CParam, end_pos: usize } {
     var params = try std.ArrayList(CParam).initCapacity(allocator, 4);
+    defer params.deinit(allocator);
     var pos = start;
 
     // Check for (void) or ()
@@ -464,7 +479,7 @@ test "parse simple C functions" {
         \\}
     ;
     const functions = try parse(std.testing.allocator, src);
-    defer std.testing.allocator.free(functions);
+    defer CFunction.freeAll(functions, std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 2), functions.len);
     try std.testing.expectEqualStrings("add", functions[0].name);
@@ -479,7 +494,7 @@ test "parse skips static functions" {
         \\static int helper(int x) { return x * 2; }
     ;
     const functions = try parse(std.testing.allocator, src);
-    defer std.testing.allocator.free(functions);
+    defer CFunction.freeAll(functions, std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 1), functions.len);
     try std.testing.expectEqualStrings("add", functions[0].name);
@@ -490,7 +505,7 @@ test "parse void function with void params" {
         \\void init(void) { }
     ;
     const functions = try parse(std.testing.allocator, src);
-    defer std.testing.allocator.free(functions);
+    defer CFunction.freeAll(functions, std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 1), functions.len);
     try std.testing.expectEqualStrings("init", functions[0].name);
@@ -507,7 +522,7 @@ test "parse with comments" {
         \\}
     ;
     const functions = try parse(std.testing.allocator, src);
-    defer std.testing.allocator.free(functions);
+    defer CFunction.freeAll(functions, std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 1), functions.len);
     try std.testing.expectEqualStrings("add", functions[0].name);
@@ -519,7 +534,7 @@ test "parse function declarations (no body)" {
         \\void exit(int code);
     ;
     const functions = try parse(std.testing.allocator, src);
-    defer std.testing.allocator.free(functions);
+    defer CFunction.freeAll(functions, std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 2), functions.len);
     try std.testing.expectEqualStrings("add", functions[0].name);
@@ -532,7 +547,7 @@ test "parse fixed-width types" {
         \\int32_t process(uint8_t tag, int64_t value) { return 0; }
     ;
     const functions = try parse(std.testing.allocator, src);
-    defer std.testing.allocator.free(functions);
+    defer CFunction.freeAll(functions, std.testing.allocator);
 
     try std.testing.expectEqual(@as(usize, 1), functions.len);
     try std.testing.expectEqual(CType.i32, functions[0].return_type);
