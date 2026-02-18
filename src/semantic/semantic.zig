@@ -1103,6 +1103,11 @@ pub const SemanticContext = struct {
                 const pointee = self.resolveTypeNode(ptr.pointee) orelse return null;
                 return self.types.addPointerType(pointee, ptr.is_mutable, ptr.is_many_item) catch return null;
             },
+            .array_type => {
+                const arr = self.ast.getArrayType(node_idx);
+                const element_type = self.resolveTypeNode(arr.element_type) orelse return null;
+                return self.types.addArrayType(element_type, arr.length) catch return null;
+            },
             else => null,
         };
     }
@@ -1250,6 +1255,23 @@ pub const SemanticContext = struct {
                 const operand_type = self.tryInferType(deref.operand) orelse return null;
                 if (self.types.getPointerType(operand_type)) |ptr_info| {
                     return ptr_info.pointee;
+                }
+                return null;
+            },
+            .array_literal => {
+                const lit = self.ast.getArrayLiteral(node_idx);
+                const elements = self.ast.getExtra(lit.elements);
+                if (elements.len == 0) return null;
+                // infer element type from first element
+                const elem_type = self.tryInferType(elements[0]) orelse return null;
+                const length: u32 = @intCast(elements.len);
+                return self.types.addArrayType(elem_type, length) catch return null;
+            },
+            .array_index => {
+                const idx_node = self.ast.getArrayIndex(node_idx);
+                const obj_type = self.tryInferType(idx_node.object) orelse return null;
+                if (self.types.getArrayType(obj_type)) |arr_info| {
+                    return arr_info.element_type;
                 }
                 return null;
             },
@@ -2082,6 +2104,8 @@ pub const SemanticContext = struct {
             .struct_literal => try self.checkStructLiteral(node_idx),
             .address_of => try self.checkAddressOf(node_idx, context_type),
             .deref => try self.checkDeref(node_idx, context_type),
+            .array_literal => try self.checkArrayLiteral(node_idx, context_type),
+            .array_index => try self.checkArrayIndex(node_idx),
             else => null,
         };
 
@@ -2716,6 +2740,89 @@ pub const SemanticContext = struct {
         }
 
         return type_id;
+    }
+
+    fn checkArrayLiteral(self: *SemanticContext, node_idx: NodeIndex, context_type: TypeId) !?TypeId {
+        const lit = self.ast.getArrayLiteral(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+        const elements = self.ast.getExtra(lit.elements);
+
+        // determine element type and expected length from context
+        var element_type: TypeId = .unresolved;
+        var expected_length: ?u32 = null;
+
+        if (context_type.isArray()) {
+            if (self.types.getArrayType(context_type)) |arr_info| {
+                element_type = arr_info.element_type;
+                expected_length = arr_info.length;
+            }
+        }
+
+        // check length matches if context provides one
+        if (expected_length) |exp_len| {
+            if (elements.len != exp_len) {
+                try self.errors.add(.{
+                    .kind = .array_length_mismatch,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+        }
+
+        // type-check each element
+        for (elements) |elem_idx| {
+            const elem_type = try self.checkExpression(elem_idx, element_type);
+            // if we don't have an element type yet, infer from first element
+            if (element_type.isUnresolved()) {
+                if (elem_type) |et| {
+                    if (!et.isUnresolved()) {
+                        element_type = et;
+                    }
+                }
+            }
+        }
+
+        if (element_type.isUnresolved()) return null;
+
+        const length: u32 = @intCast(elements.len);
+        return self.types.addArrayType(element_type, length) catch return null;
+    }
+
+    fn checkArrayIndex(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
+        const idx_node = self.ast.getArrayIndex(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+
+        // check the object being indexed
+        const obj_type = try self.checkExpression(idx_node.object, .unresolved);
+
+        // check the index expression — must be integer
+        const index_type = try self.checkExpression(idx_node.index, TypeId.u64);
+        if (index_type) |it| {
+            if (!it.isInteger() and !it.isUnresolved()) {
+                try self.errors.add(.{
+                    .kind = .index_not_integer,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+        }
+
+        // object must be an array type
+        if (obj_type) |ot| {
+            if (ot.isArray()) {
+                if (self.types.getArrayType(ot)) |arr_info| {
+                    return arr_info.element_type;
+                }
+            } else if (!ot.isUnresolved()) {
+                try self.errors.add(.{
+                    .kind = .index_non_array,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+        }
+
+        return null;
     }
 
     fn finalizeTypes(self: *SemanticContext) void {

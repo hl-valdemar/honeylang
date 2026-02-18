@@ -34,6 +34,11 @@ pub const NodeKind = enum {
 
     // type expressions
     pointer_type,
+    array_type,
+
+    // array expressions
+    array_literal,
+    array_index,
 
     // statements
     block,
@@ -261,6 +266,20 @@ pub const PointerType = struct {
     is_many_item: bool,
 };
 
+pub const ArrayType = struct {
+    element_type: NodeIndex,
+    length: u32,
+};
+
+pub const ArrayLiteral = struct {
+    elements: Range,
+};
+
+pub const ArrayIndex = struct {
+    object: NodeIndex,
+    index: NodeIndex,
+};
+
 pub const Error = struct {
     msg: []const u8,
 };
@@ -299,6 +318,9 @@ pub const Ast = struct {
     address_ofs: std.ArrayList(AddressOf),
     derefs: std.ArrayList(Deref),
     pointer_types: std.ArrayList(PointerType),
+    array_types: std.ArrayList(ArrayType),
+    array_literals: std.ArrayList(ArrayLiteral),
+    array_indices: std.ArrayList(ArrayIndex),
     errors: std.ArrayList(Error),
 
     // auxiliary storage for variable-length children
@@ -340,6 +362,9 @@ pub const Ast = struct {
             .address_ofs = try std.ArrayList(AddressOf).initCapacity(allocator, capacity),
             .derefs = try std.ArrayList(Deref).initCapacity(allocator, capacity),
             .pointer_types = try std.ArrayList(PointerType).initCapacity(allocator, capacity),
+            .array_types = try std.ArrayList(ArrayType).initCapacity(allocator, capacity),
+            .array_literals = try std.ArrayList(ArrayLiteral).initCapacity(allocator, capacity),
+            .array_indices = try std.ArrayList(ArrayIndex).initCapacity(allocator, capacity),
             .errors = try std.ArrayList(Error).initCapacity(allocator, capacity),
 
             .extra_data = try std.ArrayList(NodeIndex).initCapacity(allocator, capacity),
@@ -376,6 +401,9 @@ pub const Ast = struct {
         self.address_ofs.deinit(self.allocator);
         self.derefs.deinit(self.allocator);
         self.pointer_types.deinit(self.allocator);
+        self.array_types.deinit(self.allocator);
+        self.array_literals.deinit(self.allocator);
+        self.array_indices.deinit(self.allocator);
         self.errors.deinit(self.allocator);
 
         self.extra_data.deinit(self.allocator);
@@ -932,6 +960,68 @@ pub const Ast = struct {
         return node_idx;
     }
 
+    pub fn addArrayType(
+        self: *Ast,
+        element_type: NodeIndex,
+        length: u32,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.array_types.items.len);
+
+        try self.kinds.append(self.allocator, .array_type);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.array_types.append(self.allocator, .{
+            .element_type = element_type,
+            .length = length,
+        });
+
+        return node_idx;
+    }
+
+    pub fn addArrayLiteral(
+        self: *Ast,
+        elements: Range,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.array_literals.items.len);
+
+        try self.kinds.append(self.allocator, .array_literal);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.array_literals.append(self.allocator, .{ .elements = elements });
+
+        return node_idx;
+    }
+
+    pub fn addArrayIndex(
+        self: *Ast,
+        object: NodeIndex,
+        index: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.array_indices.items.len);
+
+        try self.kinds.append(self.allocator, .array_index);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.array_indices.append(self.allocator, .{
+            .object = object,
+            .index = index,
+        });
+
+        return node_idx;
+    }
+
     pub fn addError(
         self: *Ast,
         msg: []const u8,
@@ -1128,6 +1218,24 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .pointer_type);
         const data_idx = self.data_indices.items[idx];
         return self.pointer_types.items[data_idx];
+    }
+
+    pub fn getArrayType(self: *const Ast, idx: NodeIndex) ArrayType {
+        std.debug.assert(self.kinds.items[idx] == .array_type);
+        const data_idx = self.data_indices.items[idx];
+        return self.array_types.items[data_idx];
+    }
+
+    pub fn getArrayLiteral(self: *const Ast, idx: NodeIndex) ArrayLiteral {
+        std.debug.assert(self.kinds.items[idx] == .array_literal);
+        const data_idx = self.data_indices.items[idx];
+        return self.array_literals.items[data_idx];
+    }
+
+    pub fn getArrayIndex(self: *const Ast, idx: NodeIndex) ArrayIndex {
+        std.debug.assert(self.kinds.items[idx] == .array_index);
+        const data_idx = self.data_indices.items[idx];
+        return self.array_indices.items[data_idx];
     }
 
     pub fn getError(self: *const Ast, idx: NodeIndex) Error {

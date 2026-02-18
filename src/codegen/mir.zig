@@ -261,6 +261,30 @@ pub const MInst = union(enum) {
         stride: u32, // element size in bytes
         is_sub: bool, // true for subtraction
     },
+
+    /// Allocate an array on the stack.
+    alloca_array: struct {
+        dst: VReg, // pointer to allocated array
+        array_idx: u32, // index into TypeRegistry.array_types
+    },
+
+    /// Load an element from an array via GEP.
+    load_element: struct {
+        dst: VReg,
+        base: VReg, // pointer to array
+        index: VReg, // element index
+        array_idx: u32, // index into TypeRegistry.array_types
+        width: Width, // width of the element
+    },
+
+    /// Store a value to an array element via GEP.
+    store_element: struct {
+        base: VReg, // pointer to array
+        index: VReg, // element index
+        value: VReg, // value to store
+        array_idx: u32, // index into TypeRegistry.array_types
+        width: Width, // width of the element
+    },
 };
 
 /// Function parameter metadata.
@@ -489,6 +513,40 @@ pub const MIRFunction = struct {
     /// Emit a store_ptr instruction (store through pointer).
     pub fn emitStorePtr(self: *MIRFunction, ptr_reg: VReg, value: VReg, width: Width) !void {
         try self.emit(.{ .store_ptr = .{ .ptr = ptr_reg, .value = value, .width = width } });
+    }
+
+    /// Emit an alloca_array instruction and return the pointer vreg.
+    pub fn emitAllocaArray(self: *MIRFunction, array_idx: u32) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .alloca_array = .{
+            .dst = dst,
+            .array_idx = array_idx,
+        } });
+        return dst;
+    }
+
+    /// Emit a load_element instruction (GEP + load from array).
+    pub fn emitLoadElement(self: *MIRFunction, base: VReg, index: VReg, array_idx: u32, width: Width) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .load_element = .{
+            .dst = dst,
+            .base = base,
+            .index = index,
+            .array_idx = array_idx,
+            .width = width,
+        } });
+        return dst;
+    }
+
+    /// Emit a store_element instruction (GEP + store to array element).
+    pub fn emitStoreElement(self: *MIRFunction, base: VReg, index: VReg, value: VReg, array_idx: u32, width: Width) !void {
+        try self.emit(.{ .store_element = .{
+            .base = base,
+            .index = index,
+            .value = value,
+            .array_idx = array_idx,
+            .width = width,
+        } });
     }
 
     /// Emit a copy_struct instruction (memcpy for struct data).

@@ -48,6 +48,7 @@ pub const FunctionTypeIndex = u32;
 pub const StructTypeIndex = u32;
 pub const PointerTypeIndex = u32;
 pub const NamespaceTypeIndex = u32;
+pub const ArrayTypeIndex = u32;
 
 pub const TypeId = union(enum) {
     /// Type could not be determined, will trap at runtime
@@ -67,6 +68,9 @@ pub const TypeId = union(enum) {
 
     /// Namespace type, index into TypeRegistry.namespace_types
     namespace: NamespaceTypeIndex,
+
+    /// Array type, index into TypeRegistry.array_types
+    array: ArrayTypeIndex,
 
     pub const @"void": TypeId = .{ .primitive = .void };
     pub const @"bool": TypeId = .{ .primitive = .bool };
@@ -144,6 +148,10 @@ pub const TypeId = union(enum) {
         return self == .namespace;
     }
 
+    pub fn isArray(self: TypeId) bool {
+        return self == .array;
+    }
+
     pub fn eql(self: TypeId, other: TypeId) bool {
         return std.meta.eql(self, other);
     }
@@ -176,6 +184,11 @@ pub const PointerTypeInfo = struct {
     is_many_item: bool,
 };
 
+pub const ArrayTypeInfo = struct {
+    element_type: TypeId,
+    length: u32,
+};
+
 pub const NamespaceMember = struct {
     name: []const u8,
     symbol_idx: @import("symbols.zig").SymbolIndex,
@@ -194,6 +207,7 @@ pub const TypeRegistry = struct {
     struct_types: std.ArrayList(StructType),
     pointer_types: std.ArrayList(PointerTypeInfo),
     namespace_types: std.ArrayList(NamespaceType),
+    array_types: std.ArrayList(ArrayTypeInfo),
     arena: std.heap.ArenaAllocator,
 
     pub fn init(allocator: mem.Allocator) !TypeRegistry {
@@ -203,6 +217,7 @@ pub const TypeRegistry = struct {
             .struct_types = try std.ArrayList(StructType).initCapacity(allocator, 4),
             .pointer_types = try std.ArrayList(PointerTypeInfo).initCapacity(allocator, 4),
             .namespace_types = try std.ArrayList(NamespaceType).initCapacity(allocator, 4),
+            .array_types = try std.ArrayList(ArrayTypeInfo).initCapacity(allocator, 4),
             .arena = std.heap.ArenaAllocator.init(allocator),
         };
     }
@@ -212,6 +227,7 @@ pub const TypeRegistry = struct {
         self.struct_types.deinit(self.allocator);
         self.pointer_types.deinit(self.allocator);
         self.namespace_types.deinit(self.allocator);
+        self.array_types.deinit(self.allocator);
         self.arena.deinit();
     }
 
@@ -448,6 +464,30 @@ pub const TypeRegistry = struct {
         return .{ .namespace = idx };
     }
 
+    /// Register an array type and return a TypeId for it.
+    /// Deduplicates: returns existing TypeId if an identical array type exists.
+    pub fn addArrayType(self: *TypeRegistry, element_type: TypeId, length: u32) !TypeId {
+        for (self.array_types.items, 0..) |existing, i| {
+            if (existing.length == length and existing.element_type.eql(element_type)) {
+                return .{ .array = @intCast(i) };
+            }
+        }
+        const idx: ArrayTypeIndex = @intCast(self.array_types.items.len);
+        try self.array_types.append(self.allocator, .{
+            .element_type = element_type,
+            .length = length,
+        });
+        return .{ .array = idx };
+    }
+
+    /// Get the array type info for a given TypeId.
+    pub fn getArrayType(self: *const TypeRegistry, type_id: TypeId) ?ArrayTypeInfo {
+        return switch (type_id) {
+            .array => |idx| self.array_types.items[idx],
+            else => null,
+        };
+    }
+
     /// Get the namespace type for a given TypeId.
     pub fn getNamespaceType(self: *const TypeRegistry, type_id: TypeId) ?NamespaceType {
         return switch (type_id) {
@@ -472,6 +512,10 @@ pub fn sizeOf(type_id: TypeId, types: *const TypeRegistry) u32 {
         .struct_type => |idx| types.struct_types.items[idx].size,
         .pointer => 8, // pointer-sized
         .namespace => 0,
+        .array => |idx| {
+            const info = types.array_types.items[idx];
+            return info.length * sizeOf(info.element_type, types);
+        },
     };
 }
 
@@ -490,6 +534,10 @@ pub fn alignmentOf(type_id: TypeId, types: *const TypeRegistry) u32 {
         .struct_type => |idx| types.struct_types.items[idx].alignment,
         .pointer => 8,
         .namespace => 1,
+        .array => |idx| {
+            const info = types.array_types.items[idx];
+            return alignmentOf(info.element_type, types);
+        },
     };
 }
 

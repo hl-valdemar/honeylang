@@ -353,6 +353,10 @@ pub const Parser = struct {
                 if (after.kind == .equal) {
                     // `identifier := ...` => runtime var (inferred type)
                     return try self.parseVarDecl();
+                } else if (after.kind == .left_bracket) {
+                    // `identifier : [N]type ...` => array-typed decl
+                    // Could be var or const; parseVarDecl handles both typed paths
+                    return try self.parseVarDecl();
                 } else if (after.kind == .identifier) {
                     // `identifier : type ...` => check what follows type
                     const type_ = self.peekOffset(3) orelse {
@@ -679,7 +683,7 @@ pub const Parser = struct {
 
         // bare return (void) — next token cannot start an expression
         const expr = if (self.peek()) |token| switch (token.kind) {
-            .identifier, .number, .bool, .left_paren, .minus, .not, .ampersand => try self.parseExpression(),
+            .identifier, .number, .bool, .left_paren, .left_bracket, .minus, .not, .ampersand => try self.parseExpression(),
             else => try self.ast.addVoidLiteral(start_pos, self.previousEnd()),
         } else try self.ast.addVoidLiteral(start_pos, self.previousEnd());
 
@@ -713,7 +717,7 @@ pub const Parser = struct {
         try self.expectToken(.colon, .expected_colon);
 
         // optional type
-        const type_node = if (self.check(.identifier) or self.check(.at) or self.check(.star))
+        const type_node = if (self.check(.identifier) or self.check(.at) or self.check(.star) or self.check(.left_bracket))
             try self.parseType()
         else
             null;
@@ -1077,6 +1081,7 @@ pub const Parser = struct {
                 break :blk try self.parseIdentifier();
             },
             .number, .bool => try self.parseLiteral(),
+            .left_bracket => try self.parseArrayLiteral(),
             .left_paren => blk: {
                 const paren_start = self.currentStart();
                 self.advance();
@@ -1093,8 +1098,8 @@ pub const Parser = struct {
             },
         };
 
-        // postfix: field access, dereference, postfix call, and struct literal
-        while (self.check(.dot) or self.check(.caret) or self.check(.left_paren) or self.check(.left_curly)) {
+        // postfix: field access, dereference, postfix call, struct literal, and array index
+        while (self.check(.dot) or self.check(.caret) or self.check(.left_paren) or self.check(.left_curly) or self.check(.left_bracket)) {
             if (self.check(.dot)) {
                 const start_pos = self.ast.getLocation(expr).start;
                 self.advance(); // consume dot
@@ -1130,6 +1135,14 @@ pub const Parser = struct {
                 const args_range = try self.ast.addExtra(args.items);
                 const end_pos = self.previousEnd();
                 expr = try self.ast.addCallExpr(expr, args_range, start_pos, end_pos);
+            } else if (self.check(.left_bracket)) {
+                // array index: expr[index]
+                const start_pos = self.ast.getLocation(expr).start;
+                self.advance(); // consume [
+                const index = try self.parseExpression();
+                try self.expectToken(.right_bracket, .unexpected_token);
+                const end_pos = self.previousEnd();
+                expr = try self.ast.addArrayIndex(expr, index, start_pos, end_pos);
             } else if (self.check(.left_curly)) {
                 // struct literal: expr { .field = value, ... }
                 if (self.peekOffset(1)) |after_curly| {
@@ -1183,7 +1196,66 @@ pub const Parser = struct {
             const end_pos = self.previousEnd();
             return try self.ast.addPointerType(inner, is_mutable, true, start_pos, end_pos);
         }
+        if (self.check(.left_bracket)) {
+            return try self.parseArrayType();
+        }
         return try self.parseIdentifier();
+    }
+
+    fn parseArrayType(self: *Parser) ParseError!NodeIndex {
+        const start_pos = self.currentStart();
+
+        // consume [
+        try self.expectToken(.left_bracket, .unexpected_token);
+
+        // parse length (must be a number literal)
+        const length_token = self.peek() orelse {
+            try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+            return error.UnexpectedEof;
+        };
+        if (length_token.kind != .number) {
+            try self.addErrorWithFound(.unexpected_token, length_token.kind, length_token.start, length_token.start + length_token.len);
+            return error.UnexpectedToken;
+        }
+        const length_str = self.src.getSlice(length_token.start, length_token.start + length_token.len);
+        const length = std.fmt.parseInt(u32, length_str, 10) catch {
+            try self.addError(.unexpected_token, length_token.start, length_token.start + length_token.len);
+            return error.UnexpectedToken;
+        };
+        self.advance(); // consume number
+
+        // consume ]
+        try self.expectToken(.right_bracket, .unexpected_token);
+
+        // parse element type
+        const element_type = try self.parseType();
+
+        const end_pos = self.previousEnd();
+
+        return try self.ast.addArrayType(element_type, length, start_pos, end_pos);
+    }
+
+    fn parseArrayLiteral(self: *Parser) ParseError!NodeIndex {
+        const start_pos = self.currentStart();
+
+        // consume [
+        try self.expectToken(.left_bracket, .unexpected_token);
+
+        var elements = try std.ArrayList(ast.NodeIndex).initCapacity(self.allocator, 4);
+        defer elements.deinit(self.allocator);
+
+        while (!self.check(.right_bracket) and !self.check(.eof)) {
+            const elem = try self.parseExpression();
+            try elements.append(self.allocator, elem);
+            if (!self.match(.comma)) break;
+        }
+
+        try self.expectToken(.right_bracket, .unexpected_token);
+
+        const elements_range = try self.ast.addExtra(elements.items);
+        const end_pos = self.previousEnd();
+
+        return try self.ast.addArrayLiteral(elements_range, start_pos, end_pos);
     }
 
     fn parseLiteral(self: *Parser) ParseError!NodeIndex {

@@ -615,6 +615,53 @@ fn lowerInst(
             });
         },
 
+        .alloca_array => |op| {
+            const arr_info = types.array_types.items[op.array_idx];
+            const elem_llvm = typeIdToLLVMType(arr_info.element_type);
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            try emitter.appendFmt("  %{d} = alloca [{d} x {s}]\n", .{ dst_ssa, arr_info.length, elem_llvm });
+        },
+
+        .load_element => |op| {
+            const arr_info = types.array_types.items[op.array_idx];
+            const elem_llvm = typeIdToLLVMType(arr_info.element_type);
+            const base_ssa = ssa_map.get(op.base);
+            const index_ssa = ssa_map.get(op.index);
+
+            // GEP to element
+            const gep_ssa = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds [{d} x {s}], ptr %{d}, i64 0, i64 %{d}\n", .{
+                gep_ssa, arr_info.length, elem_llvm, base_ssa, index_ssa,
+            });
+
+            // load element
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            try emitter.appendFmt("  %{d} = load {s}, ptr %gep.{d}\n", .{
+                dst_ssa, widthToLLVMType(op.width), gep_ssa,
+            });
+        },
+
+        .store_element => |op| {
+            const arr_info = types.array_types.items[op.array_idx];
+            const elem_llvm = typeIdToLLVMType(arr_info.element_type);
+            const base_ssa = ssa_map.get(op.base);
+            const index_ssa = ssa_map.get(op.index);
+            const value_ssa = ssa_map.get(op.value);
+
+            // GEP to element
+            const gep_ssa = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds [{d} x {s}], ptr %{d}, i64 0, i64 %{d}\n", .{
+                gep_ssa, arr_info.length, elem_llvm, base_ssa, index_ssa,
+            });
+
+            // store element
+            try emitter.appendFmt("  store {s} %{d}, ptr %gep.{d}\n", .{
+                widthToLLVMType(op.width), value_ssa, gep_ssa,
+            });
+        },
+
         .ptr_offset => |op| {
             const base_ssa = ssa_map.get(op.base);
             const count_ssa = ssa_map.get(op.count);
@@ -692,6 +739,7 @@ fn typeIdToLLVMType(type_id: TypeId) []const u8 {
         .unresolved => "i32",
         .function => "ptr",
         .namespace => "void", // namespaces have no runtime representation
+        .array => "ptr", // arrays are stack-allocated, passed as pointers
     };
 }
 

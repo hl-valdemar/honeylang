@@ -67,6 +67,7 @@ fn printSymbol(symbols: *const SymbolTable, src: *const SourceCode, idx: SymbolI
                 .struct_type => "struct",
                 .pointer => "pointer",
                 .namespace => "namespace",
+                .array => "array",
             };
         },
     };

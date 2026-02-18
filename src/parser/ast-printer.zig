@@ -228,6 +228,15 @@ fn getNodeInfo(
             const mut_str = if (ptr.is_mutable) "mut" else "";
             break :blk std.fmt.bufPrint(&S.buf, "{s}{s}", .{ prefix, mut_str }) catch "?";
         },
+        .array_type => blk: {
+            const arr = ast.getArrayType(idx);
+            break :blk std.fmt.bufPrint(&S.buf, "[{d}]", .{arr.length}) catch "?";
+        },
+        .array_literal => blk: {
+            const arr = ast.getArrayLiteral(idx);
+            break :blk std.fmt.bufPrint(&S.buf, "elements: {d}", .{arr.elements.len}) catch "?";
+        },
+        .array_index => "index",
         .void_literal => "void",
         .err => blk: {
             const err = ast.getError(idx);
@@ -758,6 +767,32 @@ fn printNode(
             printNode(ast, tokens, src, ptr.pointee, child_prefix, true);
         },
 
+        .array_type => {
+            const arr = ast.getArrayType(idx);
+            std.debug.print("array_type: [{d}]\n", .{arr.length});
+            printNode(ast, tokens, src, arr.element_type, child_prefix, true);
+        },
+
+        .array_literal => {
+            const arr = ast.getArrayLiteral(idx);
+            const elements = ast.getExtra(arr.elements);
+            std.debug.print("array_literal: {d} elements\n", .{elements.len});
+            for (elements, 0..) |elem, i| {
+                printNode(ast, tokens, src, elem, child_prefix, i == elements.len - 1);
+            }
+        },
+
+        .array_index => {
+            std.debug.print("array_index:\n", .{});
+            const ai = ast.getArrayIndex(idx);
+            std.debug.print("{s}├─ object:\n", .{child_prefix});
+            const obj_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+            printNode(ast, tokens, src, ai.object, obj_prefix, true);
+            std.debug.print("{s}└─ index:\n", .{child_prefix});
+            const idx_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
+            printNode(ast, tokens, src, ai.index, idx_prefix, true);
+        },
+
         .err => {
             const err_data = ast.getError(idx);
             std.debug.print("error: {s}\n", .{err_data.msg});
@@ -780,6 +815,10 @@ fn printTypeValue(
             std.debug.print("{s}", .{prefix});
         }
         printTypeValue(ast, tokens, src, ptr.pointee);
+    } else if (ast.getKind(idx) == .array_type) {
+        const arr = ast.getArrayType(idx);
+        std.debug.print("[{d}]", .{arr.length});
+        printTypeValue(ast, tokens, src, arr.element_type);
     } else {
         printIdentifierValue(ast, tokens, src, idx);
     }

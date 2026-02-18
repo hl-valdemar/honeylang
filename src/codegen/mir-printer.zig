@@ -252,6 +252,19 @@ fn printInstruction(inst: *const MInst) void {
                 p.stride,
             });
         },
+        .alloca_array => |a| {
+            std.debug.print("alloca_array v{d}, array#{d}", .{ a.dst, a.array_idx });
+        },
+        .load_element => |l| {
+            std.debug.print("load_element.{s} v{d}, v{d}[v{d}], array#{d}", .{
+                widthStr(l.width), l.dst, l.base, l.index, l.array_idx,
+            });
+        },
+        .store_element => |s| {
+            std.debug.print("store_element.{s} v{d}[v{d}], v{d}, array#{d}", .{
+                widthStr(s.width), s.base, s.index, s.value, s.array_idx,
+            });
+        },
     }
 }
 

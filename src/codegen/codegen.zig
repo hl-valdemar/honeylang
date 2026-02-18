@@ -1106,6 +1106,8 @@ pub const CodeGenContext = struct {
             .address_of => try self.generateAddressOf(node_idx),
             .deref => try self.generateDeref(node_idx),
             .unary_op => try self.generateUnaryOp(node_idx),
+            .array_literal => try self.generateArrayLiteral(node_idx),
+            .array_index => try self.generateArrayIndex(node_idx),
             else => null,
         };
     }
@@ -1213,6 +1215,7 @@ pub const CodeGenContext = struct {
             },
             .struct_type => .ptr,
             .pointer => .ptr,
+            .array => .ptr,
             .unresolved => .w32,
             else => .w32,
         };
@@ -1579,6 +1582,54 @@ pub const CodeGenContext = struct {
             const width = typeIdToWidth(target_type);
             try func.emitStorePtr(ptr_reg, value_reg, width);
         }
+    }
+
+    fn generateArrayLiteral(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {
+        const func = self.current_func.?;
+        const lit = self.ast.getArrayLiteral(node_idx);
+
+        // get array type from semantic analysis
+        const type_id = self.node_types.get(node_idx) orelse return null;
+        if (type_id != .array) return null;
+
+        const array_idx = type_id.array;
+        const arr_info = self.types.getArrayType(type_id) orelse return null;
+        const elem_width = typeIdToWidth(arr_info.element_type);
+
+        // allocate array on stack
+        const base = try func.emitAllocaArray(array_idx);
+
+        // store each element
+        const elements = self.ast.getExtra(lit.elements);
+        for (elements, 0..) |elem_idx, i| {
+            const value_reg = try self.generateExpression(elem_idx) orelse continue;
+            const index_reg = try func.emitMovImm(@intCast(i), .w64);
+            try func.emitStoreElement(base, index_reg, value_reg, array_idx, elem_width);
+        }
+
+        // return pointer to the array
+        return base;
+    }
+
+    fn generateArrayIndex(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {
+        const func = self.current_func.?;
+        const idx_node = self.ast.getArrayIndex(node_idx);
+
+        // generate the object (array pointer)
+        const base_reg = try self.generateExpression(idx_node.object) orelse return null;
+
+        // generate the index
+        const index_reg = try self.generateExpression(idx_node.index) orelse return null;
+
+        // get array type from the object
+        const obj_type = self.node_types.get(idx_node.object) orelse return null;
+        if (obj_type != .array) return null;
+
+        const array_idx = obj_type.array;
+        const arr_info = self.types.getArrayType(obj_type) orelse return null;
+        const elem_width = typeIdToWidth(arr_info.element_type);
+
+        return try func.emitLoadElement(base_reg, index_reg, array_idx, elem_width);
     }
 
     fn generateStructLiteral(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {

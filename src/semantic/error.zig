@@ -73,6 +73,11 @@ pub const SemanticErrorKind = enum {
     // mutability errors
     mutability_mismatch,
 
+    // array errors
+    index_non_array,
+    array_length_mismatch,
+    index_not_integer,
+
     pub fn info(self: SemanticErrorKind) ErrorInfo {
         return error_info.get(self);
     }
@@ -275,6 +280,21 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .code = "S037",
         .message = "mutability mismatch",
         .help = "expected mutable value, but value is immutable; declare with 'mut' to allow mutation",
+    },
+    .index_non_array = .{
+        .code = "S038",
+        .message = "cannot index non-array type",
+        .help = "indexing with [] is only supported on array types",
+    },
+    .array_length_mismatch = .{
+        .code = "S039",
+        .message = "array literal length mismatch",
+        .help = "number of elements in the literal does not match the declared array length",
+    },
+    .index_not_integer = .{
+        .code = "S040",
+        .message = "array index must be an integer",
+        .help = "use an integer type for array indexing",
     },
 });
 
