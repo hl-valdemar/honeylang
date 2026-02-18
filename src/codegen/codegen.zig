@@ -245,7 +245,7 @@ pub const CodeGenContext = struct {
         }
 
         // Phase 2: Generate __honey_init (always, for runtime startup compatibility)
-        try self.generateGlobalInit(globals_needing_init.items);
+        try self.generateGlobalInit(globals_needing_init.items, declarations);
 
         // Phase 3: Generate user functions
         for (declarations) |decl_idx| {
@@ -627,10 +627,18 @@ pub const CodeGenContext = struct {
         return null;
     }
 
-    fn generateGlobalInit(self: *CodeGenContext, var_nodes: []const NodeIndex) !void {
+    fn generateGlobalInit(self: *CodeGenContext, var_nodes: []const NodeIndex, declarations: []const NodeIndex) !void {
         // Create __honey_init function (void, no params)
         self.current_func = try self.mir.addFunction("__honey_init", .c, null, &.{});
         try self.current_func.?.emit(.prologue);
+
+        // Trap if any top-level declaration has a parse error
+        for (declarations) |decl_idx| {
+            if (self.ast.getKind(decl_idx) == .err) {
+                try self.current_func.?.emitTrap();
+                break;
+            }
+        }
 
         for (var_nodes) |node_idx| {
             const kind = self.ast.getKind(node_idx);
