@@ -1106,7 +1106,8 @@ pub const SemanticContext = struct {
             .array_type => {
                 const arr = self.ast.getArrayType(node_idx);
                 const element_type = self.resolveTypeNode(arr.element_type) orelse return null;
-                return self.types.addArrayType(element_type, arr.length, arr.is_mutable) catch return null;
+                const length = arr.length orelse return null; // [_]T needs context to resolve
+                return self.types.addArrayType(element_type, length, arr.is_mutable) catch return null;
             },
             else => null,
         };
@@ -1751,6 +1752,19 @@ pub const SemanticContext = struct {
         if (decl.type_id) |type_idx| {
             if (self.resolveTypeNode(type_idx)) |tid| {
                 expected_type = tid;
+            } else if (self.ast.getKind(type_idx) == .array_type) {
+                // [_]T — infer length from the value expression (must be an array literal)
+                const arr = self.ast.getArrayType(type_idx);
+                if (arr.length == null) {
+                    if (self.resolveTypeNode(arr.element_type)) |elem_tid| {
+                        if (self.ast.getKind(decl.value) == .array_literal) {
+                            const lit = self.ast.getArrayLiteral(decl.value);
+                            const elements = self.ast.getExtra(lit.elements);
+                            const inferred_len: u32 = @intCast(elements.len);
+                            expected_type = self.types.addArrayType(elem_tid, inferred_len, arr.is_mutable) catch .unresolved;
+                        }
+                    }
+                }
             }
         }
 

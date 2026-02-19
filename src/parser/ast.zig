@@ -268,7 +268,7 @@ pub const PointerType = struct {
 
 pub const ArrayType = struct {
     element_type: NodeIndex,
-    length: u32,
+    length: ?u32,
     is_mutable: bool,
 };
 
@@ -964,7 +964,7 @@ pub const Ast = struct {
     pub fn addArrayType(
         self: *Ast,
         element_type: NodeIndex,
-        length: u32,
+        length: ?u32,
         is_mutable: bool,
         start: SourceIndex,
         end: SourceIndex,

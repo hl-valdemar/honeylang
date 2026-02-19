@@ -233,7 +233,10 @@ fn getNodeInfo(
         },
         .array_type => blk: {
             const arr = ast.getArrayType(idx);
-            break :blk std.fmt.bufPrint(&S.buf, "[{d}]", .{arr.length}) catch "?";
+            break :blk if (arr.length) |len|
+                std.fmt.bufPrint(&S.buf, "[{d}]", .{len}) catch "?"
+            else
+                "[_]";
         },
         .array_literal => blk: {
             const arr = ast.getArrayLiteral(idx);
@@ -772,7 +775,10 @@ fn printNode(
 
         .array_type => {
             const arr = ast.getArrayType(idx);
-            std.debug.print("array_type: [{d}]\n", .{arr.length});
+            if (arr.length) |len|
+                std.debug.print("array_type: [{d}]\n", .{len})
+            else
+                std.debug.print("array_type: [_]\n", .{});
             printNode(ast, tokens, src, arr.element_type, child_prefix, true);
         },
 
@@ -820,10 +826,18 @@ fn printTypeValue(
         printTypeValue(ast, tokens, src, ptr.pointee);
     } else if (ast.getKind(idx) == .array_type) {
         const arr = ast.getArrayType(idx);
-        if (arr.is_mutable) {
-            std.debug.print("[{d}]mut ", .{arr.length});
+        if (arr.length) |len| {
+            if (arr.is_mutable) {
+                std.debug.print("[{d}]mut ", .{len});
+            } else {
+                std.debug.print("[{d}]", .{len});
+            }
         } else {
-            std.debug.print("[{d}]", .{arr.length});
+            if (arr.is_mutable) {
+                std.debug.print("[_]mut ", .{});
+            } else {
+                std.debug.print("[_]", .{});
+            }
         }
         printTypeValue(ast, tokens, src, arr.element_type);
     } else {

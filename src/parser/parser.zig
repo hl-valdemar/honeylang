@@ -1208,21 +1208,33 @@ pub const Parser = struct {
         // consume [
         try self.expectToken(.left_bracket, .unexpected_token);
 
-        // parse length (must be a number literal)
+        // parse length (number literal, or '_' for inferred)
         const length_token = self.peek() orelse {
             try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
             return error.UnexpectedEof;
         };
-        if (length_token.kind != .number) {
+
+        var length: ?u32 = null;
+
+        if (length_token.kind == .identifier) {
+            const text = self.src.getSlice(length_token.start, length_token.start + length_token.len);
+            if (std.mem.eql(u8, text, "_")) {
+                self.advance(); // consume _
+            } else {
+                try self.addErrorWithFound(.unexpected_token, length_token.kind, length_token.start, length_token.start + length_token.len);
+                return error.UnexpectedToken;
+            }
+        } else if (length_token.kind == .number) {
+            const length_str = self.src.getSlice(length_token.start, length_token.start + length_token.len);
+            length = std.fmt.parseInt(u32, length_str, 10) catch {
+                try self.addError(.unexpected_token, length_token.start, length_token.start + length_token.len);
+                return error.UnexpectedToken;
+            };
+            self.advance(); // consume number
+        } else {
             try self.addErrorWithFound(.unexpected_token, length_token.kind, length_token.start, length_token.start + length_token.len);
             return error.UnexpectedToken;
         }
-        const length_str = self.src.getSlice(length_token.start, length_token.start + length_token.len);
-        const length = std.fmt.parseInt(u32, length_str, 10) catch {
-            try self.addError(.unexpected_token, length_token.start, length_token.start + length_token.len);
-            return error.UnexpectedToken;
-        };
-        self.advance(); // consume number
 
         // consume ]
         try self.expectToken(.right_bracket, .unexpected_token);
