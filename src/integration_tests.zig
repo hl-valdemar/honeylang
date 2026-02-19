@@ -6,6 +6,7 @@ test {
     _ = @import("integration_tests/control_flow.zig");
     _ = @import("integration_tests/structs.zig");
     _ = @import("integration_tests/pointers.zig");
+    _ = @import("integration_tests/arrays.zig");
     _ = @import("integration_tests/namespaces.zig");
     _ = @import("integration_tests/errors.zig");
     _ = @import("integration_tests/codegen.zig");
