@@ -918,7 +918,10 @@ pub const CodeGenContext = struct {
         const offset = try self.locals.add(self.allocator, name, width);
 
         // Generate initializer expression
-        const value_reg = try self.generateExpression(var_decl.value) orelse return;
+        const value_reg = try self.generateExpression(var_decl.value) orelse {
+            try self.current_func.?.emitTrap();
+            return;
+        };
 
         // Store to local
         try self.current_func.?.emitStoreLocal(value_reg, offset, width);
@@ -936,7 +939,10 @@ pub const CodeGenContext = struct {
         const assign = self.ast.getAssignment(node_idx);
 
         // Generate the value expression (for `x += 4` this is the desugared `x + 4`)
-        const value_reg = try self.generateExpression(assign.value) orelse return;
+        const value_reg = try self.generateExpression(assign.value) orelse {
+            try self.current_func.?.emitTrap();
+            return;
+        };
 
         // Check if target is a dereference (p^ = 10)
         if (self.ast.getKind(assign.target) == .deref) {
@@ -1083,15 +1089,17 @@ pub const CodeGenContext = struct {
             return;
         }
 
-        const result_reg = try self.generateExpression(ret.expr);
+        const result_reg = try self.generateExpression(ret.expr) orelse {
+            try func.emitTrap();
+            try func.emitRet(null, ret_width);
+            return;
+        };
 
         if (func.sret_struct_idx) |struct_idx| {
             // sret: copy result into the sret pointer and return void
-            if (result_reg) |src_reg| {
-                const sret_local = self.locals.lookup("__sret") orelse return;
-                const sret_ptr = try func.emitLoadLocal(sret_local.offset, .ptr);
-                try func.emitCopyStruct(sret_ptr, src_reg, struct_idx);
-            }
+            const sret_local = self.locals.lookup("__sret") orelse return;
+            const sret_ptr = try func.emitLoadLocal(sret_local.offset, .ptr);
+            try func.emitCopyStruct(sret_ptr, result_reg, struct_idx);
             try func.emitRet(null, .w32);
         } else {
             // If the expression type doesn't match the declared return type
