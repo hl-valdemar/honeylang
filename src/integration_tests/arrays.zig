@@ -79,6 +79,49 @@ test "array index with variable" {
 }
 
 // ============================================================
+// correct programs: mutable array elements
+// ============================================================
+
+test "mutable array element assignment" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\    mut arr: [3]mut i32 = [1, 2, 3]
+        \\    arr[0] = 10
+        \\    return arr[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "mutable elements with immutable binding" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\    arr: [3]mut i32 = [1, 2, 3]
+        \\    arr[0] = 10
+        \\    return arr[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "mutable array compound assignment" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\    arr: [3]mut i32 = [1, 2, 3]
+        \\    arr[0] += 10
+        \\    return arr[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+// ============================================================
 // semantic errors: arrays
 // ============================================================
 
@@ -117,6 +160,32 @@ test "index with non-integer" {
     );
     defer r.deinit();
     try r.expectSemanticError(.index_not_integer);
+}
+
+test "assign to immutable array element" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\    arr: [3]i32 = [1, 2, 3]
+        \\    arr[0] = 10
+        \\    return arr[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.assign_to_immutable_element);
+}
+
+test "compound assign to immutable array element" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\    arr: [3]i32 = [1, 2, 3]
+        \\    arr[0] += 10
+        \\    return arr[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.assign_to_immutable_element);
 }
 
 // ============================================================
@@ -166,4 +235,54 @@ test "codegen array index emits GEP and load" {
     try r.expectNoErrors();
     try r.expectLLVMContains("alloca [4 x i32]");
     try r.expectLLVMContains("getelementptr inbounds [4 x i32]");
+}
+
+test "codegen mutable array element store" {
+    var r = try compileTo(.codegen,
+        \\main :: func() i32 {
+        \\    arr: [3]mut i32 = [1, 2, 3]
+        \\    arr[0] = 10
+        \\    return arr[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("alloca [3 x i32]");
+    try r.expectLLVMContains("store i32");
+    try r.expectLLVMContains("getelementptr inbounds [3 x i32]");
+}
+
+// ============================================================
+// codegen: error recovery traps for arrays
+// ============================================================
+
+test "assign to immutable element emits trap" {
+    var r = try compileTo(.codegen,
+        \\main :: func() i32 {
+        \\    arr: [3]i32 = [1, 2, 3]
+        \\    arr[0] = 10
+        \\    return arr[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.assign_to_immutable_element);
+    try r.expectLLVMContains("call void @llvm.trap()");
+    try r.expectLLVMContains("unreachable");
+}
+
+test "compound assign to immutable element emits trap" {
+    var r = try compileTo(.codegen,
+        \\main :: func() i32 {
+        \\    arr: [3]i32 = [1, 2, 3]
+        \\    arr[0] += 10
+        \\    return arr[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.assign_to_immutable_element);
+    try r.expectLLVMContains("call void @llvm.trap()");
+    try r.expectLLVMContains("unreachable");
 }

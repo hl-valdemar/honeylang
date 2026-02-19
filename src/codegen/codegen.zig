@@ -925,6 +925,14 @@ pub const CodeGenContext = struct {
     }
 
     fn generateAssignment(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!void {
+        // Trap on erroneous assignments (e.g. immutable target, immutable element)
+        if (self.node_types.get(node_idx)) |tid| {
+            if (tid.isUnresolved()) {
+                try self.current_func.?.emitTrap();
+                return;
+            }
+        }
+
         const assign = self.ast.getAssignment(node_idx);
 
         // Generate the value expression (for `x += 4` this is the desugared `x + 4`)
@@ -939,6 +947,12 @@ pub const CodeGenContext = struct {
         // Check if target is a field access (p.x = 10)
         if (self.ast.getKind(assign.target) == .field_access) {
             try self.generateFieldAssignment(assign.target, value_reg);
+            return;
+        }
+
+        // Check if target is an array index (arr[i] = 10)
+        if (self.ast.getKind(assign.target) == .array_index) {
+            try self.generateArrayIndexAssignment(assign.target, value_reg);
             return;
         }
 
@@ -1630,6 +1644,27 @@ pub const CodeGenContext = struct {
         const elem_width = typeIdToWidth(arr_info.element_type);
 
         return try func.emitLoadElement(base_reg, index_reg, array_idx, elem_width);
+    }
+
+    fn generateArrayIndexAssignment(self: *CodeGenContext, target_node: NodeIndex, value_reg: VReg) CodeGenError!void {
+        const func = self.current_func.?;
+        const idx_node = self.ast.getArrayIndex(target_node);
+
+        // generate the base (array pointer)
+        const base_reg = try self.generateExpression(idx_node.object) orelse return;
+
+        // generate the index
+        const index_reg = try self.generateExpression(idx_node.index) orelse return;
+
+        // get array type
+        const obj_type = self.node_types.get(idx_node.object) orelse return;
+        if (obj_type != .array) return;
+
+        const array_idx = obj_type.array;
+        const arr_info = self.types.getArrayType(obj_type) orelse return;
+        const elem_width = typeIdToWidth(arr_info.element_type);
+
+        try func.emitStoreElement(base_reg, index_reg, value_reg, array_idx, elem_width);
     }
 
     fn generateStructLiteral(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {

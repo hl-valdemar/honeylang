@@ -187,6 +187,7 @@ pub const PointerTypeInfo = struct {
 pub const ArrayTypeInfo = struct {
     element_type: TypeId,
     length: u32,
+    is_mutable: bool,
 };
 
 pub const NamespaceMember = struct {
@@ -466,9 +467,9 @@ pub const TypeRegistry = struct {
 
     /// Register an array type and return a TypeId for it.
     /// Deduplicates: returns existing TypeId if an identical array type exists.
-    pub fn addArrayType(self: *TypeRegistry, element_type: TypeId, length: u32) !TypeId {
+    pub fn addArrayType(self: *TypeRegistry, element_type: TypeId, length: u32, is_mutable: bool) !TypeId {
         for (self.array_types.items, 0..) |existing, i| {
-            if (existing.length == length and existing.element_type.eql(element_type)) {
+            if (existing.length == length and existing.element_type.eql(element_type) and existing.is_mutable == is_mutable) {
                 return .{ .array = @intCast(i) };
             }
         }
@@ -476,6 +477,7 @@ pub const TypeRegistry = struct {
         try self.array_types.append(self.allocator, .{
             .element_type = element_type,
             .length = length,
+            .is_mutable = is_mutable,
         });
         return .{ .array = idx };
     }

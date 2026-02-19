@@ -454,12 +454,51 @@ main :: func() i32 {
 }
 ```
 
+### Element Mutability
+
+By default, array elements are immutable — `[N]T` does not allow element assignment. Use `[N]mut T` to declare an array with mutable elements:
+
+| Type | Element write | Variable reassign |
+| ---- | ------------- | ----------------- |
+| `arr: [N]T` | Not allowed | Not allowed |
+| `arr: [N]mut T` | Allowed | Not allowed |
+| `mut arr: [N]T` | Not allowed | Allowed |
+| `mut arr: [N]mut T` | Allowed | Allowed |
+
+Element mutability is controlled by the type (`[N]mut T`), independent of the variable binding, which is consistent with pointer dereference — `p: @mut i32` allows `p^ = 10` without requiring `mut p`.
+
+```honey
+# Mutable elements, immutable binding
+arr: [3]mut i32 = [1, 2, 3]
+arr[0] = 10     # OK — elements are mutable
+arr[1] = 20     # OK
+# arr = [4, 5, 6]  # ERROR — variable is not mut
+```
+
+```honey
+# Both mutable elements and mutable binding
+mut arr: [3]mut i32 = [1, 2, 3]
+arr[0] = 10     # OK
+arr = [4, 5, 6] # OK
+```
+
+### Compound Assignment on Elements
+
+Works with `[N]mut T`:
+
+```honey
+arr: [3]mut i32 = [1, 2, 3]
+arr[0] += 10
+arr[1] *= 2
+```
+
 ### Errors
 
 The compiler checks:
 - **Length mismatch:** `arr: [3]i32 = [1, 2]` — literal has fewer/more elements than the type requires
 - **Index on non-array:** `x[0]` where `x` is `i32` — only arrays can be indexed
 - **Non-integer index:** `arr[flag]` where `flag` is `bool` — index must be an integer
+- **Immutable element assignment:** `arr[0] = 10` on `[N]T` — use `[N]mut T` for mutable elements
 
 ## Pointers
 

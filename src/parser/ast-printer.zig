@@ -191,6 +191,9 @@ fn getNodeInfo(
             if (ast.getKind(assign.target) == .deref) {
                 break :blk "target: deref";
             }
+            if (ast.getKind(assign.target) == .array_index) {
+                break :blk "target: array_index";
+            }
             const name = getIdentifierName(ast, tokens, src, assign.target);
             break :blk std.fmt.bufPrint(&S.buf, "target: {s}", .{name}) catch "?";
         },
@@ -732,7 +735,7 @@ fn printNode(
                     child_prefix,
                     getFieldAccessPath(ast, tokens, src, assign.target),
                 });
-            } else if (ast.getKind(assign.target) == .deref) {
+            } else if (ast.getKind(assign.target) == .deref or ast.getKind(assign.target) == .array_index) {
                 std.debug.print("{s}├─ target:\n", .{child_prefix});
                 const target_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
                 printNode(ast, tokens, src, assign.target, target_prefix, true);
@@ -817,7 +820,11 @@ fn printTypeValue(
         printTypeValue(ast, tokens, src, ptr.pointee);
     } else if (ast.getKind(idx) == .array_type) {
         const arr = ast.getArrayType(idx);
-        std.debug.print("[{d}]", .{arr.length});
+        if (arr.is_mutable) {
+            std.debug.print("[{d}]mut ", .{arr.length});
+        } else {
+            std.debug.print("[{d}]", .{arr.length});
+        }
         printTypeValue(ast, tokens, src, arr.element_type);
     } else {
         printIdentifierValue(ast, tokens, src, idx);

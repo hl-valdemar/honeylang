@@ -1,6 +1,0 @@
-main :: func() i32 {
-    arr: [4]i32 = [1, 2, 3, 4]
-    first := arr[0]
-    last := arr[3]
-    return first + last
-}

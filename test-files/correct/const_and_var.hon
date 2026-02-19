@@ -1,6 +1,0 @@
-OFFSET :: 100
-mut x := 42
-
-main :: func() i32 {
-    return x + OFFSET
-}

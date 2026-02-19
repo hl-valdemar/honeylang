@@ -269,6 +269,7 @@ pub const PointerType = struct {
 pub const ArrayType = struct {
     element_type: NodeIndex,
     length: u32,
+    is_mutable: bool,
 };
 
 pub const ArrayLiteral = struct {
@@ -964,6 +965,7 @@ pub const Ast = struct {
         self: *Ast,
         element_type: NodeIndex,
         length: u32,
+        is_mutable: bool,
         start: SourceIndex,
         end: SourceIndex,
     ) !NodeIndex {
@@ -977,6 +979,7 @@ pub const Ast = struct {
         try self.array_types.append(self.allocator, .{
             .element_type = element_type,
             .length = length,
+            .is_mutable = is_mutable,
         });
 
         return node_idx;
@@ -1060,6 +1063,16 @@ pub const Ast = struct {
                 const dup_object = try self.duplicateExpr(fa.object);
                 const dup_field = try self.duplicateExpr(fa.field);
                 return try self.addFieldAccess(dup_object, dup_field, start, end);
+            },
+            .array_index => {
+                const ai = self.getArrayIndex(idx);
+                const dup_object = try self.duplicateExpr(ai.object);
+                const dup_index = try self.duplicateExpr(ai.index);
+                return try self.addArrayIndex(dup_object, dup_index, start, end);
+            },
+            .literal => {
+                const lit = self.getLiteral(idx);
+                return try self.addLiteral(lit.token_idx, start, end);
             },
             else => idx, // fallback: return original (shouldn't happen for assignment targets)
         };

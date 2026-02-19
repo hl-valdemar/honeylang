@@ -1,5 +1,0 @@
-math :: import "nested_math.hon"
-
-main :: func() i32 {
-    return math.double_inc(3)
-}

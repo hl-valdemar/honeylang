@@ -1,5 +1,0 @@
-helpers :: import "nested_helpers.hon"
-
-pub double_inc :: func(x: i32) i32 {
-    return helpers.add_one(helpers.add_one(x))
-}

@@ -1,4 +1,0 @@
-mut did_something := false
-
-mut y := x + 1
-x: i32 = 42

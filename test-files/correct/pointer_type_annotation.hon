@@ -1,6 +1,0 @@
-main :: func() i32 {
-   mut x := 10
-   p: @mut i32 = &x
-   q: @i32 = p
-   return q^
-}

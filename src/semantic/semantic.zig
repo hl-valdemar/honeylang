@@ -1106,7 +1106,7 @@ pub const SemanticContext = struct {
             .array_type => {
                 const arr = self.ast.getArrayType(node_idx);
                 const element_type = self.resolveTypeNode(arr.element_type) orelse return null;
-                return self.types.addArrayType(element_type, arr.length) catch return null;
+                return self.types.addArrayType(element_type, arr.length, arr.is_mutable) catch return null;
             },
             else => null,
         };
@@ -1265,7 +1265,7 @@ pub const SemanticContext = struct {
                 // infer element type from first element
                 const elem_type = self.tryInferType(elements[0]) orelse return null;
                 const length: u32 = @intCast(elements.len);
-                return self.types.addArrayType(elem_type, length) catch return null;
+                return self.types.addArrayType(elem_type, length, false) catch return null;
             },
             .array_index => {
                 const idx_node = self.ast.getArrayIndex(node_idx);
@@ -1975,6 +1975,57 @@ pub const SemanticContext = struct {
                     self.symbols.markReferenced(sym_idx);
                 }
             }
+        } else if (target_kind == .array_index) {
+            // array element assignment: arr[i] = 10
+            // Element mutability is controlled by the array type ([N]mut T),
+            // not by whether the variable itself is mut. This is consistent
+            // with pointer dereference: p^ = 10 checks pointer mutability,
+            // not variable mutability.
+            if (try self.checkExpression(assign.target, .unresolved)) |et| {
+                target_type = et;
+            }
+
+            // mark the root identifier as referenced
+            var current = assign.target;
+            while (self.ast.getKind(current) == .array_index) {
+                const ai = self.ast.getArrayIndex(current);
+                current = ai.object;
+            }
+            while (self.ast.getKind(current) == .field_access) {
+                const access = self.ast.getFieldAccess(current);
+                current = access.object;
+            }
+            if (self.ast.getKind(current) == .identifier) {
+                const ident = self.ast.getIdentifier(current);
+                const token = self.tokens.items[ident.token_idx];
+                const name = self.src.getSlice(token.start, token.start + token.len);
+                if (self.lookupLocalPtr(name)) |local| {
+                    local.referenced = true;
+                } else if (self.symbols.lookup(name)) |sym_idx| {
+                    self.symbols.markReferenced(sym_idx);
+                }
+            }
+
+            // check array element mutability
+            const idx_node = self.ast.getArrayIndex(assign.target);
+            if (self.node_types.get(idx_node.object)) |obj_type| {
+                if (obj_type.isArray()) {
+                    if (self.types.getArrayType(obj_type)) |arr_info| {
+                        if (!arr_info.is_mutable) {
+                            try self.errors.add(.{
+                                .kind = .assign_to_immutable_element,
+                                .start = loc.start,
+                                .end = loc.end,
+                            });
+                            try self.node_types.put(self.allocator, node_idx, .unresolved);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // bypass variable mutability check — element mutability is sufficient
+            is_mutable = true;
         } else {
             // identifier assignment: x = 10
             const target_ident = self.ast.getIdentifier(assign.target);
@@ -2011,6 +2062,8 @@ pub const SemanticContext = struct {
                 .start = loc.start,
                 .end = loc.end,
             });
+            try self.node_types.put(self.allocator, node_idx, .unresolved);
+            return;
         }
 
         // check value type
@@ -2785,7 +2838,11 @@ pub const SemanticContext = struct {
         if (element_type.isUnresolved()) return null;
 
         const length: u32 = @intCast(elements.len);
-        return self.types.addArrayType(element_type, length) catch return null;
+        const is_mutable = if (context_type.isArray())
+            if (self.types.getArrayType(context_type)) |info| info.is_mutable else false
+        else
+            false;
+        return self.types.addArrayType(element_type, length, is_mutable) catch return null;
     }
 
     fn checkArrayIndex(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
@@ -2855,6 +2912,16 @@ pub const SemanticContext = struct {
                 return false;
             }
             return self.typesCompatible(lp.pointee, rp.pointee);
+        }
+
+        // array types: structural comparison, [N]mut T → [N]T is allowed (tightening)
+        if (left.isArray() and right.isArray()) {
+            const la = self.types.getArrayType(left) orelse return false;
+            const ra = self.types.getArrayType(right) orelse return false;
+            if (la.length != ra.length) return false;
+            // expected mutable, got immutable — not OK
+            if (la.is_mutable and !ra.is_mutable) return false;
+            return self.typesCompatible(la.element_type, ra.element_type);
         }
 
         // use structural equality

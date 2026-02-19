@@ -663,7 +663,7 @@ pub const Parser = struct {
                     next.kind == .slash_equal)
                 {
                     break :blk try self.parseAssignment();
-                } else if (next.kind == .dot or next.kind == .caret) {
+                } else if (next.kind == .dot or next.kind == .caret or next.kind == .left_bracket) {
                     // could be field access, dereference, or assignment through either
                     break :blk try self.parseExpressionOrFieldAssignment();
                 } else {
@@ -1227,12 +1227,15 @@ pub const Parser = struct {
         // consume ]
         try self.expectToken(.right_bracket, .unexpected_token);
 
+        // check for 'mut' keyword (mutable elements)
+        const is_mutable = self.match(.mut);
+
         // parse element type
         const element_type = try self.parseType();
 
         const end_pos = self.previousEnd();
 
-        return try self.ast.addArrayType(element_type, length, start_pos, end_pos);
+        return try self.ast.addArrayType(element_type, length, is_mutable, start_pos, end_pos);
     }
 
     fn parseArrayLiteral(self: *Parser) ParseError!NodeIndex {

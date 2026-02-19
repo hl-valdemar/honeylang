@@ -77,6 +77,7 @@ pub const SemanticErrorKind = enum {
     index_non_array,
     array_length_mismatch,
     index_not_integer,
+    assign_to_immutable_element,
 
     pub fn info(self: SemanticErrorKind) ErrorInfo {
         return error_info.get(self);
@@ -295,6 +296,11 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .code = "S040",
         .message = "array index must be an integer",
         .help = "use an integer type for array indexing",
+    },
+    .assign_to_immutable_element = .{
+        .code = "S041",
+        .message = "cannot assign to immutable array element",
+        .help = "use [N]mut T to declare an array with mutable elements",
     },
 });
 

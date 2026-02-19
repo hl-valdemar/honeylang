@@ -1,8 +1,0 @@
-import "std/fs"
-import "lexer"
-
-# just experimenting
-main :: func() void {
-  src := fs.read_to_string("program.hon")
-  tokens := lexer.scan(src)
-}

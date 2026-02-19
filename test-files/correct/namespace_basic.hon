@@ -1,8 +1,0 @@
-math :: namespace {
-    pub add :: func(a: i32, b: i32) i32 { return a + b }
-    pub sub :: func(a: i32, b: i32) i32 { return a - b }
-}
-
-main :: func() i32 {
-    return math.add(3, math.sub(5, 1))
-}

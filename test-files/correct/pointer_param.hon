@@ -1,9 +1,0 @@
-set_value :: func(p: @mut i32, val: i32) void {
-   p^ = val
-}
-
-main :: func() i32 {
-   mut x := 0
-   set_value(&x, 42)
-   return x
-}

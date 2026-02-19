@@ -1,9 +1,0 @@
-outer :: namespace {
-    pub inner :: namespace {
-        pub get_val :: func() i32 { return 42 }
-    }
-}
-
-main :: func() i32 {
-    return outer.inner.get_val()
-}

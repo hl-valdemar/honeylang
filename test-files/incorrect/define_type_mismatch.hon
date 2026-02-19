@@ -1,8 +1,0 @@
-math :: import c {
-    include "c_math.h"
-    define "PI 3.14"
-}
-
-main :: func() i32 {
-    return math.add(math.PI, 1)
-}
