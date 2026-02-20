@@ -146,6 +146,26 @@ fn emitGlobals(emitter: *Emitter, globals: *const GlobalVars, types: *const Type
                 // Runtime-initialized struct
                 try emitter.appendFmt("@{s} = {s} %{s} zeroinitializer\n", .{ name, linkage, struct_type.name });
             }
+        } else if (type_id.isArray()) {
+            const arr_info = types.array_types.items[type_id.array];
+            const elem_llvm = typeIdToLLVMType(arr_info.element_type);
+            if (globals.getArrayInit(idx)) |elem_values| {
+                // Static initializer: @arr = global [3 x i32] [i32 1, i32 2, i32 3]
+                try emitter.appendFmt("@{s} = {s} [{d} x {s}] [", .{ name, linkage, arr_info.length, elem_llvm });
+                for (0..arr_info.length) |ei| {
+                    if (ei > 0) try emitter.appendSlice(", ");
+                    if (isFloatType(arr_info.element_type)) {
+                        const bits: u64 = @bitCast(elem_values[ei]);
+                        try emitter.appendFmt("{s} 0x{X:0>16}", .{ elem_llvm, bits });
+                    } else {
+                        try emitter.appendFmt("{s} {d}", .{ elem_llvm, elem_values[ei] });
+                    }
+                }
+                try emitter.appendSlice("]\n");
+            } else {
+                // Runtime-initialized array
+                try emitter.appendFmt("@{s} = {s} [{d} x {s}] zeroinitializer\n", .{ name, linkage, arr_info.length, elem_llvm });
+            }
         } else {
             const width = globals.getWidth(idx);
             const type_str = widthToLLVMType(width);
@@ -620,6 +640,14 @@ fn lowerInst(
             const elem_llvm = typeIdToLLVMType(arr_info.element_type);
             const dst_ssa = ssa_map.allocFor(op.dst);
             try emitter.appendFmt("  %{d} = alloca [{d} x {s}]\n", .{ dst_ssa, arr_info.length, elem_llvm });
+        },
+
+        .alloca_array_local => |op| {
+            const arr_info = types.array_types.items[op.array_idx];
+            const elem_llvm = typeIdToLLVMType(arr_info.element_type);
+            const alloca_id = alloca_map.getOrCreate(op.offset);
+            try emitter.appendFmt("  %local.{d} = alloca [{d} x {s}]\n", .{ alloca_id, arr_info.length, elem_llvm });
+            alloca_map.markEmitted(op.offset);
         },
 
         .load_element => |op| {

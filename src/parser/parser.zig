@@ -354,8 +354,31 @@ pub const Parser = struct {
                     // `identifier := ...` => runtime var (inferred type)
                     return try self.parseVarDecl();
                 } else if (after.kind == .left_bracket) {
-                    // `identifier : [N]type ...` => array-typed decl
-                    // Could be var or const; parseVarDecl handles both typed paths
+                    // `identifier : [N]type ...` => skip past array type to find = or ::
+                    // Pattern: [ (number|_) ] (mut?) type (= | ::)
+                    var skip: u32 = 3; // start after `[`
+                    // skip length (number or identifier like `_`)
+                    if (self.peekOffset(skip)) |len_tok| {
+                        if (len_tok.kind == .number or len_tok.kind == .identifier) skip += 1;
+                    }
+                    // skip `]`
+                    if (self.peekOffset(skip)) |rb| {
+                        if (rb.kind == .right_bracket) skip += 1;
+                    }
+                    // skip optional `mut`
+                    if (self.peekOffset(skip)) |m| {
+                        if (m.kind == .mut) skip += 1;
+                    }
+                    // skip element type identifier
+                    if (self.peekOffset(skip)) |et| {
+                        if (et.kind == .identifier) skip += 1;
+                    }
+                    // check what follows: `::` => const, `=` => var
+                    if (self.peekOffset(skip)) |delim| {
+                        if (delim.kind == .double_colon) {
+                            return try self.parseConstDecl();
+                        }
+                    }
                     return try self.parseVarDecl();
                 } else if (after.kind == .identifier) {
                     // `identifier : type ...` => check what follows type

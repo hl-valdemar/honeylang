@@ -262,9 +262,15 @@ pub const MInst = union(enum) {
         is_sub: bool, // true for subtraction
     },
 
-    /// Allocate an array on the stack.
+    /// Allocate an array on the stack (standalone, returns pointer).
     alloca_array: struct {
         dst: VReg, // pointer to allocated array
+        array_idx: u32, // index into TypeRegistry.array_types
+    },
+
+    /// Declare a local variable as an array: alloca [N x T] as the local slot.
+    alloca_array_local: struct {
+        offset: i16, // local fp-relative offset
         array_idx: u32, // index into TypeRegistry.array_types
     },
 
@@ -525,6 +531,14 @@ pub const MIRFunction = struct {
         return dst;
     }
 
+    /// Emit an alloca_array_local: declare a local slot as [N x T].
+    pub fn emitAllocaArrayLocal(self: *MIRFunction, offset: i16, array_idx: u32) !void {
+        try self.emit(.{ .alloca_array_local = .{
+            .offset = offset,
+            .array_idx = array_idx,
+        } });
+    }
+
     /// Emit a load_element instruction (GEP + load from array).
     pub fn emitLoadElement(self: *MIRFunction, base: VReg, index: VReg, array_idx: u32, width: Width) !VReg {
         const dst = self.allocVReg();
@@ -595,6 +609,7 @@ pub const GlobalVars = struct {
     is_const: std.ArrayListUnmanaged(bool),
     init_values: std.ArrayListUnmanaged(?i64), // null if needs runtime init
     struct_inits: std.AutoHashMapUnmanaged(GlobalIndex, []const i64), // compile-time struct field values
+    array_inits: std.AutoHashMapUnmanaged(GlobalIndex, []const i64), // compile-time array element values
     sym_indices: std.ArrayListUnmanaged(SymbolIndex),
     name_map: std.StringHashMapUnmanaged(GlobalIndex),
 
@@ -606,6 +621,7 @@ pub const GlobalVars = struct {
             .is_const = .{},
             .init_values = .{},
             .struct_inits = .{},
+            .array_inits = .{},
             .sym_indices = .{},
             .name_map = .{},
         };
@@ -618,6 +634,7 @@ pub const GlobalVars = struct {
         self.is_const.deinit(allocator);
         self.init_values.deinit(allocator);
         self.struct_inits.deinit(allocator);
+        self.array_inits.deinit(allocator);
         self.sym_indices.deinit(allocator);
         self.name_map.deinit(allocator);
     }
@@ -675,8 +692,13 @@ pub const GlobalVars = struct {
         return self.struct_inits.get(idx);
     }
 
+    pub fn getArrayInit(self: *const GlobalVars, idx: GlobalIndex) ?[]const i64 {
+        return self.array_inits.get(idx);
+    }
+
     pub fn needsRuntimeInit(self: *const GlobalVars, idx: GlobalIndex) bool {
         if (self.struct_inits.contains(idx)) return false;
+        if (self.array_inits.contains(idx)) return false;
         return self.init_values.items[idx] == null;
     }
 };

@@ -255,6 +255,9 @@ fn printInstruction(inst: *const MInst) void {
         .alloca_array => |a| {
             std.debug.print("alloca_array v{d}, array#{d}", .{ a.dst, a.array_idx });
         },
+        .alloca_array_local => |a| {
+            std.debug.print("alloca_array_local [fp{d}], array#{d}", .{ a.offset, a.array_idx });
+        },
         .load_element => |l| {
             std.debug.print("load_element.{s} v{d}, v{d}[v{d}], array#{d}", .{
                 widthStr(l.width), l.dst, l.base, l.index, l.array_idx,

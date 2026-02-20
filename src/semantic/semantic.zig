@@ -624,8 +624,14 @@ pub const SemanticContext = struct {
                 type_id = tid;
                 type_state = .resolved;
             } else {
-                const loc = self.ast.getLocation(type_idx);
-                try self.errors.add(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
+                const inferred = self.resolveInferredArrayType(type_idx, decl.value);
+                if (!inferred.isUnresolved()) {
+                    type_id = inferred;
+                    type_state = .resolved;
+                } else {
+                    const loc = self.ast.getLocation(type_idx);
+                    try self.errors.add(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
+                }
             }
         }
 
@@ -678,8 +684,14 @@ pub const SemanticContext = struct {
                 type_id = tid;
                 type_state = .resolved;
             } else {
-                const loc = self.ast.getLocation(type_idx);
-                try self.errors.add(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
+                const inferred = self.resolveInferredArrayType(type_idx, decl.value);
+                if (!inferred.isUnresolved()) {
+                    type_id = inferred;
+                    type_state = .resolved;
+                } else {
+                    const loc = self.ast.getLocation(type_idx);
+                    try self.errors.add(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
+                }
             }
         }
 
@@ -959,12 +971,18 @@ pub const SemanticContext = struct {
                 type_id = tid;
                 type_state = .resolved;
             } else {
-                const loc = self.ast.getLocation(type_idx);
-                try self.errors.add(.{
-                    .kind = .unknown_type,
-                    .start = loc.start,
-                    .end = loc.end,
-                });
+                const inferred = self.resolveInferredArrayType(type_idx, decl.value);
+                if (!inferred.isUnresolved()) {
+                    type_id = inferred;
+                    type_state = .resolved;
+                } else {
+                    const loc = self.ast.getLocation(type_idx);
+                    try self.errors.add(.{
+                        .kind = .unknown_type,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
             }
         }
 
@@ -1006,12 +1024,18 @@ pub const SemanticContext = struct {
                 type_id = tid;
                 type_state = .resolved;
             } else {
-                const loc = self.ast.getLocation(type_idx);
-                try self.errors.add(.{
-                    .kind = .unknown_type,
-                    .start = loc.start,
-                    .end = loc.end,
-                });
+                const inferred = self.resolveInferredArrayType(type_idx, decl.value);
+                if (!inferred.isUnresolved()) {
+                    type_id = inferred;
+                    type_state = .resolved;
+                } else {
+                    const loc = self.ast.getLocation(type_idx);
+                    try self.errors.add(.{
+                        .kind = .unknown_type,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
             }
         }
 
@@ -1111,6 +1135,20 @@ pub const SemanticContext = struct {
             },
             else => null,
         };
+    }
+
+    /// Resolve [_]T array type by inferring length from a value expression.
+    /// Returns .unresolved if the type node is not an inferred array type.
+    fn resolveInferredArrayType(self: *SemanticContext, type_idx: NodeIndex, value_idx: NodeIndex) TypeId {
+        if (self.ast.getKind(type_idx) != .array_type) return .unresolved;
+        const arr = self.ast.getArrayType(type_idx);
+        if (arr.length != null) return .unresolved;
+        const elem_tid = self.resolveTypeNode(arr.element_type) orelse return .unresolved;
+        if (self.ast.getKind(value_idx) != .array_literal) return .unresolved;
+        const lit = self.ast.getArrayLiteral(value_idx);
+        const elements = self.ast.getExtra(lit.elements);
+        const inferred_len: u32 = @intCast(elements.len);
+        return self.types.addArrayType(elem_tid, inferred_len, arr.is_mutable) catch .unresolved;
     }
 
     fn resolveTypeName(self: *const SemanticContext, name: []const u8) ?TypeId {
@@ -1752,19 +1790,8 @@ pub const SemanticContext = struct {
         if (decl.type_id) |type_idx| {
             if (self.resolveTypeNode(type_idx)) |tid| {
                 expected_type = tid;
-            } else if (self.ast.getKind(type_idx) == .array_type) {
-                // [_]T — infer length from the value expression (must be an array literal)
-                const arr = self.ast.getArrayType(type_idx);
-                if (arr.length == null) {
-                    if (self.resolveTypeNode(arr.element_type)) |elem_tid| {
-                        if (self.ast.getKind(decl.value) == .array_literal) {
-                            const lit = self.ast.getArrayLiteral(decl.value);
-                            const elements = self.ast.getExtra(lit.elements);
-                            const inferred_len: u32 = @intCast(elements.len);
-                            expected_type = self.types.addArrayType(elem_tid, inferred_len, arr.is_mutable) catch .unresolved;
-                        }
-                    }
-                }
+            } else {
+                expected_type = self.resolveInferredArrayType(type_idx, decl.value);
             }
         }
 

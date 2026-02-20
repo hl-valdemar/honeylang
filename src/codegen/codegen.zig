@@ -268,9 +268,12 @@ pub const CodeGenContext = struct {
         // Try to evaluate initializer at compile time
         var init_value: ?i64 = null;
         var struct_init: ?[]const i64 = null;
+        var array_init: ?[]const i64 = null;
 
         if (type_id.isStruct()) {
             struct_init = self.tryEvaluateStructInit(var_decl.value, type_id);
+        } else if (type_id.isArray()) {
+            array_init = self.tryEvaluateArrayInit(var_decl.value, type_id);
         } else {
             init_value = self.tryEvaluateLiteral(var_decl.value);
         }
@@ -289,9 +292,12 @@ pub const CodeGenContext = struct {
         if (struct_init) |values| {
             try self.mir.globals.struct_inits.put(self.allocator, global_idx, values);
         }
+        if (array_init) |values| {
+            try self.mir.globals.array_inits.put(self.allocator, global_idx, values);
+        }
 
         // If needs runtime init, add to list
-        if (init_value == null and struct_init == null) {
+        if (init_value == null and struct_init == null and array_init == null) {
             try needs_init.append(self.allocator, node_idx);
         }
     }
@@ -306,12 +312,29 @@ pub const CodeGenContext = struct {
         const const_decl = self.ast.getConstDecl(node_idx);
         const value_kind = self.ast.getKind(const_decl.value);
 
-        // Only collect struct-typed constants as globals (primitives are handled by comptime)
-        if (value_kind != .struct_literal) return;
+        // Only collect struct/array constants as globals (primitives are handled by comptime)
+        if (value_kind != .struct_literal and value_kind != .array_literal) return;
 
         const sym_idx = self.symbols.lookup(name) orelse return;
         const type_id = self.symbols.getTypeId(sym_idx);
         const width = typeIdToWidth(type_id);
+
+        if (value_kind == .array_literal) {
+            const array_init = self.tryEvaluateArrayInit(const_decl.value, type_id) orelse return;
+
+            const global_idx = try self.mir.globals.add(
+                self.allocator,
+                name,
+                width,
+                type_id,
+                true,
+                null,
+                sym_idx,
+            );
+
+            try self.mir.globals.array_inits.put(self.allocator, global_idx, array_init);
+            return;
+        }
 
         // :: structs must have all compile-time known fields (no runtime init fallback)
         const struct_init = self.tryEvaluateStructInit(const_decl.value, type_id) orelse return;
@@ -408,6 +431,28 @@ pub const CodeGenContext = struct {
                 self.allocator.free(values);
                 return null;
             }
+        }
+
+        return values;
+    }
+
+    fn tryEvaluateArrayInit(self: *CodeGenContext, value_node: NodeIndex, type_id: TypeId) ?[]const i64 {
+        if (self.ast.getKind(value_node) != .array_literal) return null;
+        if (!type_id.isArray()) return null;
+
+        const arr_info = self.types.getArrayType(type_id) orelse return null;
+        const lit = self.ast.getArrayLiteral(value_node);
+        const elements = self.ast.getExtra(lit.elements);
+
+        if (elements.len != arr_info.length) return null;
+
+        const values = self.allocator.alloc(i64, arr_info.length) catch return null;
+        for (elements, 0..) |elem_idx, i| {
+            const val = self.tryEvaluateTypedLiteral(elem_idx, arr_info.element_type) orelse {
+                self.allocator.free(values);
+                return null;
+            };
+            values[i] = val;
         }
 
         return values;
@@ -656,6 +701,26 @@ pub const CodeGenContext = struct {
 
             const global_idx = self.mir.globals.lookup(name) orelse continue;
             const type_id = self.mir.globals.getTypeId(global_idx);
+
+            // Array globals: store elements directly into global via GEP
+            if (type_id.isArray()) {
+                const array_idx = type_id.array;
+                const arr_info = self.types.getArrayType(type_id) orelse continue;
+                const elem_width = typeIdToWidth(arr_info.element_type);
+                const func = self.current_func.?;
+                const global_ptr = try func.emitAddrOfGlobal(global_idx);
+
+                if (self.ast.getKind(value_node) == .array_literal) {
+                    const lit = self.ast.getArrayLiteral(value_node);
+                    const elements = self.ast.getExtra(lit.elements);
+                    for (elements, 0..) |elem_idx, i| {
+                        const val_reg = try self.generateExpression(elem_idx) orelse continue;
+                        const idx_reg = try func.emitMovImm(@intCast(i), .w64);
+                        try func.emitStoreElement(global_ptr, idx_reg, val_reg, array_idx, elem_width);
+                    }
+                }
+                continue;
+            }
 
             // Evaluate initializer expression
             const value_reg = try self.generateExpression(value_node) orelse continue;
@@ -912,6 +977,31 @@ pub const CodeGenContext = struct {
         // type (already reported as error S018). Use w32 as error recovery so the
         // compiler can still produce an executable.
         const type_id = self.node_types.get(node_idx) orelse .unresolved;
+
+        // Array locals: the local IS the [N x T] alloca, no pointer wrapper
+        if (type_id.isArray()) {
+            const array_idx = type_id.array;
+            const arr_info = self.types.getArrayType(type_id) orelse return;
+            const elem_width = typeIdToWidth(arr_info.element_type);
+
+            const offset = try self.locals.add(self.allocator, name, .ptr);
+            const func = self.current_func.?;
+            try func.emitAllocaArrayLocal(offset, array_idx);
+
+            // Store elements directly from array literal
+            if (self.ast.getKind(var_decl.value) == .array_literal) {
+                const base = try func.emitAddrOfLocal(offset);
+                const lit = self.ast.getArrayLiteral(var_decl.value);
+                const elements = self.ast.getExtra(lit.elements);
+                for (elements, 0..) |elem_idx, i| {
+                    const value_reg = try self.generateExpression(elem_idx) orelse continue;
+                    const index_reg = try func.emitMovImm(@intCast(i), .w64);
+                    try func.emitStoreElement(base, index_reg, value_reg, array_idx, elem_width);
+                }
+            }
+            return;
+        }
+
         const width = typeIdToWidth(type_id);
 
         // Allocate stack slot
@@ -1184,8 +1274,13 @@ pub const CodeGenContext = struct {
         const token = self.tokens.items[ident.token_idx];
         const name = self.src.getSlice(token.start, token.start + token.len);
 
-        // Check locals @"type" (for function-scoped variables)
+        // Check locals (for function-scoped variables)
         if (self.locals.lookup(name)) |local| {
+            // Array locals: the local IS the [N x T] storage, return its address
+            const node_type = self.node_types.get(node_idx) orelse .unresolved;
+            if (node_type.isArray()) {
+                return try self.current_func.?.emitAddrOfLocal(local.offset);
+            }
             return try self.current_func.?.emitLoadLocal(local.offset, local.width);
         }
 
@@ -1196,9 +1291,9 @@ pub const CodeGenContext = struct {
 
         return switch (kind) {
             .constant => {
-                // For struct constants, comptime returns null — use global path
+                // For struct/array constants, comptime returns null — use global path
                 const result = try self.generateConstLoad(sym_idx, type_id);
-                if (result == null and type_id.isStruct()) {
+                if (result == null and (type_id.isStruct() or type_id.isArray())) {
                     return self.generateVarLoad(name, type_id);
                 }
                 return result;
@@ -1211,8 +1306,8 @@ pub const CodeGenContext = struct {
     fn generateVarLoad(self: *CodeGenContext, name: []const u8, type_id: TypeId) !?VReg {
         const func = self.current_func.?;
         const global_idx = self.mir.globals.lookup(name) orelse return null;
-        if (type_id.isStruct()) {
-            // The global IS the struct data; return a pointer to it
+        if (type_id.isStruct() or type_id.isArray()) {
+            // The global IS the data storage; return a pointer to it
             return try func.emitAddrOfGlobal(global_idx);
         }
         const width = typeIdToWidth(type_id);
