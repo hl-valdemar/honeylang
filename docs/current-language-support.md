@@ -433,6 +433,24 @@ floats: [2]f32 = [1, 2]
 flags: [2]bool = [true, false]
 ```
 
+### Size Inference
+
+Use `[_]T` to infer the array length from the literal:
+
+```honey
+arr: [_]i32 = [1, 2, 3]       # inferred as [3]i32
+big: [_]f32 = [1, 2, 3, 4, 5] # inferred as [5]f32
+```
+
+Works with mutable elements:
+
+```honey
+arr: [_]mut i32 = [10, 20]    # inferred as [2]mut i32
+arr[0] = 5
+```
+
+Size inference only applies to declarations with an immediate array literal assignment.
+
 ### Indexing
 
 Access elements with `arr[index]`. The index must be an integer type:
@@ -460,10 +478,10 @@ By default, array elements are immutable — `[N]T` does not allow element assig
 
 | Type | Element write | Variable reassign |
 | ---- | ------------- | ----------------- |
-| `arr: [N]T` | Not allowed | Not allowed |
-| `arr: [N]mut T` | Allowed | Not allowed |
-| `mut arr: [N]T` | Not allowed | Allowed |
-| `mut arr: [N]mut T` | Allowed | Allowed |
+| `arr: [N]T` or `arr: [_]T` | Not allowed | Not allowed |
+| `arr: [N]mut T` or `arr: [_]mut T` | Allowed | Not allowed |
+| `mut arr: [N]T` or `mut arr: [_]T` | Not allowed | Allowed |
+| `mut arr: [N]mut T` or `mut arr: [_]mut T` | Allowed | Allowed |
 
 Element mutability is controlled by the type (`[N]mut T`), independent of the variable binding, which is consistent with pointer dereference — `p: @mut i32` allows `p^ = 10` without requiring `mut p`.
 
