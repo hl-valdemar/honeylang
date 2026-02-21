@@ -881,7 +881,9 @@ pub const CodeGenContext = struct {
             const param_type = self.node_types.get(param_name_idx) orelse .unresolved;
             try param_widths.append(self.allocator, typeIdToWidth(param_type, self.target));
             try param_struct_indices.append(self.allocator, if (param_type.isStruct()) param_type.struct_type else null);
-            try param_slice_flags.append(self.allocator, param_type.isSlice());
+            // sentinel-terminated slices in C functions are passed as raw pointers
+            const is_sentinel = if (self.types.getSliceType(param_type)) |si| si.sentinel != null else false;
+            try param_slice_flags.append(self.allocator, param_type.isSlice() and !is_sentinel);
         }
 
         try self.mir.addExternFunction(
@@ -928,11 +930,13 @@ pub const CodeGenContext = struct {
                 const param_token = self.tokens.items[param_ident.token_idx];
                 const param_name = self.src.getSlice(param_token.start, param_token.start + param_token.len);
                 const param_type = self.node_types.get(param_name_idx) orelse .unresolved;
+                // sentinel-terminated slices in C-convention functions are raw pointers
+                const is_sentinel = if (self.types.getSliceType(param_type)) |si| si.sentinel != null else false;
                 try param_list.append(self.allocator, .{
                     .name = param_name,
                     .width = typeIdToWidth(param_type, self.target),
                     .struct_idx = if (param_type.isStruct()) param_type.struct_type else null,
-                    .is_slice = param_type.isSlice(),
+                    .is_slice = param_type.isSlice() and !(is_sentinel and call_conv == .c),
                 });
             }
         }
@@ -1725,11 +1729,25 @@ pub const CodeGenContext = struct {
                 try arg_slice_flags.append(self.allocator, false);
                 continue;
             };
-            try arg_regs.append(self.allocator, arg_reg);
-            try arg_widths.append(self.allocator, arg_width);
-            try arg_struct_indices.append(self.allocator, if (arg_type.isStruct()) arg_type.struct_type else null);
-            // if arg is already a slice (passed directly), mark it
-            try arg_slice_flags.append(self.allocator, expected_type != null and expected_type.?.isSlice());
+            // Check if param expects a sentinel-terminated slice in C convention
+            // If so, extract just the data pointer — C sees a raw char*, not a fat pointer
+            const is_expected_slice = expected_type != null and expected_type.?.isSlice();
+            const is_c_sentinel = is_expected_slice and call_conv == .c and
+                (if (self.types.getSliceType(expected_type.?)) |si| si.sentinel != null else false);
+
+            if (is_c_sentinel) {
+                // Extract data pointer from the fat pointer for C interop
+                const data_ptr = try func.emitSliceGetPtr(arg_reg);
+                try arg_regs.append(self.allocator, data_ptr);
+                try arg_widths.append(self.allocator, .ptr);
+                try arg_struct_indices.append(self.allocator, null);
+                try arg_slice_flags.append(self.allocator, false); // raw pointer, not a slice
+            } else {
+                try arg_regs.append(self.allocator, arg_reg);
+                try arg_widths.append(self.allocator, arg_width);
+                try arg_struct_indices.append(self.allocator, if (arg_type.isStruct()) arg_type.struct_type else null);
+                try arg_slice_flags.append(self.allocator, is_expected_slice);
+            }
         }
 
         // 4. Check for argument type mismatches — emit trap if any arg width

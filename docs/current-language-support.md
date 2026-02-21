@@ -632,9 +632,17 @@ c_str: [:0]u8 = "hello"
 process(c_str)                 # [:0]u8 → []u8 is safe
 ```
 
-### Current Limitations
+### C Interop
 
-- C function parameters declared as `[:0]u8` are not yet passed as raw pointers (C calling convention for sentinel slices needs further work)
+In C-convention functions, sentinel-terminated slice parameters are passed as raw pointers (not fat pointers). This makes string literals directly passable to C functions:
+
+```honey
+puts :: c func(s: [:0]u8) i32
+
+main :: func() i32 {
+    return puts("Hello from Honey!")
+}
+```
 
 ## Slices
 
