@@ -234,6 +234,7 @@ pub const CodeGenContext = struct {
     mir: MIRModule,
     current_func: ?*MIRFunction,
     locals: LocalVars,
+    next_string_id: u32 = 0,
 
     pub fn init(
         allocator: mem.Allocator,
@@ -1374,8 +1375,88 @@ pub const CodeGenContext = struct {
                 const value = std.fmt.parseInt(i64, value_str, 10) catch 0;
                 return try func.emitMovImm(value, width);
             },
+            .string_literal => {
+                return try self.generateStringLiteral(value_str);
+            },
             else => return null,
         }
+    }
+
+    fn generateStringLiteral(self: *CodeGenContext, raw: []const u8) CodeGenError!?VReg {
+        const func = self.current_func.?;
+
+        // Process escape sequences → byte array
+        const content = processStringEscapes(self.allocator, raw) orelse return null;
+
+        // Append null terminator (sentinel) — string type is [:0]u8
+        const bytes_with_sentinel = self.allocator.alloc(u8, content.len + 1) catch return null;
+        @memcpy(bytes_with_sentinel[0..content.len], content);
+        bytes_with_sentinel[content.len] = 0;
+
+        // Generate unique name: str.0, str.1, ...
+        const name = std.fmt.allocPrint(self.allocator, "str.{d}", .{self.next_string_id}) catch return null;
+        self.next_string_id += 1;
+
+        // Register as anonymous global constant
+        const global_idx = try self.mir.globals.add(
+            self.allocator,
+            name,
+            .ptr,
+            .unresolved, // type_id not used — LLVM emission uses string_inits
+            true, // is_const
+            null, // no scalar init
+            std.math.maxInt(SymbolIndex), // no symbol
+        );
+        try self.mir.globals.string_inits.put(self.allocator, global_idx, bytes_with_sentinel);
+
+        // Create slice fat pointer: { ptr to global, content length (excludes sentinel) }
+        const global_ptr = try func.emitAddrOfGlobal(global_idx);
+        const len_reg = try func.emitMovImm(@intCast(content.len), self.target.ptrWidth());
+
+        const slice_offset = try self.locals.add(self.allocator, "__str_tmp", .ptr);
+        try func.emitAllocaSliceLocal(slice_offset);
+        const slice_ptr = try func.emitAddrOfLocal(slice_offset);
+        try func.emitMakeSlice(slice_ptr, global_ptr, len_reg);
+
+        return slice_ptr;
+    }
+
+    fn processStringEscapes(allocator: mem.Allocator, raw: []const u8) ?[]const u8 {
+        // Count output length (escapes shrink the string)
+        var out_len: usize = 0;
+        var i: usize = 0;
+        while (i < raw.len) {
+            if (raw[i] == '\\' and i + 1 < raw.len) {
+                i += 2; // skip escape pair
+            } else {
+                i += 1;
+            }
+            out_len += 1;
+        }
+
+        const buf = allocator.alloc(u8, out_len) catch return null;
+        var out: usize = 0;
+        i = 0;
+        while (i < raw.len) {
+            if (raw[i] == '\\' and i + 1 < raw.len) {
+                buf[out] = switch (raw[i + 1]) {
+                    'n' => '\n',
+                    't' => '\t',
+                    'r' => '\r',
+                    '0' => 0,
+                    '\\' => '\\',
+                    '"' => '"',
+                    else => raw[i + 1], // unknown escape: keep literal char
+                };
+                i += 2;
+            } else {
+                buf[out] = raw[i];
+                i += 1;
+            }
+            out += 1;
+        }
+
+        return buf[0..out_len];
     }
 
     fn generateIdentifier(self: *CodeGenContext, node_idx: NodeIndex) !?VReg {

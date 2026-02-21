@@ -272,11 +272,13 @@ pub const ArrayType = struct {
     element_type: NodeIndex,
     length: ?u32,
     is_mutable: bool,
+    sentinel: ?u8 = null,
 };
 
 pub const SliceType = struct {
     element_type: NodeIndex,
     is_mutable: bool,
+    sentinel: ?u8 = null,
 };
 
 pub const ArrayLiteral = struct {
@@ -985,6 +987,7 @@ pub const Ast = struct {
         element_type: NodeIndex,
         length: ?u32,
         is_mutable: bool,
+        sentinel: ?u8,
         start: SourceIndex,
         end: SourceIndex,
     ) !NodeIndex {
@@ -999,6 +1002,7 @@ pub const Ast = struct {
             .element_type = element_type,
             .length = length,
             .is_mutable = is_mutable,
+            .sentinel = sentinel,
         });
 
         return node_idx;
@@ -1008,6 +1012,7 @@ pub const Ast = struct {
         self: *Ast,
         element_type: NodeIndex,
         is_mutable: bool,
+        sentinel: ?u8,
         start: SourceIndex,
         end: SourceIndex,
     ) !NodeIndex {
@@ -1021,6 +1026,7 @@ pub const Ast = struct {
         try self.slice_types.append(self.allocator, .{
             .element_type = element_type,
             .is_mutable = is_mutable,
+            .sentinel = sentinel,
         });
 
         return node_idx;

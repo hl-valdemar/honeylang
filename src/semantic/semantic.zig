@@ -1133,12 +1133,12 @@ pub const SemanticContext = struct {
                 const arr = self.ast.getArrayType(node_idx);
                 const element_type = self.resolveTypeNode(arr.element_type) orelse return null;
                 const length = arr.length orelse return null; // [_]T needs context to resolve
-                return self.types.addArrayType(element_type, length, arr.is_mutable) catch return null;
+                return self.types.addArrayTypeWithSentinel(element_type, length, arr.is_mutable, arr.sentinel) catch return null;
             },
             .slice_type => {
                 const slc = self.ast.getSliceType(node_idx);
                 const element_type = self.resolveTypeNode(slc.element_type) orelse return null;
-                return self.types.addSliceType(element_type, slc.is_mutable) catch return null;
+                return self.types.addSliceTypeWithSentinel(element_type, slc.is_mutable, slc.sentinel) catch return null;
             },
             else => null,
         };
@@ -1330,6 +1330,10 @@ pub const SemanticContext = struct {
                         return self.types.addSliceType(arr_info.element_type, arr_info.is_mutable) catch return null;
                     }
                 } else if (obj_type.isSlice()) {
+                    // slicing drops sentinel
+                    if (self.types.getSliceType(obj_type)) |slice_info| {
+                        return self.types.addSliceType(slice_info.element_type, slice_info.is_mutable) catch return null;
+                    }
                     return obj_type;
                 }
                 return null;
@@ -1345,6 +1349,11 @@ pub const SemanticContext = struct {
         // boolean literals always have type bool
         if (token.kind == .bool) {
             return TypeId.bool;
+        }
+
+        // string literals are always [:0]u8 (null-terminated immutable slice)
+        if (token.kind == .string_literal) {
+            return self.types.addSliceTypeWithSentinel(.{ .primitive = .u8 }, false, 0) catch return null;
         }
 
         // numeric literals cannot be inferred without context
@@ -2252,6 +2261,11 @@ pub const SemanticContext = struct {
             return .bool;
         }
 
+        // string literals are always [:0]u8 (null-terminated immutable slice)
+        if (token.kind == .string_literal) {
+            return try self.types.addSliceTypeWithSentinel(.{ .primitive = .u8 }, false, 0);
+        }
+
         // for numeric literals, use context type if available
         if (context_type.isNumeric()) {
             return context_type;
@@ -3035,7 +3049,11 @@ pub const SemanticContext = struct {
                     return try self.types.addSliceType(arr_info.element_type, arr_info.is_mutable);
                 }
             } else if (ot.isSlice()) {
-                return ot; // slicing a slice produces the same slice type
+                // slicing a slice drops any sentinel guarantee
+                if (self.types.getSliceType(ot)) |slice_info| {
+                    return try self.types.addSliceType(slice_info.element_type, slice_info.is_mutable);
+                }
+                return ot;
             } else if (!ot.isUnresolved()) {
                 try self.errors.add(.{
                     .kind = .index_non_array,
@@ -3087,15 +3105,20 @@ pub const SemanticContext = struct {
             if (la.length != ra.length) return false;
             // expected mutable, got immutable — not OK
             if (la.is_mutable and !ra.is_mutable) return false;
+            // sentinel must match (no implicit sentinel coercion for arrays)
+            if (la.sentinel != ra.sentinel) return false;
             return self.typesCompatible(la.element_type, ra.element_type);
         }
 
-        // slice types: structural comparison with mutability check
+        // slice types: structural comparison with mutability and sentinel coercion
         if (left.isSlice() and right.isSlice()) {
             const ls = self.types.getSliceType(left) orelse return false;
             const rs = self.types.getSliceType(right) orelse return false;
             // expected mutable, got immutable — not OK
             if (ls.is_mutable and !rs.is_mutable) return false;
+            // sentinel coercion: [:0]T → []T is OK (dropping sentinel guarantee)
+            // []T → [:0]T is NOT OK (can't guarantee sentinel exists)
+            if (ls.sentinel != null and rs.sentinel == null) return false;
             return self.typesCompatible(ls.element_type, rs.element_type);
         }
 

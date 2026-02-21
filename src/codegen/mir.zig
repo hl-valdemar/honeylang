@@ -679,6 +679,7 @@ pub const GlobalVars = struct {
     init_values: std.ArrayListUnmanaged(?i64), // null if needs runtime init
     struct_inits: std.AutoHashMapUnmanaged(GlobalIndex, []const i64), // compile-time struct field values
     array_inits: std.AutoHashMapUnmanaged(GlobalIndex, []const i64), // compile-time array element values
+    string_inits: std.AutoHashMapUnmanaged(GlobalIndex, []const u8), // compile-time string byte values
     sym_indices: std.ArrayListUnmanaged(SymbolIndex),
     name_map: std.StringHashMapUnmanaged(GlobalIndex),
 
@@ -691,6 +692,7 @@ pub const GlobalVars = struct {
             .init_values = .{},
             .struct_inits = .{},
             .array_inits = .{},
+            .string_inits = .{},
             .sym_indices = .{},
             .name_map = .{},
         };
@@ -704,6 +706,7 @@ pub const GlobalVars = struct {
         self.init_values.deinit(allocator);
         self.struct_inits.deinit(allocator);
         self.array_inits.deinit(allocator);
+        self.string_inits.deinit(allocator);
         self.sym_indices.deinit(allocator);
         self.name_map.deinit(allocator);
     }
@@ -765,9 +768,14 @@ pub const GlobalVars = struct {
         return self.array_inits.get(idx);
     }
 
+    pub fn getStringInit(self: *const GlobalVars, idx: GlobalIndex) ?[]const u8 {
+        return self.string_inits.get(idx);
+    }
+
     pub fn needsRuntimeInit(self: *const GlobalVars, idx: GlobalIndex) bool {
         if (self.struct_inits.contains(idx)) return false;
         if (self.array_inits.contains(idx)) return false;
+        if (self.string_inits.contains(idx)) return false;
         return self.init_values.items[idx] == null;
     }
 };

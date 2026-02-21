@@ -1104,7 +1104,7 @@ pub const Parser = struct {
                 }
                 break :blk try self.parseIdentifier();
             },
-            .number, .bool => try self.parseLiteral(),
+            .number, .bool, .string_literal => try self.parseLiteral(),
             .left_bracket => try self.parseArrayLiteral(),
             .left_paren => blk: {
                 const paren_start = self.currentStart();
@@ -1263,13 +1263,24 @@ pub const Parser = struct {
         // consume [
         try self.expectToken(.left_bracket, .unexpected_token);
 
-        // check for slice type: []T (no length between brackets)
+        // check for slice type: []T or sentinel slice: [:S]T
         if (self.check(.right_bracket)) {
             self.advance(); // consume ]
             const is_mutable = self.match(.mut);
             const element_type = try self.parseType();
             const end_pos = self.previousEnd();
-            return try self.ast.addSliceType(element_type, is_mutable, start_pos, end_pos);
+            return try self.ast.addSliceType(element_type, is_mutable, null, start_pos, end_pos);
+        }
+
+        if (self.check(.colon)) {
+            // sentinel-terminated slice: [:S]T
+            self.advance(); // consume :
+            const sentinel = try self.parseSentinelValue();
+            try self.expectToken(.right_bracket, .unexpected_token);
+            const is_mutable = self.match(.mut);
+            const element_type = try self.parseType();
+            const end_pos = self.previousEnd();
+            return try self.ast.addSliceType(element_type, is_mutable, sentinel, start_pos, end_pos);
         }
 
         // parse length (number literal, or '_' for inferred)
@@ -1300,6 +1311,13 @@ pub const Parser = struct {
             return error.UnexpectedToken;
         }
 
+        // check for sentinel: [N:S]T or [_:S]T
+        var sentinel: ?u8 = null;
+        if (self.check(.colon)) {
+            self.advance(); // consume :
+            sentinel = try self.parseSentinelValue();
+        }
+
         // consume ]
         try self.expectToken(.right_bracket, .unexpected_token);
 
@@ -1311,7 +1329,25 @@ pub const Parser = struct {
 
         const end_pos = self.previousEnd();
 
-        return try self.ast.addArrayType(element_type, length, is_mutable, start_pos, end_pos);
+        return try self.ast.addArrayType(element_type, length, is_mutable, sentinel, start_pos, end_pos);
+    }
+
+    fn parseSentinelValue(self: *Parser) ParseError!u8 {
+        const token = self.peek() orelse {
+            try self.addError(.unexpected_eof, self.currentStart(), self.currentStart());
+            return error.UnexpectedEof;
+        };
+        if (token.kind != .number) {
+            try self.addErrorWithFound(.unexpected_token, token.kind, token.start, token.start + token.len);
+            return error.UnexpectedToken;
+        }
+        const value_str = self.src.getSlice(token.start, token.start + token.len);
+        const value = std.fmt.parseInt(u8, value_str, 10) catch {
+            try self.addError(.unexpected_token, token.start, token.start + token.len);
+            return error.UnexpectedToken;
+        };
+        self.advance(); // consume number
+        return value;
     }
 
     fn parseArrayLiteral(self: *Parser) ParseError!NodeIndex {

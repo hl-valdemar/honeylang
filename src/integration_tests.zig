@@ -12,4 +12,5 @@ test {
     _ = @import("integration_tests/errors.zig");
     _ = @import("integration_tests/codegen.zig");
     _ = @import("integration_tests/bounds_checking.zig");
+    _ = @import("integration_tests/strings.zig");
 }

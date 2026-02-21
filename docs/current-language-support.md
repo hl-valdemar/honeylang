@@ -538,6 +538,104 @@ The compiler checks:
 - **Non-integer index:** `arr[flag]` where `flag` is `bool` — index must be an integer
 - **Immutable element assignment:** `arr[0] = 10` on `[N]T` — use `[N]mut T` for mutable elements
 
+## Strings
+
+String literals are `[:0]u8` — null-terminated immutable slices of bytes. The null terminator is stored after the data but is not included in `.len`. Strings support all slice operations: indexing, `.len`, slicing, and passing to functions.
+
+### String Literals
+
+```honey
+s := "hello"          # type is [:0]u8
+c := s[0]             # u8 value 104 (ASCII 'h')
+n := s.len            # usize value 5 (excludes null terminator)
+```
+
+### Escape Sequences
+
+| Escape | Value |
+| ------ | ----- |
+| `\n` | Newline (0x0A) |
+| `\t` | Tab (0x09) |
+| `\r` | Carriage return (0x0D) |
+| `\0` | Null byte (0x00) |
+| `\\` | Backslash |
+| `\"` | Double quote |
+
+```honey
+s := "line1\nline2"   # 11 bytes, contains newline
+```
+
+### Strings as Function Parameters
+
+```honey
+get_first :: func(data: []u8) u8 {
+    return data[0]
+}
+
+main :: func() u8 {
+    return get_first("hello")   # returns 104 ('h')
+}
+```
+
+### String Slicing
+
+```honey
+s := "hello"
+sub := s[1..4]        # []u8 containing "ell"
+```
+
+### Immutability
+
+String literals are immutable (`[:0]u8`, not `[:0]mut u8`). Attempting to write through a string is a compile-time error:
+
+```honey
+s := "hello"
+# s[0] = 65           # ERROR: cannot assign to immutable element
+```
+
+### Sentinel Coercion
+
+Since `[:0]u8` is a sentinel-terminated slice, it can be passed where `[]u8` is expected (the sentinel guarantee is simply dropped):
+
+```honey
+process :: func(data: []u8) u8 { return data[0] }
+
+main :: func() u8 {
+    return process("hello")   # [:0]u8 coerces to []u8
+}
+```
+
+The reverse (passing `[]u8` where `[:0]u8` is expected) is rejected — there's no guarantee a non-sentinel slice has a null terminator.
+
+## Sentinel-Terminated Types
+
+For C interoperability, Honey supports sentinel-terminated slices and arrays. These guarantee a sentinel value (typically null) follows the data:
+
+```honey
+c_string: [:0]u8 = "hello"    # null-terminated, .len is 5
+buffer: [256:0]u8 = ...        # 256 bytes + null terminator
+```
+
+| Type | Meaning |
+| ---- | ------- |
+| `[:0]T` | Sentinel-terminated slice (sentinel = 0), immutable elements |
+| `[:0]mut T` | Sentinel-terminated slice, mutable elements |
+| `[N:0]T` | Sentinel-terminated array (N elements + sentinel) |
+| `[:S]T` | Slice terminated by arbitrary sentinel value S |
+
+Sentinel-terminated types coerce to their non-sentinel equivalents:
+
+```honey
+process :: func(data: []u8) void { ... }
+
+c_str: [:0]u8 = "hello"
+process(c_str)                 # [:0]u8 → []u8 is safe
+```
+
+### Current Limitations
+
+- C function parameters declared as `[:0]u8` are not yet passed as raw pointers (C calling convention for sentinel slices needs further work)
+
 ## Slices
 
 A slice `[]T` is a fat pointer — a pair of (data pointer, length) — that references a contiguous sequence of `T` elements without owning them. Slices enable writing functions that operate on arrays of any length.
@@ -635,6 +733,49 @@ Both array indexing and slice indexing include runtime bounds checks. Out-of-bou
 - **Slice indexing:** `s[i]` checks `i < s.len`
 - **Slice range:** `arr[start..end]` checks `end <= len` and `start <= end`
 
+### Element Mutability
+
+By default, slice elements are immutable — `[]T` does not allow element assignment. Use `[]mut T` to create a slice with mutable elements:
+
+| Type | Element write | Meaning |
+| ---- | ------------- | ------- |
+| `[]T` | Not allowed | Read-only view of elements |
+| `[]mut T` | Allowed | Read-write view of elements |
+
+Slicing a mutable array produces a mutable slice, and slicing an immutable array produces an immutable slice:
+
+```honey
+arr: [3]mut i32 = [10, 20, 30]
+s: []mut i32 = arr[..]    # mutable elements → mutable slice
+s[0] = 42                  # OK
+```
+
+```honey
+arr: [3]i32 = [10, 20, 30]
+s: []i32 = arr[..]         # immutable elements → immutable slice
+# s[0] = 42               # ERROR: cannot assign to immutable element
+```
+
+Compound assignment works the same way:
+
+```honey
+s: []mut i32 = arr[..]
+s[0] += 10                 # OK on []mut T
+```
+
+**Mutability coercion:** A `[]mut T` can be passed where `[]T` is expected (tightening — giving up write permission is safe). The reverse is rejected:
+
+```honey
+read_only :: func(data: []i32) i32 { return data[0] }
+
+s: []mut i32 = arr[..]
+read_only(s)               # OK: []mut i32 → []i32
+
+# ERROR: []i32 cannot widen to []mut i32
+write_func :: func(data: []mut i32) void { data[0] = 1 }
+write_func(immutable_slice)
+```
+
 ### No Implicit Coercion
 
 Arrays (`[N]T`) and slices (`[]T`) are distinct types. Passing a bare array where a slice is expected is a type mismatch error — use `arr[..]` to explicitly create a slice:
@@ -646,10 +787,6 @@ sum(arr)
 # OK: explicit slice
 sum(arr[..])
 ```
-
-### Current Limitations
-
-- Slices are immutable (`[]T` only) — `[]mut T` is not yet implemented
 
 ## Pointers
 

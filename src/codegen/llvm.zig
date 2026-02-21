@@ -191,6 +191,14 @@ fn emitGlobals(emitter: *Emitter, globals: *const GlobalVars, types: *const Type
         } else if (type_id.isSlice()) {
             const usize_t = emitter.target.ptrLLVMType();
             try emitter.appendFmt("@{s} = {s} {{ ptr, {s} }} zeroinitializer\n", .{ name, linkage, usize_t });
+        } else if (globals.getStringInit(idx)) |bytes| {
+            // String constant: @str.0 = private constant [5 x i8] [i8 104, i8 101, ...]
+            try emitter.appendFmt("@{s} = private constant [{d} x i8] [", .{ name, bytes.len });
+            for (bytes, 0..) |byte, bi| {
+                if (bi > 0) try emitter.appendSlice(", ");
+                try emitter.appendFmt("i8 {d}", .{byte});
+            }
+            try emitter.appendSlice("]\n");
         } else {
             const width = globals.getWidth(idx);
             const type_str = widthToLLVMType(width);

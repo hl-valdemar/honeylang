@@ -198,11 +198,13 @@ pub const ArrayTypeInfo = struct {
     element_type: TypeId,
     length: u32,
     is_mutable: bool,
+    sentinel: ?u8 = null,
 };
 
 pub const SliceTypeInfo = struct {
     element_type: TypeId,
     is_mutable: bool,
+    sentinel: ?u8 = null,
 };
 
 pub const NamespaceMember = struct {
@@ -488,8 +490,12 @@ pub const TypeRegistry = struct {
     /// Register an array type and return a TypeId for it.
     /// Deduplicates: returns existing TypeId if an identical array type exists.
     pub fn addArrayType(self: *TypeRegistry, element_type: TypeId, length: u32, is_mutable: bool) !TypeId {
+        return self.addArrayTypeWithSentinel(element_type, length, is_mutable, null);
+    }
+
+    pub fn addArrayTypeWithSentinel(self: *TypeRegistry, element_type: TypeId, length: u32, is_mutable: bool, sentinel: ?u8) !TypeId {
         for (self.array_types.items, 0..) |existing, i| {
-            if (existing.length == length and existing.element_type.eql(element_type) and existing.is_mutable == is_mutable) {
+            if (existing.length == length and existing.element_type.eql(element_type) and existing.is_mutable == is_mutable and existing.sentinel == sentinel) {
                 return .{ .array = @intCast(i) };
             }
         }
@@ -498,6 +504,7 @@ pub const TypeRegistry = struct {
             .element_type = element_type,
             .length = length,
             .is_mutable = is_mutable,
+            .sentinel = sentinel,
         });
         return .{ .array = idx };
     }
@@ -513,8 +520,12 @@ pub const TypeRegistry = struct {
     /// Register a slice type and return a TypeId for it.
     /// Deduplicates: returns existing TypeId if an identical slice type exists.
     pub fn addSliceType(self: *TypeRegistry, element_type: TypeId, is_mutable: bool) !TypeId {
+        return self.addSliceTypeWithSentinel(element_type, is_mutable, null);
+    }
+
+    pub fn addSliceTypeWithSentinel(self: *TypeRegistry, element_type: TypeId, is_mutable: bool, sentinel: ?u8) !TypeId {
         for (self.slice_types.items, 0..) |existing, i| {
-            if (existing.element_type.eql(element_type) and existing.is_mutable == is_mutable) {
+            if (existing.element_type.eql(element_type) and existing.is_mutable == is_mutable and existing.sentinel == sentinel) {
                 return .{ .slice = @intCast(i) };
             }
         }
@@ -522,6 +533,7 @@ pub const TypeRegistry = struct {
         try self.slice_types.append(self.allocator, .{
             .element_type = element_type,
             .is_mutable = is_mutable,
+            .sentinel = sentinel,
         });
         return .{ .slice = idx };
     }
@@ -561,7 +573,8 @@ pub fn sizeOf(type_id: TypeId, types: *const TypeRegistry) u32 {
         .namespace => 0,
         .array => |idx| {
             const info = types.array_types.items[idx];
-            return info.length * sizeOf(info.element_type, types);
+            const extra: u32 = if (info.sentinel != null) 1 else 0;
+            return (info.length + extra) * sizeOf(info.element_type, types);
         },
         .slice => 2 * types.ptr_size, // fat pointer: ptr + usize len
     };
