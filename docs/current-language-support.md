@@ -473,7 +473,7 @@ n := arr.len              # 3
 
 ### Indexing
 
-Access elements with `arr[index]`. The index must be an integer type:
+Access elements with `arr[index]`. The index must be an integer type (resolved as `usize`). Runtime bounds checking ensures out-of-bounds access traps immediately:
 
 ```honey
 main :: func() i32 {
@@ -542,30 +542,74 @@ The compiler checks:
 
 A slice `[]T` is a fat pointer — a pair of (data pointer, length) — that references a contiguous sequence of `T` elements without owning them. Slices enable writing functions that operate on arrays of any length.
 
+### Creating Slices
+
+Slices are created with range syntax. There is no implicit array-to-slice coercion — you must use `[..]` explicitly:
+
+```honey
+arr: [5]i32 = [10, 20, 30, 40, 50]
+
+s1: []i32 = arr[..]      # full array → slice (all elements)
+s2: []i32 = arr[1..4]    # range → slice (elements 1, 2, 3)
+s3: []i32 = arr[2..]     # open end → slice (elements 2, 3, 4)
+s4: []i32 = arr[..3]     # open start → slice (elements 0, 1, 2)
+```
+
+All four range variants are supported:
+
+| Syntax | Meaning |
+| ------ | ------- |
+| `arr[start..end]` | Elements from `start` to `end` (exclusive) |
+| `arr[start..]` | Elements from `start` to the end |
+| `arr[..end]` | Elements from the beginning to `end` (exclusive) |
+| `arr[..]` | All elements (full slice) |
+
+Slicing also works on existing slices:
+
+```honey
+outer :: func(data: []i32) i32 {
+    inner: []i32 = data[1..3]
+    return inner[0]
+}
+```
+
+### Slice Variables
+
+Slices can be stored in local and global variables:
+
+```honey
+# Local slice variable
+main :: func() i32 {
+    arr: [5]i32 = [10, 20, 30, 40, 50]
+    s: []i32 = arr[1..4]
+    return s[0]    # 20
+}
+```
+
+```honey
+# Global slice variable (runtime-initialized)
+arr: [3]i32 = [10, 20, 30]
+mut s: []i32 = arr[..]
+```
+
 ### Slice as Function Parameter
 
-Use `[]T` as a parameter type to accept a reference to any `[N]T`:
+Use `[]T` as a parameter type. Pass a slice using `[..]` syntax:
 
 ```honey
 sum :: func(data: []i32) i32 {
     return data[0] + data[1]
 }
-```
 
-### Array-to-Slice Coercion
-
-When calling a function that takes `[]T`, you can pass a `[N]T` directly — the compiler creates the fat pointer automatically:
-
-```honey
 main :: func() i32 {
     arr: [3]i32 = [10, 20, 30]
-    return sum(arr)    # [3]i32 coerced to []i32
+    return sum(arr[..])
 }
 ```
 
 ### Slice Indexing
 
-Access elements with `s[index]`, same syntax as arrays:
+Access elements with `s[index]`, same syntax as arrays. The index must be an integer type (resolved as `usize`):
 
 ```honey
 get :: func(data: []i32) i32 {
@@ -575,7 +619,7 @@ get :: func(data: []i32) i32 {
 
 ### `.len` Property
 
-Every slice has a `.len` property that returns the number of elements as `usize`:
+Every slice has a `.len` property that returns the number of elements as `usize`. Unlike arrays (where `.len` is a compile-time constant), slice `.len` is a runtime value:
 
 ```honey
 length :: func(data: []i32) usize {
@@ -583,12 +627,29 @@ length :: func(data: []i32) usize {
 }
 ```
 
+### Runtime Bounds Checking
+
+Both array indexing and slice indexing include runtime bounds checks. Out-of-bounds access traps immediately rather than producing silent corruption:
+
+- **Array indexing:** `arr[i]` checks `i < arr.len`
+- **Slice indexing:** `s[i]` checks `i < s.len`
+- **Slice range:** `arr[start..end]` checks `end <= len` and `start <= end`
+
+### No Implicit Coercion
+
+Arrays (`[N]T`) and slices (`[]T`) are distinct types. Passing a bare array where a slice is expected is a type mismatch error — use `arr[..]` to explicitly create a slice:
+
+```honey
+# ERROR: argument type mismatch
+sum(arr)
+
+# OK: explicit slice
+sum(arr[..])
+```
+
 ### Current Limitations
 
 - Slices are immutable (`[]T` only) — `[]mut T` is not yet implemented
-- Slices can only appear as function parameters (no local/global slice variables)
-- No range slicing syntax (`arr[0..3]`)
-- No runtime bounds checking on slice indexing
 
 ## Pointers
 
@@ -856,7 +917,8 @@ main :: func() i32 {
 - **C calling convention:** Standard C ABI
 - **Struct passing:** by-value uses `byval`, returns use `sret`
 - **Slice representation:** `{ ptr, usize }` fat pointer, passed with `byval(%slice)`
-- **`usize` mapping:** `i64` on 64-bit targets, `i32` on 32-bit
+- **`usize` mapping:** `i64` on 64-bit targets, `i32` on 32-bit — used for array/slice indices and pointer offsets
+- **Bounds checking:** Runtime checks on all array/slice indexing and slicing operations
 - **Cross-compilation:** `--target=<arch>-<os>` flag, `--list-targets` to see all supported targets
 - **Bool representation:** `i8` (0 or 1)
 - **Float operations:** Native LLVM float instructions (`fadd`, `fsub`, `fmul`, `fdiv`)
