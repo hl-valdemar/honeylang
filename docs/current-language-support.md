@@ -423,7 +423,8 @@ Fixed-size arrays with a length known at compile time.
 Array type syntax is `[N]T` where `N` is the length and `T` is the element type. Array literals use `[elem1, elem2, ...]`:
 
 ```honey
-arr: [3]i32 = [10, 20, 30]
+arr: [3]i32 :: [10, 20, 30]  # comptime
+arr: [3]i32 = [10, 20, 30]   # runtime
 ```
 
 Works with any element type:
