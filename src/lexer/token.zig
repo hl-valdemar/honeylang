@@ -74,6 +74,7 @@ pub const Kind = enum {
     // other
     comma,
     dot,
+    dot_dot,
     at,
     ampersand,
     caret,

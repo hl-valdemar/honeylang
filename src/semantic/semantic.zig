@@ -1322,6 +1322,18 @@ pub const SemanticContext = struct {
                 }
                 return null;
             },
+            .array_slice => {
+                const slice_node = self.ast.getArraySlice(node_idx);
+                const obj_type = self.tryInferType(slice_node.object) orelse return null;
+                if (obj_type.isArray()) {
+                    if (self.types.getArrayType(obj_type)) |arr_info| {
+                        return self.types.addSliceType(arr_info.element_type, arr_info.is_mutable) catch return null;
+                    }
+                } else if (obj_type.isSlice()) {
+                    return obj_type;
+                }
+                return null;
+            },
             else => null,
         };
     }
@@ -2208,6 +2220,7 @@ pub const SemanticContext = struct {
             .deref => try self.checkDeref(node_idx, context_type),
             .array_literal => try self.checkArrayLiteral(node_idx, context_type),
             .array_index => try self.checkArrayIndex(node_idx),
+            .array_slice => try self.checkArraySlice(node_idx),
             else => null,
         };
 
@@ -2447,10 +2460,12 @@ pub const SemanticContext = struct {
                 const right_is_many = if (right_type) |t| self.types.isManyItemPointer(t) else false;
 
                 if (left_is_many and (binary_op.op == .add or binary_op.op == .sub)) {
-                    // many-item pointer +/- integer: result is the pointer type
+                    // many-item pointer +/- integer: re-check offset as usize
+                    _ = try self.checkExpression(binary_op.right, TypeId.usize);
                     return left_type;
                 } else if (right_is_many and binary_op.op == .add) {
-                    // integer + many-item pointer: result is the pointer type
+                    // integer + many-item pointer: re-check offset as usize
+                    _ = try self.checkExpression(binary_op.left, TypeId.usize);
                     return right_type;
                 }
 
@@ -2933,8 +2948,8 @@ pub const SemanticContext = struct {
         // check the object being indexed
         const obj_type = try self.checkExpression(idx_node.object, .unresolved);
 
-        // check the index expression — must be integer
-        const index_type = try self.checkExpression(idx_node.index, TypeId.u64);
+        // check the index expression — must be integer (context: usize)
+        const index_type = try self.checkExpression(idx_node.index, TypeId.usize);
         if (index_type) |it| {
             if (!it.isInteger() and !it.isUnresolved()) {
                 try self.errors.add(.{
@@ -2955,6 +2970,60 @@ pub const SemanticContext = struct {
                 if (self.types.getSliceType(ot)) |slice_info| {
                     return slice_info.element_type;
                 }
+            } else if (!ot.isUnresolved()) {
+                try self.errors.add(.{
+                    .kind = .index_non_array,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+        }
+
+        return null;
+    }
+
+    fn checkArraySlice(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
+        const slice_node = self.ast.getArraySlice(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+
+        // check the object being sliced
+        const obj_type = try self.checkExpression(slice_node.object, .unresolved);
+
+        // check start and end expressions (if present) — must be integers (context: usize)
+        if (slice_node.range_start) |start_idx| {
+            const start_type = try self.checkExpression(start_idx, TypeId.usize);
+            if (start_type) |st| {
+                if (!st.isInteger() and !st.isUnresolved()) {
+                    try self.errors.add(.{
+                        .kind = .index_not_integer,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
+            }
+        }
+
+        if (slice_node.range_end) |end_idx| {
+            const end_type = try self.checkExpression(end_idx, TypeId.usize);
+            if (end_type) |et| {
+                if (!et.isInteger() and !et.isUnresolved()) {
+                    try self.errors.add(.{
+                        .kind = .index_not_integer,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
+            }
+        }
+
+        // object must be an array or slice type — slicing produces a slice
+        if (obj_type) |ot| {
+            if (ot.isArray()) {
+                if (self.types.getArrayType(ot)) |arr_info| {
+                    return try self.types.addSliceType(arr_info.element_type, arr_info.is_mutable);
+                }
+            } else if (ot.isSlice()) {
+                return ot; // slicing a slice produces the same slice type
             } else if (!ot.isUnresolved()) {
                 try self.errors.add(.{
                     .kind = .index_non_array,
@@ -3007,13 +3076,6 @@ pub const SemanticContext = struct {
             // expected mutable, got immutable — not OK
             if (la.is_mutable and !ra.is_mutable) return false;
             return self.typesCompatible(la.element_type, ra.element_type);
-        }
-
-        // array → slice coercion: [N]T is compatible with []T
-        if (right.isArray() and left.isSlice()) {
-            const arr = self.types.getArrayType(right) orelse return false;
-            const slc = self.types.getSliceType(left) orelse return false;
-            return self.typesCompatible(slc.element_type, arr.element_type);
         }
 
         // slice types: structural comparison

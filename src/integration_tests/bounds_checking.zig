@@ -108,7 +108,7 @@ test "slice index emits bounds check with runtime length" {
         \\}
         \\main :: func() i32 {
         \\    arr: [3]i32 = [10, 20, 30]
-        \\    return get(arr)
+        \\    return get(arr[..])
         \\}
         \\
     );
@@ -134,7 +134,7 @@ test "slice index with variable emits bounds check" {
         \\main :: func() i32 {
         \\    arr: [3]i32 = [10, 20, 30]
         \\    idx: i64 = 1
-        \\    return get_at(arr, idx)
+        \\    return get_at(arr[..], idx)
         \\}
         \\
     );

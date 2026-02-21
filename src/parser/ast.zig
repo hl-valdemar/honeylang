@@ -40,6 +40,7 @@ pub const NodeKind = enum {
     // array expressions
     array_literal,
     array_index,
+    array_slice,
 
     // statements
     block,
@@ -287,6 +288,12 @@ pub const ArrayIndex = struct {
     index: NodeIndex,
 };
 
+pub const ArraySlice = struct {
+    object: NodeIndex,
+    range_start: ?NodeIndex, // null for arr[..end] and arr[..]
+    range_end: ?NodeIndex, // null for arr[start..] and arr[..]
+};
+
 pub const Error = struct {
     msg: []const u8,
 };
@@ -329,6 +336,7 @@ pub const Ast = struct {
     slice_types: std.ArrayList(SliceType),
     array_literals: std.ArrayList(ArrayLiteral),
     array_indices: std.ArrayList(ArrayIndex),
+    array_slices: std.ArrayList(ArraySlice),
     errors: std.ArrayList(Error),
 
     // auxiliary storage for variable-length children
@@ -374,6 +382,7 @@ pub const Ast = struct {
             .slice_types = try std.ArrayList(SliceType).initCapacity(allocator, capacity),
             .array_literals = try std.ArrayList(ArrayLiteral).initCapacity(allocator, capacity),
             .array_indices = try std.ArrayList(ArrayIndex).initCapacity(allocator, capacity),
+            .array_slices = try std.ArrayList(ArraySlice).initCapacity(allocator, capacity),
             .errors = try std.ArrayList(Error).initCapacity(allocator, capacity),
 
             .extra_data = try std.ArrayList(NodeIndex).initCapacity(allocator, capacity),
@@ -414,6 +423,7 @@ pub const Ast = struct {
         self.slice_types.deinit(self.allocator);
         self.array_literals.deinit(self.allocator);
         self.array_indices.deinit(self.allocator);
+        self.array_slices.deinit(self.allocator);
         self.errors.deinit(self.allocator);
 
         self.extra_data.deinit(self.allocator);
@@ -1056,6 +1066,30 @@ pub const Ast = struct {
         return node_idx;
     }
 
+    pub fn addArraySlice(
+        self: *Ast,
+        object: NodeIndex,
+        range_start: ?NodeIndex,
+        range_end: ?NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.array_slices.items.len);
+
+        try self.kinds.append(self.allocator, .array_slice);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.array_slices.append(self.allocator, .{
+            .object = object,
+            .range_start = range_start,
+            .range_end = range_end,
+        });
+
+        return node_idx;
+    }
+
     pub fn addError(
         self: *Ast,
         msg: []const u8,
@@ -1286,6 +1320,12 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .array_index);
         const data_idx = self.data_indices.items[idx];
         return self.array_indices.items[data_idx];
+    }
+
+    pub fn getArraySlice(self: *const Ast, idx: NodeIndex) ArraySlice {
+        std.debug.assert(self.kinds.items[idx] == .array_slice);
+        const data_idx = self.data_indices.items[idx];
+        return self.array_slices.items[data_idx];
     }
 
     pub fn getError(self: *const Ast, idx: NodeIndex) Error {

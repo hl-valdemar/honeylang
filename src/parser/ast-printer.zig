@@ -244,6 +244,7 @@ fn getNodeInfo(
             break :blk std.fmt.bufPrint(&S.buf, "elements: {d}", .{arr.elements.len}) catch "?";
         },
         .array_index => "index",
+        .array_slice => "slice",
         .void_literal => "void",
         .err => blk: {
             const err = ast.getError(idx);
@@ -801,6 +802,28 @@ fn printNode(
             std.debug.print("{s}└─ index:\n", .{child_prefix});
             const idx_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
             printNode(ast, tokens, src, ai.index, idx_prefix, true);
+        },
+
+        .array_slice => {
+            std.debug.print("array_slice:\n", .{});
+            const as = ast.getArraySlice(idx);
+            std.debug.print("{s}├─ object:\n", .{child_prefix});
+            const obj_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+            printNode(ast, tokens, src, as.object, obj_prefix, true);
+            if (as.range_start) |s| {
+                std.debug.print("{s}├─ start:\n", .{child_prefix});
+                const start_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+                printNode(ast, tokens, src, s, start_prefix, true);
+            } else {
+                std.debug.print("{s}├─ start: (open)\n", .{child_prefix});
+            }
+            if (as.range_end) |e| {
+                std.debug.print("{s}└─ end:\n", .{child_prefix});
+                const end_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
+                printNode(ast, tokens, src, e, end_prefix, true);
+            } else {
+                std.debug.print("{s}└─ end: (open)\n", .{child_prefix});
+            }
         },
 
         .slice_type => {

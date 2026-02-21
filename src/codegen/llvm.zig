@@ -188,6 +188,9 @@ fn emitGlobals(emitter: *Emitter, globals: *const GlobalVars, types: *const Type
                 // Runtime-initialized array
                 try emitter.appendFmt("@{s} = {s} [{d} x {s}] zeroinitializer\n", .{ name, linkage, arr_info.length, elem_llvm });
             }
+        } else if (type_id.isSlice()) {
+            const usize_t = emitter.target.ptrLLVMType();
+            try emitter.appendFmt("@{s} = {s} {{ ptr, {s} }} zeroinitializer\n", .{ name, linkage, usize_t });
         } else {
             const width = globals.getWidth(idx);
             const type_str = widthToLLVMType(width);
@@ -692,14 +695,15 @@ fn lowerInst(
         .load_element => |op| {
             const arr_info = types.array_types.items[op.array_idx];
             const elem_llvm = typeIdToLLVMType(arr_info.element_type, emitter.target);
+            const usize_t = emitter.target.ptrLLVMType();
             const base_ssa = ssa_map.get(op.base);
             const index_ssa = ssa_map.get(op.index);
 
             // GEP to element
             const gep_ssa = ssa_map.next_ssa;
             ssa_map.next_ssa += 1;
-            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds [{d} x {s}], ptr %{d}, i64 0, i64 %{d}\n", .{
-                gep_ssa, arr_info.length, elem_llvm, base_ssa, index_ssa,
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds [{d} x {s}], ptr %{d}, {s} 0, {s} %{d}\n", .{
+                gep_ssa, arr_info.length, elem_llvm, base_ssa, usize_t, usize_t, index_ssa,
             });
 
             // load element
@@ -712,6 +716,7 @@ fn lowerInst(
         .store_element => |op| {
             const arr_info = types.array_types.items[op.array_idx];
             const elem_llvm = typeIdToLLVMType(arr_info.element_type, emitter.target);
+            const usize_t = emitter.target.ptrLLVMType();
             const base_ssa = ssa_map.get(op.base);
             const index_ssa = ssa_map.get(op.index);
             const value_ssa = ssa_map.get(op.value);
@@ -719,8 +724,8 @@ fn lowerInst(
             // GEP to element
             const gep_ssa = ssa_map.next_ssa;
             ssa_map.next_ssa += 1;
-            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds [{d} x {s}], ptr %{d}, i64 0, i64 %{d}\n", .{
-                gep_ssa, arr_info.length, elem_llvm, base_ssa, index_ssa,
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds [{d} x {s}], ptr %{d}, {s} 0, {s} %{d}\n", .{
+                gep_ssa, arr_info.length, elem_llvm, base_ssa, usize_t, usize_t, index_ssa,
             });
 
             // store element
@@ -797,13 +802,26 @@ fn lowerInst(
                     try emitter.appendFmt("  %{d} = getelementptr i8, ptr %{d}, {s} %{d}\n", .{ dst_ssa, base_ssa, pt, count_ssa });
                 }
             } else {
-                // sign-extend count to ptr width, multiply by stride, then GEP
-                const ext_ssa = ssa_map.next_ssa;
-                ssa_map.next_ssa += 1;
-                try emitter.appendFmt("  %{d} = sext i32 %{d} to {s}\n", .{ ext_ssa, count_ssa, pt });
+                // extend count to ptr width (if needed), multiply by stride, then GEP
+                const count_at_ptr_width = blk: {
+                    // If count vreg was produced by a ptr-width operation, it's already i64 on 64-bit.
+                    // Use the ptr type width for the multiply; bitcast/trunc/ext as needed.
+                    // For safety, always emit a sext from the count type. However, sext from
+                    // iN to iN is a no-op that LLVM rejects. So just use the count directly
+                    // when we're already at ptr width.
+                    const ext_ssa = ssa_map.next_ssa;
+                    ssa_map.next_ssa += 1;
+                    if (std.mem.eql(u8, pt, "i64")) {
+                        // count is already ptr-width; use identity add
+                        try emitter.appendFmt("  %{d} = add {s} %{d}, 0\n", .{ ext_ssa, pt, count_ssa });
+                    } else {
+                        try emitter.appendFmt("  %{d} = sext i32 %{d} to {s}\n", .{ ext_ssa, count_ssa, pt });
+                    }
+                    break :blk ext_ssa;
+                };
                 const scaled_ssa = ssa_map.next_ssa;
                 ssa_map.next_ssa += 1;
-                try emitter.appendFmt("  %{d} = mul {s} %{d}, {d}\n", .{ scaled_ssa, pt, ext_ssa, op.stride });
+                try emitter.appendFmt("  %{d} = mul {s} %{d}, {d}\n", .{ scaled_ssa, pt, count_at_ptr_width, op.stride });
                 if (op.is_sub) {
                     const neg_ssa = ssa_map.next_ssa;
                     ssa_map.next_ssa += 1;

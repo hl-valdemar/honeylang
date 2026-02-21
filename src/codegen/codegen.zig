@@ -321,7 +321,21 @@ pub const CodeGenContext = struct {
         var struct_init: ?[]const i64 = null;
         var array_init: ?[]const i64 = null;
 
-        if (type_id.isStruct()) {
+        if (type_id.isSlice()) {
+            // Slices always need runtime init (ptr + len from another global)
+            const global_idx = try self.mir.globals.add(
+                self.allocator,
+                name,
+                width,
+                type_id,
+                false,
+                null,
+                sym_idx,
+            );
+            _ = global_idx;
+            try needs_init.append(self.allocator, node_idx);
+            return;
+        } else if (type_id.isStruct()) {
             struct_init = self.tryEvaluateStructInit(var_decl.value, type_id);
         } else if (type_id.isArray()) {
             array_init = self.tryEvaluateArrayInit(var_decl.value, type_id);
@@ -753,6 +767,17 @@ pub const CodeGenContext = struct {
             const global_idx = self.mir.globals.lookup(name) orelse continue;
             const type_id = self.mir.globals.getTypeId(global_idx);
 
+            // Slice globals: evaluate the initializer (e.g. arr[..]) and copy fat pointer
+            if (type_id.isSlice()) {
+                const func = self.current_func.?;
+                const value_reg = try self.generateExpression(value_node) orelse continue;
+                const global_ptr = try func.emitAddrOfGlobal(global_idx);
+                const src_ptr = try func.emitSliceGetPtr(value_reg);
+                const src_len = try func.emitSliceGetLen(value_reg);
+                try func.emitMakeSlice(global_ptr, src_ptr, src_len);
+                continue;
+            }
+
             // Array globals: store elements directly into global via GEP
             if (type_id.isArray()) {
                 const array_idx = type_id.array;
@@ -766,7 +791,7 @@ pub const CodeGenContext = struct {
                     const elements = self.ast.getExtra(lit.elements);
                     for (elements, 0..) |elem_idx, i| {
                         const val_reg = try self.generateExpression(elem_idx) orelse continue;
-                        const idx_reg = try func.emitMovImm(@intCast(i), .w64);
+                        const idx_reg = try func.emitMovImm(@intCast(i), self.target.ptrWidth());
                         try func.emitStoreElement(global_ptr, idx_reg, val_reg, array_idx, elem_width);
                     }
                 }
@@ -1051,10 +1076,37 @@ pub const CodeGenContext = struct {
                 const elements = self.ast.getExtra(lit.elements);
                 for (elements, 0..) |elem_idx, i| {
                     const value_reg = try self.generateExpression(elem_idx) orelse continue;
-                    const index_reg = try func.emitMovImm(@intCast(i), .w64);
+                    const index_reg = try func.emitMovImm(@intCast(i), self.target.ptrWidth());
                     try func.emitStoreElement(base, index_reg, value_reg, array_idx, elem_width);
                 }
             }
+            return;
+        }
+
+        // Slice locals: allocate { ptr, usize } storage, then store a pointer to it
+        // in the named local — matching the parameter convention (local holds ptr to fat ptr)
+        if (type_id.isSlice()) {
+            const func = self.current_func.?;
+
+            // Anonymous alloca for the actual { ptr, usize } storage
+            const storage_offset = try self.locals.add(self.allocator, "__slice_var", .ptr);
+            try func.emitAllocaSliceLocal(storage_offset);
+            const storage_ptr = try func.emitAddrOfLocal(storage_offset);
+
+            // Generate initializer (e.g. arr[..], arr[1..3]) — returns ptr to a {ptr, len}
+            const value_reg = try self.generateExpression(var_decl.value) orelse {
+                try func.emitTrap();
+                return;
+            };
+
+            // Copy the fat pointer from source into our storage
+            const src_ptr = try func.emitSliceGetPtr(value_reg);
+            const src_len = try func.emitSliceGetLen(value_reg);
+            try func.emitMakeSlice(storage_ptr, src_ptr, src_len);
+
+            // Named local stores a pointer to the fat pointer (same as params)
+            const offset = try self.locals.add(self.allocator, name, .ptr);
+            try func.emitStoreLocal(storage_ptr, offset, .ptr);
             return;
         }
 
@@ -1276,6 +1328,7 @@ pub const CodeGenContext = struct {
             .unary_op => try self.generateUnaryOp(node_idx),
             .array_literal => try self.generateArrayLiteral(node_idx),
             .array_index => try self.generateArrayIndex(node_idx),
+            .array_slice => try self.generateArraySlice(node_idx),
             else => null,
         };
     }
@@ -1362,7 +1415,7 @@ pub const CodeGenContext = struct {
     fn generateVarLoad(self: *CodeGenContext, name: []const u8, type_id: TypeId) !?VReg {
         const func = self.current_func.?;
         const global_idx = self.mir.globals.lookup(name) orelse return null;
-        if (type_id.isStruct() or type_id.isArray()) {
+        if (type_id.isStruct() or type_id.isArray() or type_id.isSlice()) {
             // The global IS the data storage; return a pointer to it
             return try func.emitAddrOfGlobal(global_idx);
         }
@@ -1580,41 +1633,6 @@ pub const CodeGenContext = struct {
         for (arg_nodes, 0..) |arg_idx, arg_i| {
             const arg_type = self.node_types.get(arg_idx) orelse .unresolved;
             const expected_type: ?TypeId = if (param_types) |pt| (if (arg_i < pt.len) pt[arg_i] else null) else null;
-
-            // array→slice coercion: arg is [N]T but param expects []T
-            if (arg_type.isArray() and expected_type != null and expected_type.?.isSlice()) {
-                const arr_info = self.types.getArrayType(arg_type) orelse {
-                    try arg_regs.append(self.allocator, try func.emitMovImm(0, .w32));
-                    try arg_widths.append(self.allocator, .w32);
-                    try arg_struct_indices.append(self.allocator, null);
-                    try arg_slice_flags.append(self.allocator, false);
-                    continue;
-                };
-
-                // generate the array expression (returns a pointer to array data)
-                const arr_ptr = try self.generateExpression(arg_idx) orelse {
-                    try arg_regs.append(self.allocator, try func.emitMovImm(0, .w32));
-                    try arg_widths.append(self.allocator, .w32);
-                    try arg_struct_indices.append(self.allocator, null);
-                    try arg_slice_flags.append(self.allocator, false);
-                    continue;
-                };
-
-                // create temporary slice on stack: alloca { ptr, i64 }
-                const slice_offset = try self.locals.add(self.allocator, "__slice_tmp", .ptr);
-                try func.emitAllocaSliceLocal(slice_offset);
-                const slice_ptr = try func.emitAddrOfLocal(slice_offset);
-
-                // store array pointer + length into the slice
-                const len_reg = try func.emitMovImm(@intCast(arr_info.length), self.target.ptrWidth());
-                try func.emitMakeSlice(slice_ptr, arr_ptr, len_reg);
-
-                try arg_regs.append(self.allocator, slice_ptr);
-                try arg_widths.append(self.allocator, .ptr);
-                try arg_struct_indices.append(self.allocator, null);
-                try arg_slice_flags.append(self.allocator, true);
-                continue;
-            }
 
             const arg_width = typeIdToWidth(arg_type, self.target);
             const arg_reg = try self.generateExpression(arg_idx) orelse {
@@ -1876,7 +1894,7 @@ pub const CodeGenContext = struct {
         const elements = self.ast.getExtra(lit.elements);
         for (elements, 0..) |elem_idx, i| {
             const value_reg = try self.generateExpression(elem_idx) orelse continue;
-            const index_reg = try func.emitMovImm(@intCast(i), .w64);
+            const index_reg = try func.emitMovImm(@intCast(i), self.target.ptrWidth());
             try func.emitStoreElement(base, index_reg, value_reg, array_idx, elem_width);
         }
 
@@ -1967,6 +1985,89 @@ pub const CodeGenContext = struct {
         try self.emitBoundsCheck(index_reg, len_reg);
 
         try func.emitStoreElement(base_reg, index_reg, value_reg, array_idx, elem_width);
+    }
+
+    /// Emit a runtime check: if val > limit, trap. (for slice end <= length)
+    fn emitUpperBoundsCheck(self: *CodeGenContext, val_reg: VReg, limit_reg: VReg) CodeGenError!void {
+        const func = self.current_func.?;
+        const ptr_width = self.target.ptrWidth();
+        const cmp_reg = try func.emitCmp(.gt_u, val_reg, limit_reg, ptr_width);
+        const trap_label = func.allocLabel();
+        const ok_label = func.allocLabel();
+        try func.emitBrCond(cmp_reg, .w8, trap_label, ok_label);
+        try func.emitLabel(trap_label);
+        try func.emitTrap();
+        try func.emitLabel(ok_label);
+    }
+
+    fn generateArraySlice(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {
+        const func = self.current_func.?;
+        const slice_node = self.ast.getArraySlice(node_idx);
+        const ptr_width = self.target.ptrWidth();
+
+        // generate object
+        const base_reg = try self.generateExpression(slice_node.object) orelse return null;
+        const obj_type = self.node_types.get(slice_node.object) orelse return null;
+
+        // generate start (default: 0) and end (default: length)
+        const start_reg = if (slice_node.range_start) |s|
+            try self.generateExpression(s) orelse return null
+        else
+            try func.emitMovImm(0, ptr_width);
+
+        // determine element type, data pointer, length, and end bound
+        var element_type: TypeId = undefined;
+        var data_ptr: VReg = undefined;
+        var end_reg: VReg = undefined;
+
+        if (obj_type.isArray()) {
+            const arr_info = self.types.getArrayType(obj_type) orelse return null;
+            element_type = arr_info.element_type;
+            const len_reg = try func.emitMovImm(@intCast(arr_info.length), ptr_width);
+
+            end_reg = if (slice_node.range_end) |e|
+                try self.generateExpression(e) orelse return null
+            else
+                len_reg;
+
+            // bounds checks: end <= length, start <= end
+            try self.emitUpperBoundsCheck(end_reg, len_reg);
+            try self.emitUpperBoundsCheck(start_reg, end_reg);
+
+            data_ptr = base_reg;
+        } else if (obj_type.isSlice()) {
+            const slice_info = self.types.getSliceType(obj_type) orelse return null;
+            element_type = slice_info.element_type;
+            const len_reg = try func.emitSliceGetLen(base_reg);
+
+            end_reg = if (slice_node.range_end) |e|
+                try self.generateExpression(e) orelse return null
+            else
+                len_reg;
+
+            // bounds checks: end <= length, start <= end
+            try self.emitUpperBoundsCheck(end_reg, len_reg);
+            try self.emitUpperBoundsCheck(start_reg, end_reg);
+
+            data_ptr = try func.emitSliceGetPtr(base_reg);
+        } else {
+            return null;
+        }
+
+        // compute new pointer: data_ptr + start * elem_size
+        const stride: u32 = types_mod.sizeOf(element_type, self.types);
+        const offset_ptr = try func.emitPtrOffset(data_ptr, start_reg, stride, false);
+
+        // compute new length: end - start
+        const new_len = try func.emitBinOp(.sub, end_reg, start_reg, ptr_width);
+
+        // allocate temporary slice fat pointer and fill it
+        const slice_offset = try self.locals.add(self.allocator, "__slice_tmp", .ptr);
+        try func.emitAllocaSliceLocal(slice_offset);
+        const slice_ptr = try func.emitAddrOfLocal(slice_offset);
+        try func.emitMakeSlice(slice_ptr, offset_ptr, new_len);
+
+        return slice_ptr;
     }
 
     fn generateStructLiteral(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {

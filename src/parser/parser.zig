@@ -1160,13 +1160,44 @@ pub const Parser = struct {
                 const end_pos = self.previousEnd();
                 expr = try self.ast.addCallExpr(expr, args_range, start_pos, end_pos);
             } else if (self.check(.left_bracket)) {
-                // array index: expr[index]
+                // array index: expr[i], or slice: expr[s..e], expr[s..], expr[..e], expr[..]
                 const start_pos = self.ast.getLocation(expr).start;
                 self.advance(); // consume [
-                const index = try self.parseExpression();
-                try self.expectToken(.right_bracket, .unexpected_token);
-                const end_pos = self.previousEnd();
-                expr = try self.ast.addArrayIndex(expr, index, start_pos, end_pos);
+                if (self.check(.dot_dot)) {
+                    // arr[..end] or arr[..]
+                    self.advance(); // consume ..
+                    if (self.check(.right_bracket)) {
+                        self.advance(); // consume ]
+                        const end_pos = self.previousEnd();
+                        expr = try self.ast.addArraySlice(expr, null, null, start_pos, end_pos);
+                    } else {
+                        const range_end = try self.parseExpression();
+                        try self.expectToken(.right_bracket, .unexpected_token);
+                        const end_pos = self.previousEnd();
+                        expr = try self.ast.addArraySlice(expr, null, range_end, start_pos, end_pos);
+                    }
+                } else {
+                    const first = try self.parseExpression();
+                    if (self.check(.dot_dot)) {
+                        // arr[start..end] or arr[start..]
+                        self.advance(); // consume ..
+                        if (self.check(.right_bracket)) {
+                            self.advance(); // consume ]
+                            const end_pos = self.previousEnd();
+                            expr = try self.ast.addArraySlice(expr, first, null, start_pos, end_pos);
+                        } else {
+                            const range_end = try self.parseExpression();
+                            try self.expectToken(.right_bracket, .unexpected_token);
+                            const end_pos = self.previousEnd();
+                            expr = try self.ast.addArraySlice(expr, first, range_end, start_pos, end_pos);
+                        }
+                    } else {
+                        // arr[index]
+                        try self.expectToken(.right_bracket, .unexpected_token);
+                        const end_pos = self.previousEnd();
+                        expr = try self.ast.addArrayIndex(expr, first, start_pos, end_pos);
+                    }
+                }
             } else if (self.check(.left_curly)) {
                 // struct literal: expr { .field = value, ... }
                 if (self.peekOffset(1)) |after_curly| {
