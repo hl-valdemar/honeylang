@@ -6,14 +6,15 @@ pub const LinkerError = error{
     LinkerFailed,
     IoError,
     OutOfMemory,
-    ClangNotFound,
+    ZigNotFound,
 };
 
 pub const LinkerResult = struct {
     executable_path: []const u8,
 };
 
-/// Compiles LLVM IR into an executable using clang.
+/// Compiles LLVM IR into an executable using zig cc.
+/// Uses zig cc instead of clang for built-in cross-compilation support (bundled LLD + libc).
 /// Optionally compiles and links C source files and libraries alongside the IR.
 pub fn link(
     allocator: mem.Allocator,
@@ -46,15 +47,15 @@ pub fn link(
     var argv = std.ArrayList([]const u8).initCapacity(allocator, 8) catch return LinkerError.OutOfMemory;
     defer argv.deinit(allocator);
 
-    argv.append(allocator, "clang") catch return LinkerError.OutOfMemory;
+    argv.appendSlice(allocator, &.{ "zig", "cc" }) catch return LinkerError.OutOfMemory;
 
     // Add C source files first (before -x ir which changes the input language)
     for (c_source_files) |c_path| {
         argv.append(allocator, c_path) catch return LinkerError.OutOfMemory;
     }
 
-    // Add LLVM IR input
-    argv.appendSlice(allocator, &.{ "-x", "ir", ir_path }) catch return LinkerError.OutOfMemory;
+    // Add LLVM IR input (.ll extension is auto-recognized)
+    argv.append(allocator, ir_path) catch return LinkerError.OutOfMemory;
 
     // Add output and target
     argv.appendSlice(allocator, &.{ "-o", exe_path, "-target", target_triple }) catch return LinkerError.OutOfMemory;
@@ -65,15 +66,15 @@ pub fn link(
         argv.append(allocator, flag) catch return LinkerError.OutOfMemory;
     }
 
-    const clang_result = std.process.Child.run(.{
+    const zig_result = std.process.Child.run(.{
         .allocator = allocator,
         .argv = argv.items,
-    }) catch return LinkerError.ClangNotFound;
-    defer allocator.free(clang_result.stdout);
-    defer allocator.free(clang_result.stderr);
+    }) catch return LinkerError.ZigNotFound;
+    defer allocator.free(zig_result.stdout);
+    defer allocator.free(zig_result.stderr);
 
-    if (clang_result.term.Exited != 0) {
-        std.debug.print("Clang error:\n{s}\n", .{clang_result.stderr});
+    if (zig_result.term.Exited != 0) {
+        std.debug.print("Linker error:\n{s}\n", .{zig_result.stderr});
         return LinkerError.LinkerFailed;
     }
 

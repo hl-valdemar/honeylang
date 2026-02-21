@@ -27,11 +27,24 @@ pub fn main() !void {
     var include_paths = try std.ArrayList([]const u8).initCapacity(allocator, 0);
     defer include_paths.deinit(allocator);
 
+    var list_targets = false;
+
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (mem.startsWith(u8, arg, "--target=")) {
-            target = parseTarget(arg[9..]);
+        if (mem.eql(u8, arg, "--target")) {
+            i += 1;
+            if (i >= args.len) {
+                std.debug.print("Error: --target requires a value (see --list-targets)\n", .{});
+                return error.InvalidTarget;
+            }
+            target = parseTarget(args[i]);
+            if (target == null) {
+                std.debug.print("Unknown target: {s} (see --list-targets)\n", .{args[i]});
+                return error.InvalidTarget;
+            }
+        } else if (mem.eql(u8, arg, "--list-targets")) {
+            list_targets = true;
         } else if (mem.eql(u8, arg, "--c-source")) {
             i += 1;
             while (i < args.len and !mem.startsWith(u8, args[i], "--")) : (i += 1) {
@@ -56,23 +69,27 @@ pub fn main() !void {
         }
     }
 
+    if (list_targets) {
+        printTargets();
+        return;
+    }
+
     if (file_path == null) {
         std.debug.print("Usage: {s} [options] <file>\n\n", .{args[0]});
         std.debug.print("Options:\n", .{});
-        std.debug.print("  --target=<arch>-<os>    Set compilation target\n", .{});
+        std.debug.print("  --target <target>       Set compilation target (see --list-targets)\n", .{});
+        std.debug.print("  --list-targets          List all supported compilation targets\n", .{});
         std.debug.print("  --c-source <files...>   C source files to compile and link\n", .{});
         std.debug.print("  --link-lib <libs...>    Libraries to link (-l)\n", .{});
         std.debug.print("  --include-path <dirs..> Additional C header search paths\n", .{});
-        std.debug.print("\nTargets:\n", .{});
-        std.debug.print("  aarch64-darwin  ARM64 macOS\n", .{});
-        std.debug.print("  aarch64-linux   ARM64 Linux\n", .{});
-        std.debug.print("  x86_64-darwin   x86_64 macOS\n", .{});
-        std.debug.print("  x86_64-linux    x86_64 Linux\n", .{});
         return error.MissingArgument;
     }
 
     // default to native target, auto-fallback to LLVM for unsupported architectures
-    const final_target = target orelse getNativeTarget();
+    const final_target = target orelse getNativeTarget() orelse {
+        std.debug.print("Could not detect native target. Specify one with --target (see --list-targets)\n", .{});
+        return error.InvalidTarget;
+    };
 
     switch (builtin.mode) {
         .Debug => try compileDebug(allocator, file_path.?, final_target, c_sources.items, link_libs.items, include_paths.items),
@@ -90,37 +107,61 @@ fn parseTarget(target_str: []const u8) ?honey.codegen.Target {
             .aarch64
         else if (mem.eql(u8, arch_str, "x86_64"))
             .x86_64
+        else if (mem.eql(u8, arch_str, "arm"))
+            .arm
+        else if (mem.eql(u8, arch_str, "x86"))
+            .x86
         else
             return null;
 
-        const os: honey.codegen.Os = if (mem.eql(u8, os_str, "darwin"))
-            .darwin
+        const os: honey.codegen.Os = if (mem.eql(u8, os_str, "macos"))
+            .macos
         else if (mem.eql(u8, os_str, "linux"))
             .linux
         else
             return null;
+
+        // 32-bit Darwin is not supported
+        if ((arch == .arm or arch == .x86) and os == .macos) return null;
 
         return .{ .arch = arch, .os = os };
     }
     return null;
 }
 
-fn getNativeOs() honey.codegen.Os {
-    return switch (builtin.os.tag) {
-        .macos => .darwin,
-        .linux => .linux,
-        else => .darwin,
-    };
+fn printTargets() void {
+    std.debug.print(
+        \\Supported targets:
+        \\
+        \\arm:
+        \\  arm-linux         ARM 32-bit Linux (armv7 hard-float)
+        \\
+        \\arm64:
+        \\  aarch64-macos     ARM 64-bit macOS
+        \\  aarch64-linux     ARM 64-bit Linux
+        \\
+        \\x86:
+        \\  x86-linux         x86 32-bit Linux
+        \\
+        \\x86_64:
+        \\  x86_64-macos      x86 64-bit macOS
+        \\  x86_64-linux      x86 64-bit Linux
+        \\
+    , .{});
 }
 
-fn getNativeTarget() honey.codegen.Target {
-    const native_arch: honey.codegen.Arch = switch (builtin.cpu.arch) {
+fn getNativeTarget() ?honey.codegen.Target {
+    const os: honey.codegen.Os = switch (builtin.os.tag) {
+        .macos => .macos,
+        .linux => .linux,
+        else => return null,
+    };
+    const arch: honey.codegen.Arch = switch (builtin.cpu.arch) {
         .aarch64 => .aarch64,
         .x86_64 => .x86_64,
-        else => @panic("unsupported architecture: " ++ @tagName(builtin.cpu.arch)),
+        else => return null,
     };
-
-    return .{ .arch = native_arch, .os = getNativeOs() };
+    return .{ .arch = arch, .os = os };
 }
 
 pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.codegen.Target, c_sources: []const []const u8, link_libs: []const []const u8, include_paths: []const []const u8) !void {
@@ -193,6 +234,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
         &lexer_result.tokens,
         &src,
         &resolved_imports,
+        target.ptrSize(),
     );
 
     // check for missing entry point
@@ -270,7 +312,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     const link_result = honey.codegen.linker.link(
         codegen_arena.allocator(),
         codegen_result.output,
-        target.getLLVMTriple(),
+        target.getZigTriple(),
         "program",
         c_sources,
         link_libs,
@@ -334,6 +376,7 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
         &lexer_result.tokens,
         &src,
         &resolved_imports,
+        target.ptrSize(),
     );
 
     // check for missing entry point
@@ -381,7 +424,7 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
     const link_result = honey.codegen.linker.link(
         codegen_arena.allocator(),
         codegen_result.output,
-        target.getLLVMTriple(),
+        target.getZigTriple(),
         "program",
         c_sources,
         link_libs,

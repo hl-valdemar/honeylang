@@ -11,4 +11,5 @@ test {
     _ = @import("integration_tests/namespaces.zig");
     _ = @import("integration_tests/errors.zig");
     _ = @import("integration_tests/codegen.zig");
+    _ = @import("integration_tests/bounds_checking.zig");
 }

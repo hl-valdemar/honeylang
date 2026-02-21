@@ -851,12 +851,13 @@ main :: func() i32 {
 ## Code Generation
 
 - **Backend:** LLVM IR (text format)
-- **Target:** aarch64-darwin (ARM 64-bit, macOS)
+- **Targets:** aarch64-darwin, aarch64-linux, x86_64-darwin, x86_64-linux, arm-linux (32-bit), x86-linux (32-bit)
 - **Honey calling convention:** `fastcc` with honey-specific name mangling
 - **C calling convention:** Standard C ABI
 - **Struct passing:** by-value uses `byval`, returns use `sret`
 - **Slice representation:** `{ ptr, usize }` fat pointer, passed with `byval(%slice)`
-- **`usize` mapping:** `i64` on 64-bit targets, `i32` on 32-bit (controlled by target constants in `types.zig`)
+- **`usize` mapping:** `i64` on 64-bit targets, `i32` on 32-bit
+- **Cross-compilation:** `--target=<arch>-<os>` flag, `--list-targets` to see all supported targets
 - **Bool representation:** `i8` (0 or 1)
 - **Float operations:** Native LLVM float instructions (`fadd`, `fsub`, `fmul`, `fdiv`)
 - **Comparison:** Correct signed (`sgt`, `slt`, ...) vs unsigned (`ugt`, `ult`, ...) predicates

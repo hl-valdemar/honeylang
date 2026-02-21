@@ -27,8 +27,9 @@ pub fn analyze(
     tokens: *const TokenList,
     src: *const SourceCode,
     resolved_imports: ?*const ResolvedImports,
+    ptr_size: u32,
 ) !SemanticResult {
-    var ctx = try SemanticContext.init(allocator, ast, tokens, src, resolved_imports);
+    var ctx = try SemanticContext.init(allocator, ast, tokens, src, resolved_imports, ptr_size);
     return ctx.analyze();
 }
 
@@ -79,6 +80,7 @@ pub const SemanticContext = struct {
         tokens: *const TokenList,
         src: *const SourceCode,
         resolved_imports: ?*const ResolvedImports,
+        ptr_size: u32,
     ) !SemanticContext {
         return .{
             .allocator = allocator,
@@ -86,7 +88,7 @@ pub const SemanticContext = struct {
             .tokens = tokens,
             .src = src,
             .symbols = try SymbolTable.init(allocator),
-            .types = try TypeRegistry.init(allocator),
+            .types = try TypeRegistry.init(allocator, ptr_size),
             .node_types = .{},
             .import_node_types = .{},
             .skip_nodes = .{},

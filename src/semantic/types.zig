@@ -3,14 +3,6 @@ const mem = std.mem;
 
 const CallingConvention = @import("../parser/ast.zig").CallingConvention;
 
-/// Target-dependent constants for pointer-sized types (usize, slice layout).
-/// Change these when adding 32-bit target support.
-pub const target = struct {
-    pub const ptr_size: u32 = 8; // 4 on 32-bit
-    pub const ptr_align: u32 = 8; // 4 on 32-bit
-    pub const ptr_llvm_type: []const u8 = "i64"; // "i32" on 32-bit
-};
-
 pub const PrimitiveType = enum(u8) {
     void,
     bool,
@@ -234,8 +226,9 @@ pub const TypeRegistry = struct {
     array_types: std.ArrayList(ArrayTypeInfo),
     slice_types: std.ArrayList(SliceTypeInfo),
     arena: std.heap.ArenaAllocator,
+    ptr_size: u32,
 
-    pub fn init(allocator: mem.Allocator) !TypeRegistry {
+    pub fn init(allocator: mem.Allocator, ptr_size: u32) !TypeRegistry {
         return .{
             .allocator = allocator,
             .function_types = try std.ArrayList(FunctionType).initCapacity(allocator, 16),
@@ -245,6 +238,7 @@ pub const TypeRegistry = struct {
             .array_types = try std.ArrayList(ArrayTypeInfo).initCapacity(allocator, 4),
             .slice_types = try std.ArrayList(SliceTypeInfo).initCapacity(allocator, 4),
             .arena = std.heap.ArenaAllocator.init(allocator),
+            .ptr_size = ptr_size,
         };
     }
 
@@ -558,18 +552,18 @@ pub fn sizeOf(type_id: TypeId, types: *const TypeRegistry) u32 {
             .u16, .i16, .f16 => 2,
             .u32, .i32, .f32 => 4,
             .u64, .i64, .f64 => 8,
-            .usize => target.ptr_size,
+            .usize => types.ptr_size,
         },
         .unresolved => 4, // fallback
-        .function => 8, // pointer-sized
+        .function => types.ptr_size,
         .struct_type => |idx| types.struct_types.items[idx].size,
-        .pointer => 8, // pointer-sized
+        .pointer => types.ptr_size,
         .namespace => 0,
         .array => |idx| {
             const info = types.array_types.items[idx];
             return info.length * sizeOf(info.element_type, types);
         },
-        .slice => 2 * target.ptr_size, // fat pointer: ptr + usize len
+        .slice => 2 * types.ptr_size, // fat pointer: ptr + usize len
     };
 }
 
@@ -582,18 +576,18 @@ pub fn alignmentOf(type_id: TypeId, types: *const TypeRegistry) u32 {
             .u16, .i16, .f16 => 2,
             .u32, .i32, .f32 => 4,
             .u64, .i64, .f64 => 8,
-            .usize => target.ptr_align,
+            .usize => types.ptr_size,
         },
         .unresolved => 4,
-        .function => 8,
+        .function => types.ptr_size,
         .struct_type => |idx| types.struct_types.items[idx].alignment,
-        .pointer => 8,
+        .pointer => types.ptr_size,
         .namespace => 1,
         .array => |idx| {
             const info = types.array_types.items[idx];
             return alignmentOf(info.element_type, types);
         },
-        .slice => 8, // pointer alignment
+        .slice => types.ptr_size,
     };
 }
 

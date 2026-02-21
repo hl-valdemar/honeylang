@@ -103,10 +103,12 @@ pub const LocalVars = struct {
 pub const Arch = enum {
     aarch64,
     x86_64,
+    arm,
+    x86,
 };
 
 pub const Os = enum {
-    darwin,
+    macos,
     linux,
 };
 
@@ -114,17 +116,62 @@ pub const Target = struct {
     arch: Arch,
     os: Os,
 
-    /// Get the LLVM target triple for this target.
+    /// Get the LLVM target triple for LLVM IR emission.
     pub fn getLLVMTriple(self: Target) []const u8 {
         return switch (self.os) {
-            .darwin => switch (self.arch) {
+            .macos => switch (self.arch) {
                 .aarch64 => "arm64-apple-darwin",
                 .x86_64 => "x86_64-apple-darwin",
+                .arm, .x86 => unreachable, // 32-bit Darwin not supported
             },
             .linux => switch (self.arch) {
                 .aarch64 => "aarch64-unknown-linux-gnu",
                 .x86_64 => "x86_64-unknown-linux-gnu",
+                .arm => "armv7-unknown-linux-gnueabihf",
+                .x86 => "i386-unknown-linux-gnu",
             },
+        };
+    }
+
+    /// Get the target triple for zig cc (differs from LLVM triple for some targets).
+    pub fn getZigTriple(self: Target) []const u8 {
+        return switch (self.os) {
+            .macos => switch (self.arch) {
+                .aarch64 => "aarch64-macos",
+                .x86_64 => "x86_64-macos",
+                .arm, .x86 => unreachable,
+            },
+            .linux => switch (self.arch) {
+                .aarch64 => "aarch64-linux-gnu",
+                .x86_64 => "x86_64-linux-gnu",
+                .arm => "arm-linux-gnueabihf",
+                .x86 => "x86-linux-gnu",
+            },
+        };
+    }
+
+    pub fn ptrSize(self: Target) u32 {
+        return switch (self.arch) {
+            .aarch64, .x86_64 => 8,
+            .arm, .x86 => 4,
+        };
+    }
+
+    pub fn ptrAlign(self: Target) u32 {
+        return self.ptrSize();
+    }
+
+    pub fn ptrLLVMType(self: Target) []const u8 {
+        return switch (self.arch) {
+            .aarch64, .x86_64 => "i64",
+            .arm, .x86 => "i32",
+        };
+    }
+
+    pub fn ptrWidth(self: Target) Width {
+        return switch (self.arch) {
+            .aarch64, .x86_64 => .w64,
+            .arm, .x86 => .w32,
         };
     }
 };
@@ -146,6 +193,7 @@ pub fn generate(
     // generate MIR (architecture-independent)
     var ctx = CodeGenContext.init(
         allocator,
+        target,
         comptime_result,
         symbols,
         types,
@@ -171,6 +219,7 @@ pub fn generate(
 
 pub const CodeGenContext = struct {
     allocator: mem.Allocator,
+    target: Target,
     comptime_result: *const ComptimeResult,
     symbols: *const SymbolTable,
     types: *const TypeRegistry,
@@ -188,6 +237,7 @@ pub const CodeGenContext = struct {
 
     pub fn init(
         allocator: mem.Allocator,
+        target: Target,
         comptime_result: *const ComptimeResult,
         symbols: *const SymbolTable,
         types: *const TypeRegistry,
@@ -201,6 +251,7 @@ pub const CodeGenContext = struct {
     ) CodeGenContext {
         return .{
             .allocator = allocator,
+            .target = target,
             .comptime_result = comptime_result,
             .symbols = symbols,
             .types = types,
@@ -263,7 +314,7 @@ pub const CodeGenContext = struct {
         const var_decl = self.ast.getVarDecl(node_idx);
         const sym_idx = self.symbols.lookup(name) orelse return;
         const type_id = self.symbols.getTypeId(sym_idx);
-        const width = typeIdToWidth(type_id);
+        const width = typeIdToWidth(type_id, self.target);
 
         // Try to evaluate initializer at compile time
         var init_value: ?i64 = null;
@@ -317,7 +368,7 @@ pub const CodeGenContext = struct {
 
         const sym_idx = self.symbols.lookup(name) orelse return;
         const type_id = self.symbols.getTypeId(sym_idx);
-        const width = typeIdToWidth(type_id);
+        const width = typeIdToWidth(type_id, self.target);
 
         if (value_kind == .array_literal) {
             const array_init = self.tryEvaluateArrayInit(const_decl.value, type_id) orelse return;
@@ -706,7 +757,7 @@ pub const CodeGenContext = struct {
             if (type_id.isArray()) {
                 const array_idx = type_id.array;
                 const arr_info = self.types.getArrayType(type_id) orelse continue;
-                const elem_width = typeIdToWidth(arr_info.element_type);
+                const elem_width = typeIdToWidth(arr_info.element_type, self.target);
                 const func = self.current_func.?;
                 const global_ptr = try func.emitAddrOfGlobal(global_idx);
 
@@ -786,7 +837,7 @@ pub const CodeGenContext = struct {
         const func = self.ast.getFuncDecl(node_idx);
 
         // resolve return type from node_types (stored by semantic analysis)
-        const return_width: ?Width = resolveReturnWidth(self.node_types, func.return_type);
+        const return_width: ?Width = resolveReturnWidth(self.node_types, func.return_type, self.target);
 
         // resolve parameter widths
         const param_nodes = self.ast.getExtra(func.params);
@@ -802,7 +853,7 @@ pub const CodeGenContext = struct {
         while (i < param_nodes.len) : (i += 2) {
             const param_name_idx = param_nodes[i];
             const param_type = self.node_types.get(param_name_idx) orelse .unresolved;
-            try param_widths.append(self.allocator, typeIdToWidth(param_type));
+            try param_widths.append(self.allocator, typeIdToWidth(param_type, self.target));
             try param_struct_indices.append(self.allocator, if (param_type.isStruct()) param_type.struct_type else null);
             try param_slice_flags.append(self.allocator, param_type.isSlice());
         }
@@ -829,13 +880,13 @@ pub const CodeGenContext = struct {
     fn generateFunctionBody(self: *CodeGenContext, node_idx: NodeIndex, func_name: []const u8) !void {
         const func = self.ast.getFuncDecl(node_idx);
 
-        // calling conv should be c if main (for darwin)
+        // calling conv should be c if main (for macOS)
         const call_conv = if (std.mem.eql(u8, func_name, "main")) .c else func.call_conv;
 
         // resolve return type from node_types (stored by semantic analysis)
         const ret_type = self.node_types.get(func.return_type) orelse .unresolved;
         const sret_struct_idx: ?u32 = if (ret_type.isStruct()) ret_type.struct_type else null;
-        const return_width: ?Width = if (sret_struct_idx != null) null else resolveReturnWidth(self.node_types, func.return_type);
+        const return_width: ?Width = if (sret_struct_idx != null) null else resolveReturnWidth(self.node_types, func.return_type, self.target);
 
         // build parameter info
         const param_nodes = self.ast.getExtra(func.params);
@@ -853,7 +904,7 @@ pub const CodeGenContext = struct {
                 const param_type = self.node_types.get(param_name_idx) orelse .unresolved;
                 try param_list.append(self.allocator, .{
                     .name = param_name,
-                    .width = typeIdToWidth(param_type),
+                    .width = typeIdToWidth(param_type, self.target),
                     .struct_idx = if (param_type.isStruct()) param_type.struct_type else null,
                     .is_slice = param_type.isSlice(),
                 });
@@ -987,7 +1038,7 @@ pub const CodeGenContext = struct {
         if (type_id.isArray()) {
             const array_idx = type_id.array;
             const arr_info = self.types.getArrayType(type_id) orelse return;
-            const elem_width = typeIdToWidth(arr_info.element_type);
+            const elem_width = typeIdToWidth(arr_info.element_type, self.target);
 
             const offset = try self.locals.add(self.allocator, name, .ptr);
             const func = self.current_func.?;
@@ -1007,7 +1058,7 @@ pub const CodeGenContext = struct {
             return;
         }
 
-        const width = typeIdToWidth(type_id);
+        const width = typeIdToWidth(type_id, self.target);
 
         // Allocate stack slot
         const offset = try self.locals.add(self.allocator, name, width);
@@ -1107,7 +1158,7 @@ pub const CodeGenContext = struct {
         // Find field index and emit store
         for (struct_type.fields, 0..) |field, i| {
             if (mem.eql(u8, field.name, field_name)) {
-                const field_width = typeIdToWidth(field.type_id);
+                const field_width = typeIdToWidth(field.type_id, self.target);
                 try func.emitStoreField(base_reg, value_reg, struct_idx, @intCast(i), field_width);
                 return;
             }
@@ -1122,7 +1173,7 @@ pub const CodeGenContext = struct {
 
         // Generate the if guard
         const guard_reg = try self.generateExpression(if_node.if_guard) orelse return;
-        const guard_width = if (self.node_types.get(if_node.if_guard)) |tid| typeIdToWidth(tid) else Width.w8;
+        const guard_width = if (self.node_types.get(if_node.if_guard)) |tid| typeIdToWidth(tid, self.target) else Width.w8;
 
         const then_label = func.allocLabel();
         // Determine where to jump on false: first else-if, else block, or end
@@ -1145,7 +1196,7 @@ pub const CodeGenContext = struct {
 
             const pair = if_node.getElseIf(self.ast, i) orelse continue;
             const elif_guard_reg = try self.generateExpression(pair.guard) orelse continue;
-            const elif_guard_width = if (self.node_types.get(pair.guard)) |tid| typeIdToWidth(tid) else Width.w8;
+            const elif_guard_width = if (self.node_types.get(pair.guard)) |tid| typeIdToWidth(tid, self.target) else Width.w8;
 
             const elif_then_label = func.allocLabel();
             next_false_label = func.allocLabel();
@@ -1201,7 +1252,7 @@ pub const CodeGenContext = struct {
             // (semantic error already reported), trap at runtime so the user
             // knows this code path is invalid.
             const expr_type = self.node_types.get(ret.expr) orelse .unresolved;
-            const expr_width = typeIdToWidth(expr_type);
+            const expr_width = typeIdToWidth(expr_type, self.target);
             if (expr_width != ret_width) {
                 try func.emitTrap();
                 try func.emitRet(null, ret_width);
@@ -1233,7 +1284,7 @@ pub const CodeGenContext = struct {
         const func = self.current_func.?;
         const unary = self.ast.getUnaryOp(node_idx);
         const operand_reg = try self.generateExpression(unary.operand) orelse return null;
-        const width = if (self.node_types.get(node_idx)) |tid| typeIdToWidth(tid) else Width.w32;
+        const width = if (self.node_types.get(node_idx)) |tid| typeIdToWidth(tid, self.target) else Width.w32;
 
         switch (unary.op) {
             .negate => {
@@ -1254,7 +1305,7 @@ pub const CodeGenContext = struct {
         const value_str = self.src.getSlice(token.start, token.start + token.len);
 
         // Resolve width from semantic analysis; bare unresolved literals default to w32
-        const width = if (self.node_types.get(node_idx)) |tid| typeIdToWidth(tid) else Width.w32;
+        const width = if (self.node_types.get(node_idx)) |tid| typeIdToWidth(tid, self.target) else Width.w32;
 
         switch (token.kind) {
             .bool => {
@@ -1315,12 +1366,12 @@ pub const CodeGenContext = struct {
             // The global IS the data storage; return a pointer to it
             return try func.emitAddrOfGlobal(global_idx);
         }
-        const width = typeIdToWidth(type_id);
+        const width = typeIdToWidth(type_id, self.target);
         return try func.emitLoadGlobal(global_idx, width);
     }
 
     /// Map a resolved TypeId to an LLVM type string for use in MIR instructions.
-    fn typeIdToLLVMTypeStr(type_id: TypeId) []const u8 {
+    fn typeIdToLLVMTypeStr(type_id: TypeId, target: Target) []const u8 {
         return switch (type_id) {
             .primitive => |p| switch (p) {
                 .void => "void",
@@ -1331,7 +1382,7 @@ pub const CodeGenContext = struct {
                 .u32, .i32 => "i32",
                 .f32 => "float",
                 .u64, .i64 => "i64",
-                .usize => types_mod.target.ptr_llvm_type,
+                .usize => target.ptrLLVMType(),
                 .f64 => "double",
             },
             .struct_type, .pointer, .array, .slice => "ptr",
@@ -1344,13 +1395,14 @@ pub const CodeGenContext = struct {
     /// .unresolved reaching codegen means semantic analysis reported an error (S018)
     /// but the compiler still produces an executable. w32 is used as error recovery.
     /// Struct types are passed by pointer, so they use .ptr width.
-    fn typeIdToWidth(type_id: TypeId) Width {
+    fn typeIdToWidth(type_id: TypeId, target: Target) Width {
         return switch (type_id) {
             .primitive => |prim| switch (prim) {
                 .bool, .i8, .u8 => .w8,
                 .i16, .u16 => .w16,
                 .i32, .u32 => .w32,
-                .i64, .u64, .usize => .w64,
+                .i64, .u64 => .w64,
+                .usize => target.ptrWidth(),
                 .f16 => .wf16,
                 .f32 => .wf32,
                 .f64 => .wf64,
@@ -1370,10 +1422,11 @@ pub const CodeGenContext = struct {
     fn resolveReturnWidth(
         node_types: *const std.AutoHashMapUnmanaged(NodeIndex, TypeId),
         return_type_node: NodeIndex,
+        target: Target,
     ) ?Width {
         const ret_type = node_types.get(return_type_node) orelse return .w32;
         if (ret_type == .primitive and ret_type.primitive == .void) return null;
-        return typeIdToWidth(ret_type);
+        return typeIdToWidth(ret_type, target);
     }
 
     fn generateConstLoad(self: *CodeGenContext, sym_idx: SymbolIndex, type_id: TypeId) !?VReg {
@@ -1408,9 +1461,13 @@ pub const CodeGenContext = struct {
                 const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
                 return try func.emitMovImm(val, .w32);
             },
-            .i64, .u64, .usize => {
+            .i64, .u64 => {
                 const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
                 return try func.emitMovImm(val, .w64);
+            },
+            .usize => {
+                const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
+                return try func.emitMovImm(val, self.target.ptrWidth());
             },
             .f16, .f32 => {
                 const float_val = std.fmt.parseFloat(f64, value_str) catch 0.0;
@@ -1436,7 +1493,7 @@ pub const CodeGenContext = struct {
         // Comparisons: use operand type for width/signedness, result is always bool
         if (binary.isComparison()) {
             const operand_type = self.node_types.get(binary.left) orelse .unresolved;
-            const operand_width = typeIdToWidth(operand_type);
+            const operand_width = typeIdToWidth(operand_type, self.target);
             const signed = operand_type.isSignedInteger();
 
             const cmp_op: CmpOp = switch (binary.op) {
@@ -1479,7 +1536,7 @@ pub const CodeGenContext = struct {
         };
 
         // Resolve width from semantic analysis; default to w32
-        const width = if (self.node_types.get(node_idx)) |tid| typeIdToWidth(tid) else Width.w32;
+        const width = if (self.node_types.get(node_idx)) |tid| typeIdToWidth(tid, self.target) else Width.w32;
         return try func.emitBinOp(mir_op, left_reg, right_reg, width);
     }
 
@@ -1549,7 +1606,7 @@ pub const CodeGenContext = struct {
                 const slice_ptr = try func.emitAddrOfLocal(slice_offset);
 
                 // store array pointer + length into the slice
-                const len_reg = try func.emitMovImm(@intCast(arr_info.length), .w64);
+                const len_reg = try func.emitMovImm(@intCast(arr_info.length), self.target.ptrWidth());
                 try func.emitMakeSlice(slice_ptr, arr_ptr, len_reg);
 
                 try arg_regs.append(self.allocator, slice_ptr);
@@ -1559,7 +1616,7 @@ pub const CodeGenContext = struct {
                 continue;
             }
 
-            const arg_width = typeIdToWidth(arg_type);
+            const arg_width = typeIdToWidth(arg_type, self.target);
             const arg_reg = try self.generateExpression(arg_idx) orelse {
                 // If arg generation fails, use 0 as placeholder
                 const zero = try func.emitMovImm(0, .w32);
@@ -1582,7 +1639,7 @@ pub const CodeGenContext = struct {
         if (param_types) |pt| {
             const check_count = @min(arg_widths.items.len, pt.len);
             for (0..check_count) |i| {
-                const expected_width = typeIdToWidth(pt[i]);
+                const expected_width = typeIdToWidth(pt[i], self.target);
                 if (arg_widths.items[i] != expected_width) {
                     try func.emitTrap();
                     // Return a zero register as placeholder for the call result
@@ -1631,7 +1688,7 @@ pub const CodeGenContext = struct {
         const return_width: ?Width = if (return_type) |rt| blk: {
             if (rt == .unresolved) break :blk .w32;
             if (rt == .primitive and rt.primitive == .void) break :blk null;
-            break :blk typeIdToWidth(rt);
+            break :blk typeIdToWidth(rt, self.target);
         } else .w32;
 
         return try func.emitCall(emit_name, arg_regs.items, arg_widths.items, arg_struct_indices.items, arg_slice_flags.items, call_conv, return_width, null);
@@ -1684,7 +1741,7 @@ pub const CodeGenContext = struct {
             const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
             if (mem.eql(u8, field_name, "len")) {
                 const arr_info = self.types.getArrayType(object_type) orelse return null;
-                return try func.emitMovImm(@intCast(arr_info.length), .w64);
+                return try func.emitMovImm(@intCast(arr_info.length), self.target.ptrWidth());
             }
             return null;
         }
@@ -1705,7 +1762,7 @@ pub const CodeGenContext = struct {
         // find field index
         for (struct_type.fields, 0..) |field, i| {
             if (mem.eql(u8, field.name, field_name)) {
-                const field_width = typeIdToWidth(field.type_id);
+                const field_width = typeIdToWidth(field.type_id, self.target);
                 return try func.emitLoadField(base_reg, struct_idx, @intCast(i), field_width);
             }
         }
@@ -1776,7 +1833,7 @@ pub const CodeGenContext = struct {
         }
 
         // primitive: load through pointer
-        const width = typeIdToWidth(result_type);
+        const width = typeIdToWidth(result_type, self.target);
         return try self.current_func.?.emitLoadPtr(ptr_reg, width);
     }
 
@@ -1795,7 +1852,7 @@ pub const CodeGenContext = struct {
             try func.emitCopyStruct(ptr_reg, value_reg, target_type.struct_type);
         } else {
             // primitive: store through pointer
-            const width = typeIdToWidth(target_type);
+            const width = typeIdToWidth(target_type, self.target);
             try func.emitStorePtr(ptr_reg, value_reg, width);
         }
     }
@@ -1810,7 +1867,7 @@ pub const CodeGenContext = struct {
 
         const array_idx = type_id.array;
         const arr_info = self.types.getArrayType(type_id) orelse return null;
-        const elem_width = typeIdToWidth(arr_info.element_type);
+        const elem_width = typeIdToWidth(arr_info.element_type, self.target);
 
         // allocate array on stack
         const base = try func.emitAllocaArray(array_idx);
@@ -1825,6 +1882,27 @@ pub const CodeGenContext = struct {
 
         // return pointer to the array
         return base;
+    }
+
+    /// Emit a runtime bounds check: if index >= length, trap.
+    fn emitBoundsCheck(self: *CodeGenContext, index_reg: VReg, length_reg: VReg) CodeGenError!void {
+        const func = self.current_func.?;
+        const ptr_width = self.target.ptrWidth();
+
+        // compare: index >= length (unsigned)
+        const cmp_reg = try func.emitCmp(.ge_u, index_reg, length_reg, ptr_width);
+
+        // branch: if out of bounds goto trap, else continue
+        const trap_label = func.allocLabel();
+        const ok_label = func.allocLabel();
+        try func.emitBrCond(cmp_reg, .w8, trap_label, ok_label);
+
+        // trap block
+        try func.emitLabel(trap_label);
+        try func.emitTrap();
+
+        // continue
+        try func.emitLabel(ok_label);
     }
 
     fn generateArrayIndex(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {
@@ -1842,8 +1920,11 @@ pub const CodeGenContext = struct {
 
         if (obj_type.isSlice()) {
             const slice_info = self.types.getSliceType(obj_type) orelse return null;
-            const elem_llvm_type = typeIdToLLVMTypeStr(slice_info.element_type);
-            const elem_width = typeIdToWidth(slice_info.element_type);
+            const elem_llvm_type = typeIdToLLVMTypeStr(slice_info.element_type, self.target);
+            const elem_width = typeIdToWidth(slice_info.element_type, self.target);
+            // bounds check: index < slice.len
+            const len_reg = try func.emitSliceGetLen(base_reg);
+            try self.emitBoundsCheck(index_reg, len_reg);
             // extract data pointer from fat pointer, GEP to element, load
             const data_ptr = try func.emitSliceGetPtr(base_reg);
             const elem_ptr = try func.emitSliceElemPtr(data_ptr, index_reg, elem_llvm_type);
@@ -1854,7 +1935,11 @@ pub const CodeGenContext = struct {
 
         const array_idx = obj_type.array;
         const arr_info = self.types.getArrayType(obj_type) orelse return null;
-        const elem_width = typeIdToWidth(arr_info.element_type);
+        const elem_width = typeIdToWidth(arr_info.element_type, self.target);
+
+        // bounds check: index < array.length
+        const len_reg = try func.emitMovImm(@intCast(arr_info.length), self.target.ptrWidth());
+        try self.emitBoundsCheck(index_reg, len_reg);
 
         return try func.emitLoadElement(base_reg, index_reg, array_idx, elem_width);
     }
@@ -1875,7 +1960,11 @@ pub const CodeGenContext = struct {
 
         const array_idx = obj_type.array;
         const arr_info = self.types.getArrayType(obj_type) orelse return;
-        const elem_width = typeIdToWidth(arr_info.element_type);
+        const elem_width = typeIdToWidth(arr_info.element_type, self.target);
+
+        // bounds check: index < array.length
+        const len_reg = try func.emitMovImm(@intCast(arr_info.length), self.target.ptrWidth());
+        try self.emitBoundsCheck(index_reg, len_reg);
 
         try func.emitStoreElement(base_reg, index_reg, value_reg, array_idx, elem_width);
     }
@@ -1911,8 +2000,8 @@ pub const CodeGenContext = struct {
                 if (mem.eql(u8, field.name, field_name)) {
                     // Skip store if value type doesn't match field type (error already reported by sema)
                     const value_type = self.node_types.get(field_value_idx) orelse break;
-                    const field_width = typeIdToWidth(field.type_id);
-                    const value_width = typeIdToWidth(value_type);
+                    const field_width = typeIdToWidth(field.type_id, self.target);
+                    const value_width = typeIdToWidth(value_type, self.target);
                     if (field_width != value_width) break;
 
                     const value_reg = try self.generateExpression(field_value_idx) orelse continue;
