@@ -519,6 +519,58 @@ The compiler checks:
 - **Non-integer index:** `arr[flag]` where `flag` is `bool` — index must be an integer
 - **Immutable element assignment:** `arr[0] = 10` on `[N]T` — use `[N]mut T` for mutable elements
 
+## Slices
+
+A slice `[]T` is a fat pointer — a pair of (data pointer, length) — that references a contiguous sequence of `T` elements without owning them. Slices enable writing functions that operate on arrays of any length.
+
+### Slice as Function Parameter
+
+Use `[]T` as a parameter type to accept a reference to any `[N]T`:
+
+```honey
+sum :: func(data: []i32) i32 {
+    return data[0] + data[1]
+}
+```
+
+### Array-to-Slice Coercion
+
+When calling a function that takes `[]T`, you can pass a `[N]T` directly — the compiler creates the fat pointer automatically:
+
+```honey
+main :: func() i32 {
+    arr: [3]i32 = [10, 20, 30]
+    return sum(arr)    # [3]i32 coerced to []i32
+}
+```
+
+### Slice Indexing
+
+Access elements with `s[index]`, same syntax as arrays:
+
+```honey
+get :: func(data: []i32) i32 {
+    return data[2]
+}
+```
+
+### `.len` Property
+
+Every slice has a `.len` property that returns the number of elements as `i64`:
+
+```honey
+length :: func(data: []i32) i64 {
+    return data.len
+}
+```
+
+### Current Limitations
+
+- Slices are immutable (`[]T` only) — `[]mut T` is not yet implemented
+- Slices can only appear as function parameters (no local/global slice variables)
+- No range slicing syntax (`arr[0..3]`)
+- No runtime bounds checking on slice indexing
+
 ## Pointers
 
 ### Single-Item Pointers
@@ -784,6 +836,7 @@ main :: func() i32 {
 - **Honey calling convention:** `fastcc` with honey-specific name mangling
 - **C calling convention:** Standard C ABI
 - **Struct passing:** by-value uses `byval`, returns use `sret`
+- **Slice representation:** `{ ptr, i64 }` fat pointer, passed with `byval(%slice)`
 - **Bool representation:** `i8` (0 or 1)
 - **Float operations:** Native LLVM float instructions (`fadd`, `fsub`, `fmul`, `fdiv`)
 - **Comparison:** Correct signed (`sgt`, `slt`, ...) vs unsigned (`ugt`, `ult`, ...) predicates

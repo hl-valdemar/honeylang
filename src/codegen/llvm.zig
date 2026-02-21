@@ -32,6 +32,12 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule, types: *const T
     // emit struct type definitions
     try emitStructTypes(&emitter, types);
 
+    // emit slice type definition if any slice types are registered
+    if (types.slice_types.items.len > 0 or hasSliceParams(module)) {
+        try emitter.raw("%slice = type { ptr, i64 }");
+        try emitter.newline();
+    }
+
     // emit memcpy intrinsic if any struct types have struct fields
     if (needsMemcpy(types)) {
         try emitter.raw("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)");
@@ -99,6 +105,20 @@ fn emitStructTypes(emitter: *Emitter, types: *const TypeRegistry) !void {
 
 fn needsMemcpy(types: *const TypeRegistry) bool {
     return types.struct_types.items.len > 0;
+}
+
+fn hasSliceParams(module: *const MIRModule) bool {
+    for (module.functions.items) |*func| {
+        for (func.params) |param| {
+            if (param.is_slice) return true;
+        }
+    }
+    for (module.extern_functions.items) |ext| {
+        for (ext.param_slice_flags) |is_slice| {
+            if (is_slice) return true;
+        }
+    }
+    return false;
 }
 
 fn needsTrap(module: *const MIRModule) bool {
@@ -207,6 +227,10 @@ fn emitExternDecl(emitter: *Emitter, ext: *const mir.ExternFunc, types: *const T
                 continue;
             }
         }
+        if (j < ext.param_slice_flags.len and ext.param_slice_flags[j]) {
+            try emitter.appendSlice("ptr byval(%slice)");
+            continue;
+        }
         try emitter.appendSlice(widthToLLVMType(pw));
     }
 
@@ -227,6 +251,8 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
             if (param.struct_idx) |si| {
                 const param_struct = types.struct_types.items[si];
                 try emitter.appendFmt(", ptr byval(%{s}) %arg{d}", .{ param_struct.name, i + 1 });
+            } else if (param.is_slice) {
+                try emitter.appendFmt(", ptr byval(%slice) %arg{d}", .{i + 1});
             } else {
                 try emitter.appendFmt(", {s} %arg{d}", .{ widthToLLVMType(param.width), i + 1 });
             }
@@ -243,6 +269,8 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
             if (param.struct_idx) |si| {
                 const struct_type = types.struct_types.items[si];
                 try emitter.appendFmt("ptr byval(%{s}) %arg{d}", .{ struct_type.name, i });
+            } else if (param.is_slice) {
+                try emitter.appendFmt("ptr byval(%slice) %arg{d}", .{i});
             } else {
                 try emitter.appendFmt("{s} %arg{d}", .{ widthToLLVMType(param.width), i });
             }
@@ -479,10 +507,15 @@ fn lowerInst(
                     const arg_ssa = ssa_map.get(arg_vreg);
 
                     const struct_idx_val: ?u32 = if (i < op.arg_struct_indices.len) op.arg_struct_indices[i] else null;
+                    const is_slice_arg = if (i < op.arg_slice_flags.len) op.arg_slice_flags[i] else false;
                     if (struct_idx_val) |si| {
                         const arg_struct = types.struct_types.items[si];
                         var abuf: [64]u8 = undefined;
                         const arg_fmt = std.fmt.bufPrint(&abuf, "ptr byval(%{s}) %{d}", .{ arg_struct.name, arg_ssa }) catch unreachable;
+                        try args_str.appendSlice(emitter.allocator, arg_fmt);
+                    } else if (is_slice_arg) {
+                        var abuf: [64]u8 = undefined;
+                        const arg_fmt = std.fmt.bufPrint(&abuf, "ptr byval(%slice) %{d}", .{arg_ssa}) catch unreachable;
                         try args_str.appendSlice(emitter.allocator, arg_fmt);
                     } else {
                         const arg_type = widthToLLVMType(arg_width);
@@ -504,12 +537,17 @@ fn lowerInst(
                     if (i > 0) try args_str.appendSlice(emitter.allocator, ", ");
                     const arg_ssa = ssa_map.get(arg_vreg);
 
-                    // check if this arg is a byval struct
+                    // check if this arg is a byval struct or slice
                     const struct_idx: ?u32 = if (i < op.arg_struct_indices.len) op.arg_struct_indices[i] else null;
+                    const is_slice_arg = if (i < op.arg_slice_flags.len) op.arg_slice_flags[i] else false;
                     if (struct_idx) |si| {
                         const struct_type = types.struct_types.items[si];
                         var buf: [64]u8 = undefined;
                         const arg_fmt = std.fmt.bufPrint(&buf, "ptr byval(%{s}) %{d}", .{ struct_type.name, arg_ssa }) catch unreachable;
+                        try args_str.appendSlice(emitter.allocator, arg_fmt);
+                    } else if (is_slice_arg) {
+                        var buf: [64]u8 = undefined;
+                        const arg_fmt = std.fmt.bufPrint(&buf, "ptr byval(%slice) %{d}", .{arg_ssa}) catch unreachable;
                         try args_str.appendSlice(emitter.allocator, arg_fmt);
                     } else {
                         const arg_type = widthToLLVMType(arg_width);
@@ -690,6 +728,53 @@ fn lowerInst(
             });
         },
 
+        .alloca_slice_local => |op| {
+            const alloca_id = alloca_map.getOrCreate(op.offset);
+            try emitter.appendFmt("  %local.{d} = alloca {{ ptr, i64 }}\n", .{alloca_id});
+            alloca_map.markEmitted(op.offset);
+        },
+
+        .slice_get_ptr => |op| {
+            const base_ssa = ssa_map.get(op.base);
+            const gep_ssa = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, i64 }}, ptr %{d}, i32 0, i32 0\n", .{ gep_ssa, base_ssa });
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            try emitter.appendFmt("  %{d} = load ptr, ptr %gep.{d}\n", .{ dst_ssa, gep_ssa });
+        },
+
+        .slice_get_len => |op| {
+            const base_ssa = ssa_map.get(op.base);
+            const gep_ssa = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, i64 }}, ptr %{d}, i32 0, i32 1\n", .{ gep_ssa, base_ssa });
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            try emitter.appendFmt("  %{d} = load i64, ptr %gep.{d}\n", .{ dst_ssa, gep_ssa });
+        },
+
+        .make_slice => |op| {
+            const dst_ssa = ssa_map.get(op.dst);
+            const ptr_ssa = ssa_map.get(op.ptr_val);
+            const len_ssa = ssa_map.get(op.len_val);
+            // store ptr field
+            const ptr_gep = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, i64 }}, ptr %{d}, i32 0, i32 0\n", .{ ptr_gep, dst_ssa });
+            try emitter.appendFmt("  store ptr %{d}, ptr %gep.{d}\n", .{ ptr_ssa, ptr_gep });
+            // store len field
+            const len_gep = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, i64 }}, ptr %{d}, i32 0, i32 1\n", .{ len_gep, dst_ssa });
+            try emitter.appendFmt("  store i64 %{d}, ptr %gep.{d}\n", .{ len_ssa, len_gep });
+        },
+
+        .slice_elem_ptr => |op| {
+            const data_ssa = ssa_map.get(op.data_ptr);
+            const index_ssa = ssa_map.get(op.index);
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            try emitter.appendFmt("  %{d} = getelementptr inbounds {s}, ptr %{d}, i64 %{d}\n", .{ dst_ssa, op.elem_llvm_type, data_ssa, index_ssa });
+        },
+
         .ptr_offset => |op| {
             const base_ssa = ssa_map.get(op.base);
             const count_ssa = ssa_map.get(op.count);
@@ -768,6 +853,7 @@ fn typeIdToLLVMType(type_id: TypeId) []const u8 {
         .function => "ptr",
         .namespace => "void", // namespaces have no runtime representation
         .array => "ptr", // arrays are stack-allocated, passed as pointers
+        .slice => "ptr", // slices are fat pointers { ptr, i64 }, passed as pointers
     };
 }
 

@@ -795,6 +795,8 @@ pub const CodeGenContext = struct {
         defer param_widths.deinit(self.allocator);
         var param_struct_indices = try std.ArrayList(?u32).initCapacity(self.allocator, param_count);
         defer param_struct_indices.deinit(self.allocator);
+        var param_slice_flags = try std.ArrayList(bool).initCapacity(self.allocator, param_count);
+        defer param_slice_flags.deinit(self.allocator);
 
         var i: usize = 0;
         while (i < param_nodes.len) : (i += 2) {
@@ -802,6 +804,7 @@ pub const CodeGenContext = struct {
             const param_type = self.node_types.get(param_name_idx) orelse .unresolved;
             try param_widths.append(self.allocator, typeIdToWidth(param_type));
             try param_struct_indices.append(self.allocator, if (param_type.isStruct()) param_type.struct_type else null);
+            try param_slice_flags.append(self.allocator, param_type.isSlice());
         }
 
         try self.mir.addExternFunction(
@@ -810,6 +813,7 @@ pub const CodeGenContext = struct {
             return_width,
             try self.allocator.dupe(Width, param_widths.items),
             try self.allocator.dupe(?u32, param_struct_indices.items),
+            try self.allocator.dupe(bool, param_slice_flags.items),
         );
     }
 
@@ -851,6 +855,7 @@ pub const CodeGenContext = struct {
                     .name = param_name,
                     .width = typeIdToWidth(param_type),
                     .struct_idx = if (param_type.isStruct()) param_type.struct_type else null,
+                    .is_slice = param_type.isSlice(),
                 });
             }
         }
@@ -1314,6 +1319,26 @@ pub const CodeGenContext = struct {
         return try func.emitLoadGlobal(global_idx, width);
     }
 
+    /// Map a resolved TypeId to an LLVM type string for use in MIR instructions.
+    fn typeIdToLLVMTypeStr(type_id: TypeId) []const u8 {
+        return switch (type_id) {
+            .primitive => |p| switch (p) {
+                .void => "void",
+                .bool => "i1",
+                .u8, .i8 => "i8",
+                .u16, .i16 => "i16",
+                .f16 => "half",
+                .u32, .i32 => "i32",
+                .f32 => "float",
+                .u64, .i64 => "i64",
+                .f64 => "double",
+            },
+            .struct_type, .pointer, .array, .slice => "ptr",
+            .unresolved => "i32",
+            else => "i32",
+        };
+    }
+
     /// Map a resolved TypeId to a MIR operand width.
     /// .unresolved reaching codegen means semantic analysis reported an error (S018)
     /// but the compiler still produces an executable. w32 is used as error recovery.
@@ -1333,6 +1358,7 @@ pub const CodeGenContext = struct {
             .struct_type => .ptr,
             .pointer => .ptr,
             .array => .ptr,
+            .slice => .ptr,
             .unresolved => .w32,
             else => .w32,
         };
@@ -1483,15 +1509,55 @@ pub const CodeGenContext = struct {
 
         // 3. Generate argument expressions
         const arg_nodes = self.ast.getExtra(call.args);
+        const param_types = self.types.getParamTypes(func_type_id);
         var arg_regs = try std.ArrayList(VReg).initCapacity(self.allocator, arg_nodes.len);
         defer arg_regs.deinit(self.allocator);
         var arg_widths = try std.ArrayList(Width).initCapacity(self.allocator, arg_nodes.len);
         defer arg_widths.deinit(self.allocator);
         var arg_struct_indices = try std.ArrayList(?u32).initCapacity(self.allocator, arg_nodes.len);
         defer arg_struct_indices.deinit(self.allocator);
+        var arg_slice_flags = try std.ArrayList(bool).initCapacity(self.allocator, arg_nodes.len);
+        defer arg_slice_flags.deinit(self.allocator);
 
-        for (arg_nodes) |arg_idx| {
+        for (arg_nodes, 0..) |arg_idx, arg_i| {
             const arg_type = self.node_types.get(arg_idx) orelse .unresolved;
+            const expected_type: ?TypeId = if (param_types) |pt| (if (arg_i < pt.len) pt[arg_i] else null) else null;
+
+            // array→slice coercion: arg is [N]T but param expects []T
+            if (arg_type.isArray() and expected_type != null and expected_type.?.isSlice()) {
+                const arr_info = self.types.getArrayType(arg_type) orelse {
+                    try arg_regs.append(self.allocator, try func.emitMovImm(0, .w32));
+                    try arg_widths.append(self.allocator, .w32);
+                    try arg_struct_indices.append(self.allocator, null);
+                    try arg_slice_flags.append(self.allocator, false);
+                    continue;
+                };
+
+                // generate the array expression (returns a pointer to array data)
+                const arr_ptr = try self.generateExpression(arg_idx) orelse {
+                    try arg_regs.append(self.allocator, try func.emitMovImm(0, .w32));
+                    try arg_widths.append(self.allocator, .w32);
+                    try arg_struct_indices.append(self.allocator, null);
+                    try arg_slice_flags.append(self.allocator, false);
+                    continue;
+                };
+
+                // create temporary slice on stack: alloca { ptr, i64 }
+                const slice_offset = try self.locals.add(self.allocator, "__slice_tmp", .ptr);
+                try func.emitAllocaSliceLocal(slice_offset);
+                const slice_ptr = try func.emitAddrOfLocal(slice_offset);
+
+                // store array pointer + length into the slice
+                const len_reg = try func.emitMovImm(@intCast(arr_info.length), .w64);
+                try func.emitMakeSlice(slice_ptr, arr_ptr, len_reg);
+
+                try arg_regs.append(self.allocator, slice_ptr);
+                try arg_widths.append(self.allocator, .ptr);
+                try arg_struct_indices.append(self.allocator, null);
+                try arg_slice_flags.append(self.allocator, true);
+                continue;
+            }
+
             const arg_width = typeIdToWidth(arg_type);
             const arg_reg = try self.generateExpression(arg_idx) orelse {
                 // If arg generation fails, use 0 as placeholder
@@ -1499,20 +1565,23 @@ pub const CodeGenContext = struct {
                 try arg_regs.append(self.allocator, zero);
                 try arg_widths.append(self.allocator, .w32);
                 try arg_struct_indices.append(self.allocator, null);
+                try arg_slice_flags.append(self.allocator, false);
                 continue;
             };
             try arg_regs.append(self.allocator, arg_reg);
             try arg_widths.append(self.allocator, arg_width);
             try arg_struct_indices.append(self.allocator, if (arg_type.isStruct()) arg_type.struct_type else null);
+            // if arg is already a slice (passed directly), mark it
+            try arg_slice_flags.append(self.allocator, expected_type != null and expected_type.?.isSlice());
         }
 
         // 4. Check for argument type mismatches — emit trap if any arg width
         //    doesn't match the expected parameter width (error already reported
         //    by semantic analysis; always-compile inserts a runtime trap).
-        if (self.types.getParamTypes(func_type_id)) |param_types| {
-            const check_count = @min(arg_widths.items.len, param_types.len);
+        if (param_types) |pt| {
+            const check_count = @min(arg_widths.items.len, pt.len);
             for (0..check_count) |i| {
-                const expected_width = typeIdToWidth(param_types[i]);
+                const expected_width = typeIdToWidth(pt[i]);
                 if (arg_widths.items[i] != expected_width) {
                     try func.emitTrap();
                     // Return a zero register as placeholder for the call result
@@ -1546,8 +1615,13 @@ pub const CodeGenContext = struct {
             try sret_struct_indices.append(self.allocator, null); // sret pointer itself is not byval
             for (arg_struct_indices.items) |s| try sret_struct_indices.append(self.allocator, s);
 
+            var sret_slice_flags = try std.ArrayList(bool).initCapacity(self.allocator, arg_slice_flags.items.len + 1);
+            defer sret_slice_flags.deinit(self.allocator);
+            try sret_slice_flags.append(self.allocator, false); // sret pointer is not a slice
+            for (arg_slice_flags.items) |f| try sret_slice_flags.append(self.allocator, f);
+
             // call returns void; the struct is written via sret pointer
-            _ = try func.emitCall(emit_name, sret_args.items, sret_widths.items, sret_struct_indices.items, call_conv, null, struct_idx);
+            _ = try func.emitCall(emit_name, sret_args.items, sret_widths.items, sret_struct_indices.items, sret_slice_flags.items, call_conv, null, struct_idx);
 
             return result_ptr;
         }
@@ -1559,7 +1633,7 @@ pub const CodeGenContext = struct {
             break :blk typeIdToWidth(rt);
         } else .w32;
 
-        return try func.emitCall(emit_name, arg_regs.items, arg_widths.items, arg_struct_indices.items, call_conv, return_width, null);
+        return try func.emitCall(emit_name, arg_regs.items, arg_widths.items, arg_struct_indices.items, arg_slice_flags.items, call_conv, return_width, null);
     }
 
     fn generateFieldAccess(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {
@@ -1588,6 +1662,18 @@ pub const CodeGenContext = struct {
                 .namespace => null, // nested namespace has no runtime value
                 .function, .@"type" => null,
             };
+        }
+
+        // slice .len access
+        if (object_type.isSlice()) {
+            const field_ident = self.ast.getIdentifier(access.field);
+            const field_token = self.tokens.items[field_ident.token_idx];
+            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+            if (mem.eql(u8, field_name, "len")) {
+                const base_reg = try self.generateExpression(access.object) orelse return null;
+                return try func.emitSliceGetLen(base_reg);
+            }
+            return null;
         }
 
         if (object_type != .struct_type) return null;
@@ -1732,14 +1818,25 @@ pub const CodeGenContext = struct {
         const func = self.current_func.?;
         const idx_node = self.ast.getArrayIndex(node_idx);
 
-        // generate the object (array pointer)
+        // generate the object (array/slice pointer)
         const base_reg = try self.generateExpression(idx_node.object) orelse return null;
 
         // generate the index
         const index_reg = try self.generateExpression(idx_node.index) orelse return null;
 
-        // get array type from the object
+        // get type from the object
         const obj_type = self.node_types.get(idx_node.object) orelse return null;
+
+        if (obj_type.isSlice()) {
+            const slice_info = self.types.getSliceType(obj_type) orelse return null;
+            const elem_llvm_type = typeIdToLLVMTypeStr(slice_info.element_type);
+            const elem_width = typeIdToWidth(slice_info.element_type);
+            // extract data pointer from fat pointer, GEP to element, load
+            const data_ptr = try func.emitSliceGetPtr(base_reg);
+            const elem_ptr = try func.emitSliceElemPtr(data_ptr, index_reg, elem_llvm_type);
+            return try func.emitLoadPtr(elem_ptr, elem_width);
+        }
+
         if (obj_type != .array) return null;
 
         const array_idx = obj_type.array;

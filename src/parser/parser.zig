@@ -354,12 +354,13 @@ pub const Parser = struct {
                     // `identifier := ...` => runtime var (inferred type)
                     return try self.parseVarDecl();
                 } else if (after.kind == .left_bracket) {
-                    // `identifier : [N]type ...` => skip past array type to find = or ::
-                    // Pattern: [ (number|_) ] (mut?) type (= | ::)
+                    // `identifier : [...]type ...` => skip past array/slice type to find = or ::
                     var skip: u32 = 3; // start after `[`
-                    // skip length (number or identifier like `_`)
+
+                    // Check if next token after `[` is `]` (slice) or number/_ (array)
                     if (self.peekOffset(skip)) |len_tok| {
                         if (len_tok.kind == .number or len_tok.kind == .identifier) skip += 1;
+                        // else: `]` follows immediately → slice type, don't skip
                     }
                     // skip `]`
                     if (self.peekOffset(skip)) |rb| {
@@ -1220,16 +1221,25 @@ pub const Parser = struct {
             return try self.ast.addPointerType(inner, is_mutable, true, start_pos, end_pos);
         }
         if (self.check(.left_bracket)) {
-            return try self.parseArrayType();
+            return try self.parseArrayOrSliceType();
         }
         return try self.parseIdentifier();
     }
 
-    fn parseArrayType(self: *Parser) ParseError!NodeIndex {
+    fn parseArrayOrSliceType(self: *Parser) ParseError!NodeIndex {
         const start_pos = self.currentStart();
 
         // consume [
         try self.expectToken(.left_bracket, .unexpected_token);
+
+        // check for slice type: []T (no length between brackets)
+        if (self.check(.right_bracket)) {
+            self.advance(); // consume ]
+            const is_mutable = self.match(.mut);
+            const element_type = try self.parseType();
+            const end_pos = self.previousEnd();
+            return try self.ast.addSliceType(element_type, is_mutable, start_pos, end_pos);
+        }
 
         // parse length (number literal, or '_' for inferred)
         const length_token = self.peek() orelse {

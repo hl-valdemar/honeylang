@@ -268,6 +268,21 @@ fn printInstruction(inst: *const MInst) void {
                 widthStr(s.width), s.base, s.index, s.value, s.array_idx,
             });
         },
+        .alloca_slice_local => |a| {
+            std.debug.print("alloca_slice_local [fp{d}]", .{a.offset});
+        },
+        .slice_get_ptr => |s| {
+            std.debug.print("slice_get_ptr v{d}, v{d}", .{ s.dst, s.base });
+        },
+        .slice_get_len => |s| {
+            std.debug.print("slice_get_len v{d}, v{d}", .{ s.dst, s.base });
+        },
+        .make_slice => |s| {
+            std.debug.print("make_slice v{d}, ptr=v{d}, len=v{d}", .{ s.dst, s.ptr_val, s.len_val });
+        },
+        .slice_elem_ptr => |s| {
+            std.debug.print("slice_elem_ptr v{d}, v{d}[v{d}] ({s})", .{ s.dst, s.data_ptr, s.index, s.elem_llvm_type });
+        },
     }
 }
 

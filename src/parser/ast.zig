@@ -35,6 +35,7 @@ pub const NodeKind = enum {
     // type expressions
     pointer_type,
     array_type,
+    slice_type,
 
     // array expressions
     array_literal,
@@ -272,6 +273,11 @@ pub const ArrayType = struct {
     is_mutable: bool,
 };
 
+pub const SliceType = struct {
+    element_type: NodeIndex,
+    is_mutable: bool,
+};
+
 pub const ArrayLiteral = struct {
     elements: Range,
 };
@@ -320,6 +326,7 @@ pub const Ast = struct {
     derefs: std.ArrayList(Deref),
     pointer_types: std.ArrayList(PointerType),
     array_types: std.ArrayList(ArrayType),
+    slice_types: std.ArrayList(SliceType),
     array_literals: std.ArrayList(ArrayLiteral),
     array_indices: std.ArrayList(ArrayIndex),
     errors: std.ArrayList(Error),
@@ -364,6 +371,7 @@ pub const Ast = struct {
             .derefs = try std.ArrayList(Deref).initCapacity(allocator, capacity),
             .pointer_types = try std.ArrayList(PointerType).initCapacity(allocator, capacity),
             .array_types = try std.ArrayList(ArrayType).initCapacity(allocator, capacity),
+            .slice_types = try std.ArrayList(SliceType).initCapacity(allocator, capacity),
             .array_literals = try std.ArrayList(ArrayLiteral).initCapacity(allocator, capacity),
             .array_indices = try std.ArrayList(ArrayIndex).initCapacity(allocator, capacity),
             .errors = try std.ArrayList(Error).initCapacity(allocator, capacity),
@@ -403,6 +411,7 @@ pub const Ast = struct {
         self.derefs.deinit(self.allocator);
         self.pointer_types.deinit(self.allocator);
         self.array_types.deinit(self.allocator);
+        self.slice_types.deinit(self.allocator);
         self.array_literals.deinit(self.allocator);
         self.array_indices.deinit(self.allocator);
         self.errors.deinit(self.allocator);
@@ -985,6 +994,28 @@ pub const Ast = struct {
         return node_idx;
     }
 
+    pub fn addSliceType(
+        self: *Ast,
+        element_type: NodeIndex,
+        is_mutable: bool,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.slice_types.items.len);
+
+        try self.kinds.append(self.allocator, .slice_type);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.slice_types.append(self.allocator, .{
+            .element_type = element_type,
+            .is_mutable = is_mutable,
+        });
+
+        return node_idx;
+    }
+
     pub fn addArrayLiteral(
         self: *Ast,
         elements: Range,
@@ -1237,6 +1268,12 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .array_type);
         const data_idx = self.data_indices.items[idx];
         return self.array_types.items[data_idx];
+    }
+
+    pub fn getSliceType(self: *const Ast, idx: NodeIndex) SliceType {
+        std.debug.assert(self.kinds.items[idx] == .slice_type);
+        const data_idx = self.data_indices.items[idx];
+        return self.slice_types.items[data_idx];
     }
 
     pub fn getArrayLiteral(self: *const Ast, idx: NodeIndex) ArrayLiteral {

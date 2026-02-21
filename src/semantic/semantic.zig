@@ -1133,6 +1133,11 @@ pub const SemanticContext = struct {
                 const length = arr.length orelse return null; // [_]T needs context to resolve
                 return self.types.addArrayType(element_type, length, arr.is_mutable) catch return null;
             },
+            .slice_type => {
+                const slc = self.ast.getSliceType(node_idx);
+                const element_type = self.resolveTypeNode(slc.element_type) orelse return null;
+                return self.types.addSliceType(element_type, slc.is_mutable) catch return null;
+            },
             else => null,
         };
     }
@@ -2708,6 +2713,22 @@ pub const SemanticContext = struct {
                     .end = field_token.start + field_token.len,
                 });
                 return null;
+            } else if (ot.isSlice()) {
+                // slice built-in properties: .len
+                const field_ident = self.ast.getIdentifier(access.field);
+                const field_token = self.tokens.items[field_ident.token_idx];
+                const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+                if (mem.eql(u8, field_name, "len")) {
+                    return TypeId.i64;
+                }
+
+                try self.errors.add(.{
+                    .kind = .no_such_field,
+                    .start = field_token.start,
+                    .end = field_token.start + field_token.len,
+                });
+                return null;
             } else if (!ot.isUnresolved()) {
                 // dot access on non-struct/non-namespace
                 try self.errors.add(.{
@@ -2905,11 +2926,15 @@ pub const SemanticContext = struct {
             }
         }
 
-        // object must be an array type
+        // object must be an array or slice type
         if (obj_type) |ot| {
             if (ot.isArray()) {
                 if (self.types.getArrayType(ot)) |arr_info| {
                     return arr_info.element_type;
+                }
+            } else if (ot.isSlice()) {
+                if (self.types.getSliceType(ot)) |slice_info| {
+                    return slice_info.element_type;
                 }
             } else if (!ot.isUnresolved()) {
                 try self.errors.add(.{
@@ -2963,6 +2988,20 @@ pub const SemanticContext = struct {
             // expected mutable, got immutable — not OK
             if (la.is_mutable and !ra.is_mutable) return false;
             return self.typesCompatible(la.element_type, ra.element_type);
+        }
+
+        // array → slice coercion: [N]T is compatible with []T
+        if (right.isArray() and left.isSlice()) {
+            const arr = self.types.getArrayType(right) orelse return false;
+            const slc = self.types.getSliceType(left) orelse return false;
+            return self.typesCompatible(slc.element_type, arr.element_type);
+        }
+
+        // slice types: structural comparison
+        if (left.isSlice() and right.isSlice()) {
+            const ls = self.types.getSliceType(left) orelse return false;
+            const rs = self.types.getSliceType(right) orelse return false;
+            return self.typesCompatible(ls.element_type, rs.element_type);
         }
 
         // use structural equality

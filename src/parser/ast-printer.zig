@@ -238,6 +238,7 @@ fn getNodeInfo(
             else
                 "[_]";
         },
+        .slice_type => "[]",
         .array_literal => blk: {
             const arr = ast.getArrayLiteral(idx);
             break :blk std.fmt.bufPrint(&S.buf, "elements: {d}", .{arr.elements.len}) catch "?";
@@ -802,6 +803,15 @@ fn printNode(
             printNode(ast, tokens, src, ai.index, idx_prefix, true);
         },
 
+        .slice_type => {
+            const slc = ast.getSliceType(idx);
+            if (slc.is_mutable)
+                std.debug.print("slice_type: []mut\n", .{})
+            else
+                std.debug.print("slice_type: []\n", .{});
+            printNode(ast, tokens, src, slc.element_type, child_prefix, true);
+        },
+
         .err => {
             const err_data = ast.getError(idx);
             std.debug.print("error: {s}\n", .{err_data.msg});
@@ -840,6 +850,14 @@ fn printTypeValue(
             }
         }
         printTypeValue(ast, tokens, src, arr.element_type);
+    } else if (ast.getKind(idx) == .slice_type) {
+        const slc = ast.getSliceType(idx);
+        if (slc.is_mutable) {
+            std.debug.print("[]mut ", .{});
+        } else {
+            std.debug.print("[]", .{});
+        }
+        printTypeValue(ast, tokens, src, slc.element_type);
     } else {
         printIdentifierValue(ast, tokens, src, idx);
     }

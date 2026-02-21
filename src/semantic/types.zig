@@ -49,6 +49,7 @@ pub const StructTypeIndex = u32;
 pub const PointerTypeIndex = u32;
 pub const NamespaceTypeIndex = u32;
 pub const ArrayTypeIndex = u32;
+pub const SliceTypeIndex = u32;
 
 pub const TypeId = union(enum) {
     /// Type could not be determined, will trap at runtime
@@ -71,6 +72,9 @@ pub const TypeId = union(enum) {
 
     /// Array type, index into TypeRegistry.array_types
     array: ArrayTypeIndex,
+
+    /// Slice type, index into TypeRegistry.slice_types
+    slice: SliceTypeIndex,
 
     pub const @"void": TypeId = .{ .primitive = .void };
     pub const @"bool": TypeId = .{ .primitive = .bool };
@@ -152,6 +156,10 @@ pub const TypeId = union(enum) {
         return self == .array;
     }
 
+    pub fn isSlice(self: TypeId) bool {
+        return self == .slice;
+    }
+
     pub fn eql(self: TypeId, other: TypeId) bool {
         return std.meta.eql(self, other);
     }
@@ -190,6 +198,11 @@ pub const ArrayTypeInfo = struct {
     is_mutable: bool,
 };
 
+pub const SliceTypeInfo = struct {
+    element_type: TypeId,
+    is_mutable: bool,
+};
+
 pub const NamespaceMember = struct {
     name: []const u8,
     symbol_idx: @import("symbols.zig").SymbolIndex,
@@ -209,6 +222,7 @@ pub const TypeRegistry = struct {
     pointer_types: std.ArrayList(PointerTypeInfo),
     namespace_types: std.ArrayList(NamespaceType),
     array_types: std.ArrayList(ArrayTypeInfo),
+    slice_types: std.ArrayList(SliceTypeInfo),
     arena: std.heap.ArenaAllocator,
 
     pub fn init(allocator: mem.Allocator) !TypeRegistry {
@@ -219,6 +233,7 @@ pub const TypeRegistry = struct {
             .pointer_types = try std.ArrayList(PointerTypeInfo).initCapacity(allocator, 4),
             .namespace_types = try std.ArrayList(NamespaceType).initCapacity(allocator, 4),
             .array_types = try std.ArrayList(ArrayTypeInfo).initCapacity(allocator, 4),
+            .slice_types = try std.ArrayList(SliceTypeInfo).initCapacity(allocator, 4),
             .arena = std.heap.ArenaAllocator.init(allocator),
         };
     }
@@ -229,6 +244,7 @@ pub const TypeRegistry = struct {
         self.pointer_types.deinit(self.allocator);
         self.namespace_types.deinit(self.allocator);
         self.array_types.deinit(self.allocator);
+        self.slice_types.deinit(self.allocator);
         self.arena.deinit();
     }
 
@@ -490,6 +506,30 @@ pub const TypeRegistry = struct {
         };
     }
 
+    /// Register a slice type and return a TypeId for it.
+    /// Deduplicates: returns existing TypeId if an identical slice type exists.
+    pub fn addSliceType(self: *TypeRegistry, element_type: TypeId, is_mutable: bool) !TypeId {
+        for (self.slice_types.items, 0..) |existing, i| {
+            if (existing.element_type.eql(element_type) and existing.is_mutable == is_mutable) {
+                return .{ .slice = @intCast(i) };
+            }
+        }
+        const idx: SliceTypeIndex = @intCast(self.slice_types.items.len);
+        try self.slice_types.append(self.allocator, .{
+            .element_type = element_type,
+            .is_mutable = is_mutable,
+        });
+        return .{ .slice = idx };
+    }
+
+    /// Get the slice type info for a given TypeId.
+    pub fn getSliceType(self: *const TypeRegistry, type_id: TypeId) ?SliceTypeInfo {
+        return switch (type_id) {
+            .slice => |idx| self.slice_types.items[idx],
+            else => null,
+        };
+    }
+
     /// Get the namespace type for a given TypeId.
     pub fn getNamespaceType(self: *const TypeRegistry, type_id: TypeId) ?NamespaceType {
         return switch (type_id) {
@@ -518,6 +558,7 @@ pub fn sizeOf(type_id: TypeId, types: *const TypeRegistry) u32 {
             const info = types.array_types.items[idx];
             return info.length * sizeOf(info.element_type, types);
         },
+        .slice => 16, // fat pointer: ptr (8) + len (8)
     };
 }
 
@@ -540,6 +581,7 @@ pub fn alignmentOf(type_id: TypeId, types: *const TypeRegistry) u32 {
             const info = types.array_types.items[idx];
             return alignmentOf(info.element_type, types);
         },
+        .slice => 8, // pointer alignment
     };
 }
 
