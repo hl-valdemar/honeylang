@@ -463,6 +463,127 @@ test "no implicit array-to-slice coercion in variable declaration" {
     try r.expectSemanticError(.type_mismatch);
 }
 
+// ============================================================
+// correct programs: mutable slice element assignment
+// ============================================================
+
+test "mutable slice element assignment" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\    arr: [3]mut i32 = [10, 20, 30]
+        \\    s: []mut i32 = arr[..]
+        \\    s[0] = 42
+        \\    return s[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "mutable slice compound assignment" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\    arr: [3]mut i32 = [1, 2, 3]
+        \\    s: []mut i32 = arr[..]
+        \\    s[0] += 10
+        \\    return s[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "codegen mutable slice element store" {
+    var r = try compileTo(.codegen,
+        \\main :: func() i32 {
+        \\    arr: [3]mut i32 = [10, 20, 30]
+        \\    s: []mut i32 = arr[..]
+        \\    s[0] = 42
+        \\    return s[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    // slice element store goes through GEP into data
+    try r.expectLLVMContains("getelementptr inbounds i32");
+    try r.expectLLVMContains("store i32");
+}
+
+// ============================================================
+// semantic errors: mutable slice element assignment
+// ============================================================
+
+test "assign to immutable slice element" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\    arr: [3]i32 = [1, 2, 3]
+        \\    s: []i32 = arr[..]
+        \\    s[0] = 10
+        \\    return s[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.assign_to_immutable_element);
+}
+
+test "compound assign to immutable slice element" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\    arr: [3]i32 = [1, 2, 3]
+        \\    s: []i32 = arr[..]
+        \\    s[0] += 10
+        \\    return s[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.assign_to_immutable_element);
+}
+
+// ============================================================
+// slice mutability coercion
+// ============================================================
+
+test "mutable slice passed where immutable expected (tightening)" {
+    var r = try compileTo(.semantic,
+        \\read_first :: func(data: []i32) i32 {
+        \\    return data[0]
+        \\}
+        \\main :: func() i32 {
+        \\    arr: [3]mut i32 = [1, 2, 3]
+        \\    s: []mut i32 = arr[..]
+        \\    return read_first(s)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "immutable slice passed where mutable expected (loosening rejected)" {
+    var r = try compileTo(.semantic,
+        \\write_first :: func(data: []mut i32) void {
+        \\    data[0] = 42
+        \\}
+        \\main :: func() void {
+        \\    arr: [3]i32 = [1, 2, 3]
+        \\    s: []i32 = arr[..]
+        \\    write_first(s)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.argument_type_mismatch);
+}
+
+// ============================================================
+// other semantic errors: slices
+// ============================================================
+
 test "type mismatch: passing wrong type where slice expected" {
     var r = try compileTo(.semantic,
         \\sum :: func(data: []i32) i32 {

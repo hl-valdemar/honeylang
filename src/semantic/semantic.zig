@@ -2067,12 +2067,24 @@ pub const SemanticContext = struct {
                 }
             }
 
-            // check array element mutability
+            // check array/slice element mutability
             const idx_node = self.ast.getArrayIndex(assign.target);
             if (self.node_types.get(idx_node.object)) |obj_type| {
                 if (obj_type.isArray()) {
                     if (self.types.getArrayType(obj_type)) |arr_info| {
                         if (!arr_info.is_mutable) {
+                            try self.errors.add(.{
+                                .kind = .assign_to_immutable_element,
+                                .start = loc.start,
+                                .end = loc.end,
+                            });
+                            try self.node_types.put(self.allocator, node_idx, .unresolved);
+                            return;
+                        }
+                    }
+                } else if (obj_type.isSlice()) {
+                    if (self.types.getSliceType(obj_type)) |slice_info| {
+                        if (!slice_info.is_mutable) {
                             try self.errors.add(.{
                                 .kind = .assign_to_immutable_element,
                                 .start = loc.start,
@@ -3078,10 +3090,12 @@ pub const SemanticContext = struct {
             return self.typesCompatible(la.element_type, ra.element_type);
         }
 
-        // slice types: structural comparison
+        // slice types: structural comparison with mutability check
         if (left.isSlice() and right.isSlice()) {
             const ls = self.types.getSliceType(left) orelse return false;
             const rs = self.types.getSliceType(right) orelse return false;
+            // expected mutable, got immutable — not OK
+            if (ls.is_mutable and !rs.is_mutable) return false;
             return self.typesCompatible(ls.element_type, rs.element_type);
         }
 

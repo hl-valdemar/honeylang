@@ -1972,8 +1972,25 @@ pub const CodeGenContext = struct {
         // generate the index
         const index_reg = try self.generateExpression(idx_node.index) orelse return;
 
-        // get array type
+        // get object type
         const obj_type = self.node_types.get(idx_node.object) orelse return;
+
+        if (obj_type.isSlice()) {
+            const slice_info = self.types.getSliceType(obj_type) orelse return;
+            const elem_llvm_type = typeIdToLLVMTypeStr(slice_info.element_type, self.target);
+            const elem_width = typeIdToWidth(slice_info.element_type, self.target);
+
+            // bounds check: index < slice.len
+            const len_reg = try func.emitSliceGetLen(base_reg);
+            try self.emitBoundsCheck(index_reg, len_reg);
+
+            // store through slice: get data ptr, GEP to element, store
+            const data_ptr = try func.emitSliceGetPtr(base_reg);
+            const elem_ptr = try func.emitSliceElemPtr(data_ptr, index_reg, elem_llvm_type);
+            try func.emitStorePtr(elem_ptr, value_reg, elem_width);
+            return;
+        }
+
         if (obj_type != .array) return;
 
         const array_idx = obj_type.array;
