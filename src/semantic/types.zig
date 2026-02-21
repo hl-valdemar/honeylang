@@ -3,6 +3,14 @@ const mem = std.mem;
 
 const CallingConvention = @import("../parser/ast.zig").CallingConvention;
 
+/// Target-dependent constants for pointer-sized types (usize, slice layout).
+/// Change these when adding 32-bit target support.
+pub const target = struct {
+    pub const ptr_size: u32 = 8; // 4 on 32-bit
+    pub const ptr_align: u32 = 8; // 4 on 32-bit
+    pub const ptr_llvm_type: []const u8 = "i64"; // "i32" on 32-bit
+};
+
 pub const PrimitiveType = enum(u8) {
     void,
     bool,
@@ -17,10 +25,11 @@ pub const PrimitiveType = enum(u8) {
     f16,
     f32,
     f64,
+    usize,
 
     pub fn isInteger(self: PrimitiveType) bool {
         return switch (self) {
-            .u8, .u16, .u32, .u64, .i8, .i16, .i32, .i64 => true,
+            .u8, .u16, .u32, .u64, .i8, .i16, .i32, .i64, .usize => true,
             else => false,
         };
     }
@@ -89,6 +98,7 @@ pub const TypeId = union(enum) {
     pub const @"f16": TypeId = .{ .primitive = .f16 };
     pub const @"f32": TypeId = .{ .primitive = .f32 };
     pub const @"f64": TypeId = .{ .primitive = .f64 };
+    pub const @"usize": TypeId = .{ .primitive = .usize };
 
     pub fn isUnresolved(self: TypeId) bool {
         return self == .unresolved;
@@ -548,6 +558,7 @@ pub fn sizeOf(type_id: TypeId, types: *const TypeRegistry) u32 {
             .u16, .i16, .f16 => 2,
             .u32, .i32, .f32 => 4,
             .u64, .i64, .f64 => 8,
+            .usize => target.ptr_size,
         },
         .unresolved => 4, // fallback
         .function => 8, // pointer-sized
@@ -558,7 +569,7 @@ pub fn sizeOf(type_id: TypeId, types: *const TypeRegistry) u32 {
             const info = types.array_types.items[idx];
             return info.length * sizeOf(info.element_type, types);
         },
-        .slice => 16, // fat pointer: ptr (8) + len (8)
+        .slice => 2 * target.ptr_size, // fat pointer: ptr + usize len
     };
 }
 
@@ -571,6 +582,7 @@ pub fn alignmentOf(type_id: TypeId, types: *const TypeRegistry) u32 {
             .u16, .i16, .f16 => 2,
             .u32, .i32, .f32 => 4,
             .u64, .i64, .f64 => 8,
+            .usize => target.ptr_align,
         },
         .unresolved => 4,
         .function => 8,

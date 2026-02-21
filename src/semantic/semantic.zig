@@ -1196,6 +1196,7 @@ pub const SemanticContext = struct {
             .{ "f16", TypeId.f16 },
             .{ "f32", TypeId.f32 },
             .{ "f64", TypeId.f64 },
+            .{ "usize", TypeId.usize },
         });
         return type_map.get(name);
     }
@@ -2720,7 +2721,23 @@ pub const SemanticContext = struct {
                 const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
 
                 if (mem.eql(u8, field_name, "len")) {
-                    return TypeId.i64;
+                    return TypeId.usize;
+                }
+
+                try self.errors.add(.{
+                    .kind = .no_such_field,
+                    .start = field_token.start,
+                    .end = field_token.start + field_token.len,
+                });
+                return null;
+            } else if (ot.isArray()) {
+                // array built-in properties: .len
+                const field_ident = self.ast.getIdentifier(access.field);
+                const field_token = self.tokens.items[field_ident.token_idx];
+                const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+                if (mem.eql(u8, field_name, "len")) {
+                    return TypeId.usize;
                 }
 
                 try self.errors.add(.{

@@ -26,6 +26,7 @@ X :: 42  # inline comment
 | `i8`, `i16`, `i32`, `i64` | Signed integers |
 | `u8`, `u16`, `u32`, `u64` | Unsigned integers |
 | `f16`, `f32`, `f64` | Floating-point numbers |
+| `usize` | Pointer-sized unsigned integer (u64 on 64-bit, u32 on 32-bit) |
 | `bool` | Boolean (`true` / `false`) |
 | `void` | No value |
 
@@ -452,6 +453,24 @@ arr[0] = 5
 
 Size inference only applies to declarations with an immediate array literal assignment.
 
+### `.len` Property
+
+Every array has a `.len` property that returns the number of elements as `usize`. This is a compile-time constant — no runtime overhead:
+
+```honey
+main :: func() usize {
+    arr: [3]i32 = [1, 2, 3]
+    return arr.len        # 3
+}
+```
+
+Works with inferred-size arrays:
+
+```honey
+arr: [_]i32 = [10, 20, 30]
+n := arr.len              # 3
+```
+
 ### Indexing
 
 Access elements with `arr[index]`. The index must be an integer type:
@@ -556,10 +575,10 @@ get :: func(data: []i32) i32 {
 
 ### `.len` Property
 
-Every slice has a `.len` property that returns the number of elements as `i64`:
+Every slice has a `.len` property that returns the number of elements as `usize`:
 
 ```honey
-length :: func(data: []i32) i64 {
+length :: func(data: []i32) usize {
     return data.len
 }
 ```
@@ -836,7 +855,8 @@ main :: func() i32 {
 - **Honey calling convention:** `fastcc` with honey-specific name mangling
 - **C calling convention:** Standard C ABI
 - **Struct passing:** by-value uses `byval`, returns use `sret`
-- **Slice representation:** `{ ptr, i64 }` fat pointer, passed with `byval(%slice)`
+- **Slice representation:** `{ ptr, usize }` fat pointer, passed with `byval(%slice)`
+- **`usize` mapping:** `i64` on 64-bit targets, `i32` on 32-bit (controlled by target constants in `types.zig`)
 - **Bool representation:** `i8` (0 or 1)
 - **Float operations:** Native LLVM float instructions (`fadd`, `fsub`, `fmul`, `fdiv`)
 - **Comparison:** Correct signed (`sgt`, `slt`, ...) vs unsigned (`ugt`, `ult`, ...) predicates

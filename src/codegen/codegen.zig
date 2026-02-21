@@ -1331,6 +1331,7 @@ pub const CodeGenContext = struct {
                 .u32, .i32 => "i32",
                 .f32 => "float",
                 .u64, .i64 => "i64",
+                .usize => types_mod.target.ptr_llvm_type,
                 .f64 => "double",
             },
             .struct_type, .pointer, .array, .slice => "ptr",
@@ -1349,7 +1350,7 @@ pub const CodeGenContext = struct {
                 .bool, .i8, .u8 => .w8,
                 .i16, .u16 => .w16,
                 .i32, .u32 => .w32,
-                .i64, .u64 => .w64,
+                .i64, .u64, .usize => .w64,
                 .f16 => .wf16,
                 .f32 => .wf32,
                 .f64 => .wf64,
@@ -1407,7 +1408,7 @@ pub const CodeGenContext = struct {
                 const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
                 return try func.emitMovImm(val, .w32);
             },
-            .i64, .u64 => {
+            .i64, .u64, .usize => {
                 const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
                 return try func.emitMovImm(val, .w64);
             },
@@ -1672,6 +1673,18 @@ pub const CodeGenContext = struct {
             if (mem.eql(u8, field_name, "len")) {
                 const base_reg = try self.generateExpression(access.object) orelse return null;
                 return try func.emitSliceGetLen(base_reg);
+            }
+            return null;
+        }
+
+        // array .len access (compile-time constant)
+        if (object_type.isArray()) {
+            const field_ident = self.ast.getIdentifier(access.field);
+            const field_token = self.tokens.items[field_ident.token_idx];
+            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+            if (mem.eql(u8, field_name, "len")) {
+                const arr_info = self.types.getArrayType(object_type) orelse return null;
+                return try func.emitMovImm(@intCast(arr_info.length), .w64);
             }
             return null;
         }

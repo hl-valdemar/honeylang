@@ -468,3 +468,59 @@ test "comptime f32 array constant" {
     try r.expectNoErrors();
     try r.expectLLVMContains("@VALS = constant [2 x float]");
 }
+
+// ============================================================
+// correct programs: array .len property
+// ============================================================
+
+test "array .len semantic" {
+    var r = try compileTo(.semantic,
+        \\main :: func() usize {
+        \\    arr: [3]i32 = [1, 2, 3]
+        \\    return arr.len
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "array .len with inferred size" {
+    var r = try compileTo(.semantic,
+        \\main :: func() usize {
+        \\    arr: [_]i32 = [10, 20, 30]
+        \\    return arr.len
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "array .len wrong property name" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\    arr: [3]i32 = [1, 2, 3]
+        \\    return arr.foo
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.no_such_field);
+}
+
+test "codegen array .len emits immediate" {
+    var r = try compileTo(.codegen,
+        \\main :: func() usize {
+        \\    arr: [5]i32 = [1, 2, 3, 4, 5]
+        \\    return arr.len
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    // array .len should NOT emit a GEP into a fat pointer (it's a constant)
+    // It should emit the array length as an immediate value
+    const cg = r.codegen orelse return error.TestExpectedEqual;
+    try std.testing.expect(std.mem.indexOf(u8, cg.output, "getelementptr inbounds { ptr,") == null);
+}

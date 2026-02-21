@@ -15,8 +15,9 @@ const codegen = @import("codegen.zig");
 const Target = codegen.Target;
 
 const CallingConvention = @import("../parser/ast.zig").CallingConvention;
-const TypeRegistry = @import("../semantic/types.zig").TypeRegistry;
-const TypeId = @import("../semantic/types.zig").TypeId;
+const types_mod = @import("../semantic/types.zig");
+const TypeRegistry = types_mod.TypeRegistry;
+const TypeId = types_mod.TypeId;
 
 /// Lower MIR module to LLVM IR text format.
 pub fn lower(allocator: mem.Allocator, module: *const MIRModule, types: *const TypeRegistry, target: Target) ![]const u8 {
@@ -34,7 +35,7 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule, types: *const T
 
     // emit slice type definition if any slice types are registered
     if (types.slice_types.items.len > 0 or hasSliceParams(module)) {
-        try emitter.raw("%slice = type { ptr, i64 }");
+        try emitter.appendFmt("%slice = type {{ ptr, {s} }}", .{types_mod.target.ptr_llvm_type});
         try emitter.newline();
     }
 
@@ -729,50 +730,55 @@ fn lowerInst(
         },
 
         .alloca_slice_local => |op| {
+            const usize_t = types_mod.target.ptr_llvm_type;
             const alloca_id = alloca_map.getOrCreate(op.offset);
-            try emitter.appendFmt("  %local.{d} = alloca {{ ptr, i64 }}\n", .{alloca_id});
+            try emitter.appendFmt("  %local.{d} = alloca {{ ptr, {s} }}\n", .{ alloca_id, usize_t });
             alloca_map.markEmitted(op.offset);
         },
 
         .slice_get_ptr => |op| {
+            const usize_t = types_mod.target.ptr_llvm_type;
             const base_ssa = ssa_map.get(op.base);
             const gep_ssa = ssa_map.next_ssa;
             ssa_map.next_ssa += 1;
-            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, i64 }}, ptr %{d}, i32 0, i32 0\n", .{ gep_ssa, base_ssa });
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, {s} }}, ptr %{d}, i32 0, i32 0\n", .{ gep_ssa, usize_t, base_ssa });
             const dst_ssa = ssa_map.allocFor(op.dst);
             try emitter.appendFmt("  %{d} = load ptr, ptr %gep.{d}\n", .{ dst_ssa, gep_ssa });
         },
 
         .slice_get_len => |op| {
+            const usize_t = types_mod.target.ptr_llvm_type;
             const base_ssa = ssa_map.get(op.base);
             const gep_ssa = ssa_map.next_ssa;
             ssa_map.next_ssa += 1;
-            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, i64 }}, ptr %{d}, i32 0, i32 1\n", .{ gep_ssa, base_ssa });
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, {s} }}, ptr %{d}, i32 0, i32 1\n", .{ gep_ssa, usize_t, base_ssa });
             const dst_ssa = ssa_map.allocFor(op.dst);
-            try emitter.appendFmt("  %{d} = load i64, ptr %gep.{d}\n", .{ dst_ssa, gep_ssa });
+            try emitter.appendFmt("  %{d} = load {s}, ptr %gep.{d}\n", .{ dst_ssa, usize_t, gep_ssa });
         },
 
         .make_slice => |op| {
+            const usize_t = types_mod.target.ptr_llvm_type;
             const dst_ssa = ssa_map.get(op.dst);
             const ptr_ssa = ssa_map.get(op.ptr_val);
             const len_ssa = ssa_map.get(op.len_val);
             // store ptr field
             const ptr_gep = ssa_map.next_ssa;
             ssa_map.next_ssa += 1;
-            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, i64 }}, ptr %{d}, i32 0, i32 0\n", .{ ptr_gep, dst_ssa });
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, {s} }}, ptr %{d}, i32 0, i32 0\n", .{ ptr_gep, usize_t, dst_ssa });
             try emitter.appendFmt("  store ptr %{d}, ptr %gep.{d}\n", .{ ptr_ssa, ptr_gep });
             // store len field
             const len_gep = ssa_map.next_ssa;
             ssa_map.next_ssa += 1;
-            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, i64 }}, ptr %{d}, i32 0, i32 1\n", .{ len_gep, dst_ssa });
-            try emitter.appendFmt("  store i64 %{d}, ptr %gep.{d}\n", .{ len_ssa, len_gep });
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, {s} }}, ptr %{d}, i32 0, i32 1\n", .{ len_gep, usize_t, dst_ssa });
+            try emitter.appendFmt("  store {s} %{d}, ptr %gep.{d}\n", .{ usize_t, len_ssa, len_gep });
         },
 
         .slice_elem_ptr => |op| {
+            const usize_t = types_mod.target.ptr_llvm_type;
             const data_ssa = ssa_map.get(op.data_ptr);
             const index_ssa = ssa_map.get(op.index);
             const dst_ssa = ssa_map.allocFor(op.dst);
-            try emitter.appendFmt("  %{d} = getelementptr inbounds {s}, ptr %{d}, i64 %{d}\n", .{ dst_ssa, op.elem_llvm_type, data_ssa, index_ssa });
+            try emitter.appendFmt("  %{d} = getelementptr inbounds {s}, ptr %{d}, {s} %{d}\n", .{ dst_ssa, op.elem_llvm_type, data_ssa, usize_t, index_ssa });
         },
 
         .ptr_offset => |op| {
@@ -845,6 +851,7 @@ fn typeIdToLLVMType(type_id: TypeId) []const u8 {
             .u32, .i32 => "i32",
             .f32 => "float",
             .u64, .i64 => "i64",
+            .usize => types_mod.target.ptr_llvm_type,
             .f64 => "double",
         },
         .struct_type => "ptr", // nested struct fields are pointers

@@ -2,7 +2,7 @@ first :: func(data: []i32) i32 {
     return data[0]
 }
 
-get_len :: func(data: []i32) i64 {
+get_len :: func(data: []i32) usize {
     return data.len
 }
 

@@ -42,10 +42,10 @@ test "slice parameter with i64 elements" {
 
 test "slice .len property" {
     var r = try compileTo(.semantic,
-        \\length :: func(data: []i32) i64 {
+        \\length :: func(data: []i32) usize {
         \\    return data.len
         \\}
-        \\main :: func() i64 {
+        \\main :: func() usize {
         \\    arr: [5]i32 = [1, 2, 3, 4, 5]
         \\    return length(arr)
         \\}
@@ -183,10 +183,10 @@ test "codegen slice indexing extracts data pointer and GEPs" {
 
 test "codegen slice .len extracts length field" {
     var r = try compileTo(.codegen,
-        \\length :: func(data: []i32) i64 {
+        \\length :: func(data: []i32) usize {
         \\    return data.len
         \\}
-        \\main :: func() i64 {
+        \\main :: func() usize {
         \\    arr: [3]i32 = [1, 2, 3]
         \\    return length(arr)
         \\}
