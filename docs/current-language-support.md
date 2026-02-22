@@ -193,7 +193,7 @@ x / y    # division
 
 ```honey
 X :: -42       # negation
-not flag       # logical not (bool only)
+!flag          # logical not (bool only)
 ```
 
 ### Comparison
@@ -216,7 +216,7 @@ Operands must be `bool` — no implicit truthiness:
 ```honey
 a and b
 a or b
-not a
+!a
 ```
 
 ### Compound Assignment
@@ -397,6 +397,13 @@ All fields must be provided with named initialization:
 
 ```honey
 p := Point{ .x = 3, .y = 4 }
+```
+
+Compile-time constant struct literals use `::` and are emitted as global constants:
+
+```honey
+BLACK :: Color { .r = 0, .g = 0, .b = 0, .a = 255 }
+ORIGIN :: Vec2 { .x = 0, .y = 0 }
 ```
 
 ### Field Access
@@ -1208,7 +1215,7 @@ The compiler detects errors at each phase and continues processing.
 | Error | Example |
 | ----- | ------- |
 | `arithmetic_op_requires_numeric` | `true + false` |
-| `logical_op_requires_bool` | `1 and 2`, `not 1` |
+| `logical_op_requires_bool` | `1 and 2`, `!1` |
 
 **Scoping:**
 

@@ -99,7 +99,7 @@ PersonInfo :: struct {
 
 ## Logical Operators and Comparators
 
-Logical operators in the Honey language include `not`, `and`, and `or`, while `<`, `>`, `<=`, `>=`, `==`, and `!=` comprise the comparison operators.
+Logical operators in the Honey language include `!`, `and`, and `or`, while `<`, `>`, `<=`, `>=`, `==`, and `!=` comprise the comparison operators.
 
 ## Comptime vs Runtime
 
