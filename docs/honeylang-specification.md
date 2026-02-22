@@ -844,19 +844,35 @@ main :: func() void {
 
 ### Struct Field Access Through Pointers
 
+Pointers to structs are automatically dereferenced on field access — no explicit `^` is needed:
+
 ```honey
 Buffer :: struct {
-    data: *mut u8,      # many-item pointer to buffer data
+    data: *mut u8,
     len: u64,
 }
 
 main :: func() void {
     mut buf: Buffer = ...
-    ptr: @mut Buffer = &buf   # single-item pointer to one Buffer
-    data := ptr^.data         # dereference then access field
-    ptr^.len = 100            # modify field through pointer
+    ptr: @mut Buffer = &buf
+
+    data := ptr.data          # auto-deref: same as ptr^.data
+    ptr.len = 100             # auto-deref: same as ptr^.len = 100
 }
 ```
+
+This works through multiple layers of pointers and nested structs:
+
+```honey
+Inner :: struct { value: i32 }
+Outer :: struct { inner: Inner }
+
+get_value :: func(p: @Outer) i32 {
+    return p.inner.value      # auto-derefs p, then accesses inner.value
+}
+```
+
+Explicit dereference (`ptr^.field`) still works and is equivalent. Mutability is checked against the pointer type — writing through an immutable pointer (`@T`) is an error regardless of whether you write `p.x = 1` or `p^.x = 1`.
 
 ### Pointer Arithmetic
 

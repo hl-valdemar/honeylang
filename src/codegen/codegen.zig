@@ -1205,8 +1205,12 @@ pub const CodeGenContext = struct {
         // Generate the base object expression (produces a pointer)
         const base_reg = try self.generateExpression(access.object) orelse return;
 
-        // Get the object's type
-        const object_type = self.node_types.get(access.object) orelse return;
+        // Get the object's type, auto-deref pointer layers
+        var object_type = self.node_types.get(access.object) orelse return;
+        while (object_type.isPointer()) {
+            const ptr_info = self.types.getPointerType(object_type) orelse break;
+            object_type = ptr_info.pointee;
+        }
         if (object_type != .struct_type) return;
 
         const struct_idx = object_type.struct_type;
@@ -1929,13 +1933,21 @@ pub const CodeGenContext = struct {
             return null;
         }
 
-        if (object_type != .struct_type) return null;
+        // auto-deref: unwrap pointer layers to reach the struct type
+        var resolved_type = object_type;
+        while (resolved_type.isPointer()) {
+            const ptr_info = self.types.getPointerType(resolved_type) orelse break;
+            resolved_type = ptr_info.pointee;
+        }
 
-        // generate the base object expression (produces a pointer for struct types)
+        if (resolved_type != .struct_type) return null;
+
+        // generate the base object expression (produces a pointer for struct types;
+        // for pointer-to-struct, the pointer value already points to struct data)
         const base_reg = try self.generateExpression(access.object) orelse return null;
 
-        const struct_idx = object_type.struct_type;
-        const struct_type = self.types.getStructType(object_type) orelse return null;
+        const struct_idx = resolved_type.struct_type;
+        const struct_type = self.types.getStructType(resolved_type) orelse return null;
 
         // get field name — identifier for named fields, literal for tuple .0 .1
         const field_name = self.getFieldNameFromNode(access.field);
@@ -1992,7 +2004,12 @@ pub const CodeGenContext = struct {
             // &obj.field — GEP to the field without loading
             const access = self.ast.getFieldAccess(addr.operand);
             const base_reg = try self.generateExpression(access.object) orelse return null;
-            const object_type = self.node_types.get(access.object) orelse return null;
+            var object_type = self.node_types.get(access.object) orelse return null;
+            // auto-deref pointer layers
+            while (object_type.isPointer()) {
+                const ptr_info = self.types.getPointerType(object_type) orelse break;
+                object_type = ptr_info.pointee;
+            }
             if (object_type != .struct_type) return null;
 
             const struct_idx = object_type.struct_type;

@@ -1012,18 +1012,48 @@ p := &x
 p^ += 100
 ```
 
-### Pointer to Struct
+### Pointer to Struct (Auto-Deref)
+
+Pointers to structs are automatically dereferenced on field access — no explicit `^` needed:
 
 ```honey
-get_x :: func(p: @Point) i32 { return p^.x }
+get_x :: func(p: @Point) i32 { return p.x }
+
+set_x :: func(p: @mut Point, val: i32) void {
+    p.x = val
+}
 
 main :: func() i32 {
-    pt := Point{ .x = 7, .y = 3 }
+    mut pt := Point{ .x = 7, .y = 3 }
+    set_x(&pt, 42)
     return get_x(&pt)
 }
 ```
 
+Auto-deref works through nested structs:
+
+```honey
+Inner :: c struct { value: i32 }
+Outer :: c struct { inner: Inner }
+
+get_value :: func(p: @Outer) i32 {
+    return p.inner.value
+}
+```
+
+Writing through an immutable pointer (`@T`) is an error:
+
+```honey
+bad :: func(p: @Point) void {
+    p.x = 99    # ERROR: cannot assign through immutable pointer
+}
+```
+
+Explicit dereference (`p^.x`) still works and is equivalent.
+
 ### Address-of Struct Field
+
+Works with both direct structs and auto-deref through pointers:
 
 ```honey
 mut buf := Buf{ .a = 10, .b = 20 }

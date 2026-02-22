@@ -2099,19 +2099,49 @@ pub const SemanticContext = struct {
             // walk to root identifier to check mutability
             var current = assign.target;
             while (self.ast.getKind(current) == .field_access) {
-                const access = self.ast.getFieldAccess(current);
-                current = access.object;
+                const fa = self.ast.getFieldAccess(current);
+                current = fa.object;
             }
             if (self.ast.getKind(current) == .identifier) {
                 const ident = self.ast.getIdentifier(current);
                 const token = self.tokens.items[ident.token_idx];
                 const name = self.src.getSlice(token.start, token.start + token.len);
                 if (self.lookupLocalPtr(name)) |local| {
-                    is_mutable = local.is_mutable;
                     local.referenced = true;
+                    // if root is a pointer, check pointer mutability (auto-deref)
+                    if (local.type_id.isPointer()) {
+                        if (self.types.getPointerType(local.type_id)) |ptr_info| {
+                            is_mutable = ptr_info.is_mutable;
+                            if (!is_mutable) {
+                                try self.addError(.{
+                                    .kind = .assign_through_immutable_ptr,
+                                    .start = loc.start,
+                                    .end = loc.end,
+                                });
+                                return;
+                            }
+                        }
+                    } else {
+                        is_mutable = local.is_mutable;
+                    }
                 } else if (self.symbols.lookup(name)) |sym_idx| {
-                    is_mutable = self.symbols.isMutable(sym_idx);
                     self.symbols.markReferenced(sym_idx);
+                    const sym_type = self.symbols.getTypeId(sym_idx);
+                    if (sym_type.isPointer()) {
+                        if (self.types.getPointerType(sym_type)) |ptr_info| {
+                            is_mutable = ptr_info.is_mutable;
+                            if (!is_mutable) {
+                                try self.addError(.{
+                                    .kind = .assign_through_immutable_ptr,
+                                    .start = loc.start,
+                                    .end = loc.end,
+                                });
+                                return;
+                            }
+                        }
+                    } else {
+                        is_mutable = self.symbols.isMutable(sym_idx);
+                    }
                 }
             }
         } else if (target_kind == .array_index) {
@@ -2797,7 +2827,14 @@ pub const SemanticContext = struct {
         // type-check the object expression
         const object_type = try self.checkExpression(access.object, .unresolved);
 
-        if (object_type) |ot| {
+        if (object_type) |raw_ot| {
+            // auto-deref: unwrap pointer layers to reach the underlying type
+            var ot = raw_ot;
+            while (ot.isPointer()) {
+                const ptr_info = self.types.getPointerType(ot) orelse break;
+                ot = ptr_info.pointee;
+            }
+
             if (ot.isStruct()) {
                 const struct_type = self.types.getStructType(ot) orelse return null;
 
