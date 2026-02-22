@@ -23,6 +23,7 @@ const VReg = mir.VReg;
 const Width = mir.Width;
 const BinOp = mir.BinOp;
 const CmpOp = mir.CmpOp;
+const LabelId = mir.LabelId;
 const GlobalIndex = mir.GlobalIndex;
 
 const llvm = @import("llvm.zig");
@@ -236,6 +237,8 @@ pub const CodeGenContext = struct {
     current_func: ?*MIRFunction,
     locals: LocalVars,
     next_string_id: u32 = 0,
+    loop_end_label: ?LabelId = null,
+    loop_cont_label: ?LabelId = null,
 
     pub fn init(
         allocator: mem.Allocator,
@@ -1047,6 +1050,17 @@ pub const CodeGenContext = struct {
                 _ = try self.generateExpression(node_idx);
             },
             .if_stmt => try self.generateIf(node_idx),
+            .while_stmt => try self.generateWhile(node_idx),
+            .break_stmt => {
+                if (self.loop_end_label) |end_label| {
+                    try self.current_func.?.emitBr(end_label);
+                }
+            },
+            .continue_stmt => {
+                if (self.loop_cont_label) |cont_label| {
+                    try self.current_func.?.emitBr(cont_label);
+                }
+            },
             .block => {
                 _ = try self.generateBlock(node_idx);
             },
@@ -1287,6 +1301,55 @@ pub const CodeGenContext = struct {
 
         // End label — code after the if continues here
         try func.emitLabel(end_label);
+    }
+
+    fn generateWhile(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!void {
+        const while_node = self.ast.getWhile(node_idx);
+        const func = self.current_func.?;
+
+        const loop_label = func.allocLabel();
+        const body_label = func.allocLabel();
+        const cont_label = func.allocLabel();
+        const end_label = func.allocLabel();
+
+        // Save outer loop context and set inner
+        const saved_end = self.loop_end_label;
+        const saved_cont = self.loop_cont_label;
+        self.loop_end_label = end_label;
+        self.loop_cont_label = cont_label;
+
+        // Jump to condition check
+        try func.emitBr(loop_label);
+
+        // Loop header: evaluate condition
+        try func.emitLabel(loop_label);
+        const cond_reg = try self.generateExpression(while_node.condition) orelse {
+            // Restore and bail if condition can't be generated
+            self.loop_end_label = saved_end;
+            self.loop_cont_label = saved_cont;
+            return;
+        };
+        const cond_width = if (self.node_types.get(while_node.condition)) |tid| typeIdToWidth(tid, self.target) else Width.w8;
+        try func.emitBrCond(cond_reg, cond_width, body_label, end_label);
+
+        // Body
+        try func.emitLabel(body_label);
+        _ = try self.generateBlock(while_node.body);
+        try func.emitBr(cont_label);
+
+        // Continue expression block (runs on fallthrough and on continue)
+        try func.emitLabel(cont_label);
+        if (while_node.cont_expr) |cont_expr| {
+            _ = try self.generateStatement(cont_expr);
+        }
+        try func.emitBr(loop_label);
+
+        // End
+        try func.emitLabel(end_label);
+
+        // Restore outer loop context
+        self.loop_end_label = saved_end;
+        self.loop_cont_label = saved_cont;
     }
 
     fn generateReturn(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!void {

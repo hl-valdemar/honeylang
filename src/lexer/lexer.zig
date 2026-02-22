@@ -25,9 +25,12 @@ const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     .{ "defer", .@"defer" },
     .{ "return", .@"return" },
 
-    // logic-related
+    // control flow
     .{ "if", .@"if" },
     .{ "else", .@"else" },
+    .{ "while", .@"while" },
+    .{ "break", .@"break" },
+    .{ "continue", .@"continue" },
     .{ "not", .not },
     .{ "and", .@"and" },
     .{ "or", .@"or" },

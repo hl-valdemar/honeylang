@@ -15,4 +15,5 @@ test {
     _ = @import("integration_tests/strings.zig");
     _ = @import("integration_tests/tuples.zig");
     _ = @import("integration_tests/scopes.zig");
+    _ = @import("integration_tests/while_loops.zig");
 }

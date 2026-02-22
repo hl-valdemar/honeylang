@@ -759,6 +759,9 @@ pub const Parser = struct {
                 }
             },
             .@"if" => try self.parseIfStmt(),
+            .@"while" => try self.parseWhileStmt(),
+            .@"break" => try self.parseBreak(),
+            .@"continue" => try self.parseContinue(),
             .left_curly => try self.parseBlock(),
             else => try self.parseExpression(),
         };
@@ -993,6 +996,47 @@ pub const Parser = struct {
             start_pos,
             end_pos,
         );
+    }
+
+    fn parseWhileStmt(self: *Parser) ParseError!NodeIndex {
+        const start_pos = self.currentStart();
+
+        // consume 'while'
+        try self.expectToken(.@"while", .unexpected_token);
+
+        // parse condition (with optional parens, like if)
+        const condition = if (self.check(.left_paren)) blk: {
+            self.advance();
+            const cond = try self.parseBooleanExpr();
+            try self.expectToken(.right_paren, .expected_right_paren);
+            break :blk cond;
+        } else blk: {
+            break :blk try self.parseBooleanExpr();
+        };
+
+        // parse optional continue expression: while cond : expr { }
+        const cont_expr: ?NodeIndex = if (self.check(.colon)) blk: {
+            self.advance(); // consume ':'
+            break :blk try self.parseStatement();
+        } else null;
+
+        // parse body block
+        const body = try self.parseBlock();
+
+        const end_pos = self.previousEnd();
+        return try self.ast.addWhile(condition, cont_expr, body, start_pos, end_pos);
+    }
+
+    fn parseBreak(self: *Parser) ParseError!NodeIndex {
+        const start_pos = self.currentStart();
+        self.advance(); // consume 'break'
+        return try self.ast.addBreak(start_pos, self.previousEnd());
+    }
+
+    fn parseContinue(self: *Parser) ParseError!NodeIndex {
+        const start_pos = self.currentStart();
+        self.advance(); // consume 'continue'
+        return try self.ast.addContinue(start_pos, self.previousEnd());
     }
 
     fn parseExpression(self: *Parser) ParseError!NodeIndex {

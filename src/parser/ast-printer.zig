@@ -187,6 +187,9 @@ fn getNodeInfo(
         .return_stmt => "return",
         .defer_stmt => "defer",
         .if_stmt => "if",
+        .while_stmt => "while",
+        .break_stmt => "break",
+        .continue_stmt => "continue",
         .assignment => blk: {
             const assign = ast.getAssignment(idx);
             if (ast.getKind(assign.target) == .field_access) {
@@ -763,6 +766,31 @@ fn printNode(
                 const else_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
                 printNode(ast, tokens, src, blk, else_prefix, true);
             }
+        },
+
+        .while_stmt => {
+            const wh = ast.getWhile(idx);
+            std.debug.print("while:\n", .{});
+
+            std.debug.print("{s}├─ condition:\n", .{child_prefix});
+            const cond_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+            printNode(ast, tokens, src, wh.condition, cond_prefix, true);
+
+            if (wh.cont_expr) |cont| {
+                std.debug.print("{s}├─ continue:\n", .{child_prefix});
+                const cont_child = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+                printNode(ast, tokens, src, cont, cont_child, true);
+            }
+
+            printNode(ast, tokens, src, wh.body, child_prefix, true);
+        },
+
+        .break_stmt => {
+            std.debug.print("break\n", .{});
+        },
+
+        .continue_stmt => {
+            std.debug.print("continue\n", .{});
         },
 
         .assignment => {

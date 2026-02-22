@@ -56,9 +56,12 @@ pub const Kind = enum {
     less_equal,
     greater_equal,
 
-    // logical
+    // control flow
     @"if",
     @"else",
+    @"while",
+    @"break",
+    @"continue",
     not,
     @"and",
     @"or",

@@ -68,6 +68,7 @@ pub const SemanticContext = struct {
 
     current_ret_type: TypeId = TypeId.void,
     current_namespace_prefix: []const u8 = "",
+    loop_depth: u32 = 0,
 
     // Tracks which import we're currently collecting structs from (null = main file)
     current_collecting_import: ?ImportContext = null,
@@ -2017,7 +2018,7 @@ pub const SemanticContext = struct {
         return self.blockAlwaysReturns(else_blk);
     }
 
-    fn checkStatement(self: *SemanticContext, node_idx: NodeIndex) !void {
+    fn checkStatement(self: *SemanticContext, node_idx: NodeIndex) TypeError!void {
         const kind = self.ast.getKind(node_idx);
         switch (kind) {
             .var_decl => {
@@ -2026,6 +2027,19 @@ pub const SemanticContext = struct {
             .assignment => try self.checkAssignment(node_idx),
             .return_stmt => try self.checkReturn(node_idx),
             .if_stmt => try self.checkIfStmt(node_idx),
+            .while_stmt => try self.checkWhileStmt(node_idx),
+            .break_stmt => {
+                if (self.loop_depth == 0) {
+                    const loc = self.ast.getLocation(node_idx);
+                    try self.addError(.{ .kind = .break_outside_loop, .start = loc.start, .end = loc.end });
+                }
+            },
+            .continue_stmt => {
+                if (self.loop_depth == 0) {
+                    const loc = self.ast.getLocation(node_idx);
+                    try self.addError(.{ .kind = .continue_outside_loop, .start = loc.start, .end = loc.end });
+                }
+            },
             .call_expr => {
                 // expression statement, just check the expression
                 _ = try self.checkExpression(node_idx, .unresolved);
@@ -2304,6 +2318,25 @@ pub const SemanticContext = struct {
             try self.pushScope();
             try self.checkBlock(else_blk);
             self.popScope();
+        }
+    }
+
+    fn checkWhileStmt(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const while_stmt = self.ast.getWhile(node_idx);
+
+        // check condition is boolean
+        try self.checkGuardIsBool(while_stmt.condition);
+
+        // check body in new scope, with loop context
+        self.loop_depth += 1;
+        try self.pushScope();
+        try self.checkBlock(while_stmt.body);
+        self.popScope();
+        self.loop_depth -= 1;
+
+        // check continue expression if present
+        if (while_stmt.cont_expr) |cont| {
+            try self.checkStatement(cont);
         }
     }
 

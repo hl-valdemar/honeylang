@@ -79,6 +79,10 @@ pub const SemanticErrorKind = enum {
     index_not_integer,
     assign_to_immutable_element,
 
+    // loop errors
+    break_outside_loop,
+    continue_outside_loop,
+
     // scoping errors
     variable_shadowing,
 
@@ -304,6 +308,16 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .code = "S041",
         .message = "cannot assign to immutable array element",
         .help = "use [N]mut T to declare an array with mutable elements",
+    },
+    .break_outside_loop = .{
+        .code = "S043",
+        .message = "'break' outside of loop",
+        .help = "'break' can only be used inside a while loop",
+    },
+    .continue_outside_loop = .{
+        .code = "S044",
+        .message = "'continue' outside of loop",
+        .help = "'continue' can only be used inside a while loop",
     },
     .variable_shadowing = .{
         .code = "S042",

@@ -48,6 +48,9 @@ pub const NodeKind = enum {
     return_stmt,
     defer_stmt,
     if_stmt,
+    while_stmt,
+    break_stmt,
+    continue_stmt,
     assignment,
 
     // parse error
@@ -256,6 +259,12 @@ pub const If = struct {
     }
 };
 
+pub const While = struct {
+    condition: NodeIndex,
+    cont_expr: ?NodeIndex, // optional continue expression (while cond : expr { })
+    body: NodeIndex,
+};
+
 pub const Assignment = struct {
     target: NodeIndex,
     value: NodeIndex,
@@ -338,6 +347,7 @@ pub const Ast = struct {
     returns: std.ArrayList(Return),
     defers: std.ArrayList(Defer),
     ifs: std.ArrayList(If),
+    whiles: std.ArrayList(While),
     assignments: std.ArrayList(Assignment),
     address_ofs: std.ArrayList(AddressOf),
     derefs: std.ArrayList(Deref),
@@ -385,6 +395,7 @@ pub const Ast = struct {
             .returns = try std.ArrayList(Return).initCapacity(allocator, capacity),
             .defers = try std.ArrayList(Defer).initCapacity(allocator, capacity),
             .ifs = try std.ArrayList(If).initCapacity(allocator, capacity),
+            .whiles = try std.ArrayList(While).initCapacity(allocator, capacity),
             .assignments = try std.ArrayList(Assignment).initCapacity(allocator, capacity),
             .address_ofs = try std.ArrayList(AddressOf).initCapacity(allocator, capacity),
             .derefs = try std.ArrayList(Deref).initCapacity(allocator, capacity),
@@ -932,6 +943,48 @@ pub const Ast = struct {
         return node_idx;
     }
 
+    pub fn addWhile(
+        self: *Ast,
+        condition: NodeIndex,
+        cont_expr: ?NodeIndex,
+        body: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.whiles.items.len);
+
+        try self.kinds.append(self.allocator, .while_stmt);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.whiles.append(self.allocator, .{
+            .condition = condition,
+            .cont_expr = cont_expr,
+            .body = body,
+        });
+
+        return node_idx;
+    }
+
+    pub fn addBreak(self: *Ast, start: SourceIndex, end: SourceIndex) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        try self.kinds.append(self.allocator, .break_stmt);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, 0);
+        return node_idx;
+    }
+
+    pub fn addContinue(self: *Ast, start: SourceIndex, end: SourceIndex) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        try self.kinds.append(self.allocator, .continue_stmt);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, 0);
+        return node_idx;
+    }
+
     pub fn addAssignment(
         self: *Ast,
         target: NodeIndex,
@@ -1316,6 +1369,12 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .if_stmt);
         const data_idx = self.data_indices.items[idx];
         return self.ifs.items[data_idx];
+    }
+
+    pub fn getWhile(self: *const Ast, idx: NodeIndex) While {
+        std.debug.assert(self.kinds.items[idx] == .while_stmt);
+        const data_idx = self.data_indices.items[idx];
+        return self.whiles.items[data_idx];
     }
 
     pub fn getAssignment(self: *const Ast, idx: NodeIndex) Assignment {
