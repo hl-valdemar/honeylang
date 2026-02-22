@@ -1713,13 +1713,17 @@ pub const CodeGenContext = struct {
         var arg_slice_flags = try std.ArrayList(bool).initCapacity(self.allocator, arg_nodes.len);
         defer arg_slice_flags.deinit(self.allocator);
 
+        const fixed_param_len: usize = if (param_types) |pt| pt.len else 0;
+
+        // Phase A: Process fixed (non-variadic) parameters
         for (arg_nodes, 0..) |arg_idx, arg_i| {
+            if (is_variadic and arg_i >= fixed_param_len) break; // variadic extras handled in Phase B
+
             const arg_type = self.node_types.get(arg_idx) orelse .unresolved;
             const expected_type: ?TypeId = if (param_types) |pt| (if (arg_i < pt.len) pt[arg_i] else null) else null;
 
             const arg_width = typeIdToWidth(arg_type, self.target);
             const arg_reg = try self.generateExpression(arg_idx) orelse {
-                // If arg generation fails, use 0 as placeholder
                 const zero = try func.emitMovImm(0, .w32);
                 try arg_regs.append(self.allocator, zero);
                 try arg_widths.append(self.allocator, .w32);
@@ -1727,29 +1731,81 @@ pub const CodeGenContext = struct {
                 try arg_slice_flags.append(self.allocator, false);
                 continue;
             };
-            // Check if this is a sentinel-terminated slice in C convention
-            // If so, extract just the data pointer — C sees a raw char*, not a fat pointer
+            // Sentinel-terminated slice in C convention → extract data pointer
             const is_expected_slice = expected_type != null and expected_type.?.isSlice();
-            const is_c_sentinel_param = is_expected_slice and call_conv == .c and
+            const is_c_sentinel = is_expected_slice and call_conv == .c and
                 (if (self.types.getSliceType(expected_type.?)) |si| si.sentinel != null else false);
-            // For variadic extra args: if the arg itself is a sentinel slice, extract data ptr
-            const is_c_sentinel_vararg = expected_type == null and call_conv == .c and
-                arg_type.isSlice() and
-                (if (self.types.getSliceType(arg_type)) |si| si.sentinel != null else false);
 
-            if (is_c_sentinel_param or is_c_sentinel_vararg) {
-                // Extract data pointer from the fat pointer for C interop
+            if (is_c_sentinel) {
                 const data_ptr = try func.emitSliceGetPtr(arg_reg);
                 try arg_regs.append(self.allocator, data_ptr);
                 try arg_widths.append(self.allocator, .ptr);
                 try arg_struct_indices.append(self.allocator, null);
-                try arg_slice_flags.append(self.allocator, false); // raw pointer, not a slice
+                try arg_slice_flags.append(self.allocator, false);
             } else {
                 try arg_regs.append(self.allocator, arg_reg);
                 try arg_widths.append(self.allocator, arg_width);
                 try arg_struct_indices.append(self.allocator, if (arg_type.isStruct()) arg_type.struct_type else null);
                 try arg_slice_flags.append(self.allocator, is_expected_slice);
             }
+        }
+
+        // Phase B: Collect variadic extra args into a tuple, then unpack for C calls
+        if (is_variadic and arg_nodes.len > fixed_param_len) {
+            const extra_args = arg_nodes[fixed_param_len..];
+
+            // Evaluate each extra arg and collect types + registers
+            var extra_regs = try std.ArrayList(VReg).initCapacity(self.allocator, extra_args.len);
+            defer extra_regs.deinit(self.allocator);
+            var extra_types = try std.ArrayList(TypeId).initCapacity(self.allocator, extra_args.len);
+            defer extra_types.deinit(self.allocator);
+
+            for (extra_args) |arg_idx| {
+                const arg_type = self.node_types.get(arg_idx) orelse .unresolved;
+                const arg_reg = try self.generateExpression(arg_idx) orelse {
+                    try extra_regs.append(self.allocator, try func.emitMovImm(0, .w32));
+                    try extra_types.append(self.allocator, TypeId.i32);
+                    continue;
+                };
+                try extra_regs.append(self.allocator, arg_reg);
+                try extra_types.append(self.allocator, arg_type);
+            }
+
+            // Create anonymous tuple struct type from the extra arg types
+            const synth_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
+            var field_names = try std.ArrayList([]const u8).initCapacity(self.allocator, extra_args.len);
+            defer field_names.deinit(self.allocator);
+            for (0..extra_types.items.len) |i| {
+                try field_names.append(self.allocator, if (i < synth_names.len) synth_names[i] else "?");
+            }
+
+            // Note: we conceptually have a tuple {arg0, arg1, ...} here.
+            // For C calls, we unpack the tuple fields directly into the call args.
+            // For future Honey variadic calls, we'd pass the tuple pointer as a single arg.
+
+            if (call_conv == .c) {
+                // Unpack tuple for C ABI: each field becomes an individual call argument
+                for (extra_regs.items, extra_types.items) |reg, typ| {
+                    // Sentinel slice → extract data pointer for C
+                    if (typ.isSlice()) {
+                        if (self.types.getSliceType(typ)) |si| {
+                            if (si.sentinel != null) {
+                                const data_ptr = try func.emitSliceGetPtr(reg);
+                                try arg_regs.append(self.allocator, data_ptr);
+                                try arg_widths.append(self.allocator, .ptr);
+                                try arg_struct_indices.append(self.allocator, null);
+                                try arg_slice_flags.append(self.allocator, false);
+                                continue;
+                            }
+                        }
+                    }
+                    try arg_regs.append(self.allocator, reg);
+                    try arg_widths.append(self.allocator, typeIdToWidth(typ, self.target));
+                    try arg_struct_indices.append(self.allocator, null);
+                    try arg_slice_flags.append(self.allocator, false);
+                }
+            }
+            // else: Honey variadic — future: pass tuple pointer as single arg
         }
 
         // 4. Check for argument type mismatches — emit trap if any arg width
