@@ -707,6 +707,10 @@ pub fn typeToHoneyStr(t: CType) []const u8 {
 pub fn formatHoneyType(allocator: mem.Allocator, c_type: CType, struct_type_name: ?[]const u8, pointee_type: ?CType, pointee_struct_name: ?[]const u8) ![]const u8 {
     if (struct_type_name) |name| return try allocator.dupe(u8, name);
     if (c_type == .ptr) {
+        // char* → [:0]u8 (null-terminated string, Honey convention)
+        if (pointee_type) |pt| {
+            if (pt == .i8) return try allocator.dupe(u8, "[:0]u8");
+        }
         if (pointee_struct_name) |name| return try std.fmt.allocPrint(allocator, "*mut {s}", .{name});
         if (pointee_type) |pt| return try std.fmt.allocPrint(allocator, "*mut {s}", .{typeToHoneyStr(pt)});
         return try allocator.dupe(u8, "*mut i8"); // fallback: void* → *mut i8
@@ -1285,4 +1289,9 @@ test "formatHoneyType" {
     const t5 = try formatHoneyType(alloc, .ptr, null, null, null);
     defer alloc.free(t5);
     try std.testing.expectEqualStrings("*mut i8", t5);
+
+    // char* → [:0]u8 (C string convention)
+    const t6 = try formatHoneyType(alloc, .ptr, null, .i8, null);
+    defer alloc.free(t6);
+    try std.testing.expectEqualStrings("[:0]u8", t6);
 }
