@@ -572,3 +572,52 @@ test "mixed width struct fields" {
     try r.expectLLVMContains("store i16");
     try r.expectLLVMContains("store i32");
 }
+
+// ============================================================
+// comptime struct literal constants
+// ============================================================
+
+test "comptime struct literal constant" {
+    var r = try compileTo(.codegen,
+        \\Color :: struct {
+        \\    r: u8,
+        \\    g: u8,
+        \\    b: u8,
+        \\    a: u8,
+        \\}
+        \\BLACK :: Color { .r = 0, .g = 0, .b = 0, .a = 255 }
+        \\get_alpha :: func(c: Color) u8 {
+        \\    return c.a
+        \\}
+        \\main :: func() u8 {
+        \\    return get_alpha(BLACK)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    // struct constant emitted as global
+    try r.expectLLVMContains("@BLACK = constant %Color");
+}
+
+test "comptime struct literal constant passed to function" {
+    var r = try compileTo(.codegen,
+        \\Vec2 :: struct {
+        \\    x: i32,
+        \\    y: i32,
+        \\}
+        \\ORIGIN :: Vec2 { .x = 0, .y = 0 }
+        \\UP :: Vec2 { .x = 0, .y = 1 }
+        \\add :: func(a: Vec2, b: Vec2) i32 {
+        \\    return a.x + b.x + a.y + b.y
+        \\}
+        \\main :: func() i32 {
+        \\    return add(ORIGIN, UP)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("@ORIGIN = constant %Vec2");
+    try r.expectLLVMContains("@UP = constant %Vec2");
+}

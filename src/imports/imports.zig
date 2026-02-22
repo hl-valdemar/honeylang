@@ -345,6 +345,9 @@ fn resolveImportsInner(
 const CDefine = struct {
     name: []const u8,
     value: []const u8,
+    kind: enum { numeric, struct_literal } = .numeric,
+    struct_type: ?[]const u8 = null,
+    struct_values: ?[]const []const u8 = null,
 };
 
 /// Check if a string is a simple numeric literal (integer or float, optionally negative).
@@ -370,7 +373,58 @@ fn isNumericLiteral(s: []const u8) bool {
     return has_digit;
 }
 
-/// Scan C source text for `#define NAME VALUE` lines and collect numeric constants.
+/// Parse a struct literal define value like `CLITERAL(Color){ 0, 0, 0, 255 }`
+/// or `(Color){ 0, 0, 0, 255 }`. Returns the type name and parsed values,
+/// or null if the value doesn't match the pattern.
+fn parseStructLiteralDefine(
+    allocator: mem.Allocator,
+    value: []const u8,
+) !?struct { type_name: []const u8, values: []const []const u8 } {
+    var pos: usize = 0;
+
+    // Skip optional CLITERAL wrapper: "CLITERAL(Type)" or "(Type)"
+    if (mem.startsWith(u8, value, "CLITERAL(")) {
+        pos = "CLITERAL(".len;
+    } else if (value.len > 0 and value[0] == '(') {
+        pos = 1;
+    } else {
+        return null;
+    }
+
+    // Extract type name up to ')'
+    const type_end = mem.indexOfScalarPos(u8, value, pos, ')') orelse return null;
+    const type_name = mem.trim(u8, value[pos..type_end], " \t");
+    if (type_name.len == 0) return null;
+    pos = type_end + 1;
+
+    // Skip whitespace then expect '{'
+    while (pos < value.len and (value[pos] == ' ' or value[pos] == '\t')) pos += 1;
+    if (pos >= value.len or value[pos] != '{') return null;
+    pos += 1;
+
+    // Find closing '}'
+    const brace_end = mem.indexOfScalarPos(u8, value, pos, '}') orelse return null;
+    const inner = mem.trim(u8, value[pos..brace_end], " \t");
+
+    // Split on commas and trim each value
+    var values = try std.ArrayList([]const u8).initCapacity(allocator, 4);
+    var iter = mem.splitScalar(u8, inner, ',');
+    while (iter.next()) |part| {
+        const trimmed = mem.trim(u8, part, " \t");
+        if (trimmed.len > 0) {
+            try values.append(allocator, trimmed);
+        }
+    }
+
+    if (values.items.len == 0) return null;
+
+    return .{
+        .type_name = type_name,
+        .values = try values.toOwnedSlice(allocator),
+    };
+}
+
+/// Scan C source text for `#define NAME VALUE` lines and collect constants.
 fn collectDefineConstants(
     allocator: mem.Allocator,
     c_source: []const u8,
@@ -388,9 +442,40 @@ fn collectDefineConstants(
             // Split at first whitespace: NAME VALUE
             if (mem.indexOfAny(u8, after_define, " \t")) |space_idx| {
                 const name = after_define[0..space_idx];
+                // Skip internal/system defines and Honey keywords
+                if (name.len > 0 and name[0] == '_') {
+                    line_start = line_end + 1;
+                    continue;
+                }
+                if (mem.indexOfScalar(u8, name, '(') != null) {
+                    line_start = line_end + 1;
+                    continue;
+                }
+                if (mem.eql(u8, name, "true") or mem.eql(u8, name, "false") or
+                    mem.eql(u8, name, "not") or mem.eql(u8, name, "and") or
+                    mem.eql(u8, name, "or") or mem.eql(u8, name, "if") or
+                    mem.eql(u8, name, "else") or mem.eql(u8, name, "while") or
+                    mem.eql(u8, name, "break") or mem.eql(u8, name, "continue") or
+                    mem.eql(u8, name, "return") or mem.eql(u8, name, "func") or
+                    mem.eql(u8, name, "struct") or mem.eql(u8, name, "mut") or
+                    mem.eql(u8, name, "pub") or mem.eql(u8, name, "import"))
+                {
+                    line_start = line_end + 1;
+                    continue;
+                }
                 const value = mem.trim(u8, after_define[space_idx + 1 ..], " \t");
-                if (value.len > 0 and isNumericLiteral(value)) {
-                    try defines.append(allocator, .{ .name = name, .value = value });
+                if (value.len > 0) {
+                    if (isNumericLiteral(value)) {
+                        try defines.append(allocator, .{ .name = name, .value = value });
+                    } else if (try parseStructLiteralDefine(allocator, value)) |parsed| {
+                        try defines.append(allocator, .{
+                            .name = name,
+                            .value = value,
+                            .kind = .struct_literal,
+                            .struct_type = parsed.type_name,
+                            .struct_values = parsed.values,
+                        });
+                    }
                 }
             }
         }
@@ -418,6 +503,7 @@ fn preprocessHeader(
     try argv.append(allocator, "zig");
     try argv.append(allocator, "cc");
     try argv.append(allocator, "-E");
+    try argv.append(allocator, "-dD"); // preserve #define directives in output
 
     // Add source directory as first include path so local headers are found
     try argv.append(allocator, "-I");
@@ -565,16 +651,40 @@ fn generateBindingSource(
     }
 
     for (defines) |def| {
-        // pub <NAME>: <type> :: <VALUE>
-        const is_float = mem.indexOfScalar(u8, def.value, '.') != null;
-        const type_str: []const u8 = if (is_float) blk: {
-            _ = std.fmt.parseFloat(f32, def.value) catch break :blk "f64";
-            break :blk "f32";
-        } else blk: {
-            _ = std.fmt.parseInt(i32, def.value, 10) catch break :blk "i64";
-            break :blk "i32";
-        };
-        try writer.print("pub {s}: {s} :: {s}\n", .{ def.name, type_str, def.value });
+        if (def.kind == .struct_literal) {
+            const type_name = def.struct_type orelse continue;
+            const values = def.struct_values orelse continue;
+
+            // Look up the struct to get field names
+            var found_struct: ?c_parser.CStruct = null;
+            for (structs) |s| {
+                if (mem.eql(u8, s.name, type_name)) {
+                    found_struct = s;
+                    break;
+                }
+            }
+            const s = found_struct orelse continue;
+            if (s.fields.len != values.len) continue;
+
+            // pub NAME :: TypeName { .field1 = val1, .field2 = val2, ... }
+            try writer.print("pub {s} :: {s} {{ ", .{ def.name, type_name });
+            for (s.fields, 0..) |field, i| {
+                if (i > 0) try writer.print(", ", .{});
+                try writer.print(".{s} = {s}", .{ field.name, values[i] });
+            }
+            try writer.print(" }}\n", .{});
+        } else {
+            // pub <NAME>: <type> :: <VALUE>
+            const is_float = mem.indexOfScalar(u8, def.value, '.') != null;
+            const type_str: []const u8 = if (is_float) blk: {
+                _ = std.fmt.parseFloat(f32, def.value) catch break :blk "f64";
+                break :blk "f32";
+            } else blk: {
+                _ = std.fmt.parseInt(i32, def.value, 10) catch break :blk "i64";
+                break :blk "i32";
+            };
+            try writer.print("pub {s}: {s} :: {s}\n", .{ def.name, type_str, def.value });
+        }
     }
 
     return try buf.toOwnedSlice(allocator);
@@ -629,6 +739,30 @@ test "collectDefineConstants extracts numeric defines from source" {
     try std.testing.expectEqualStrings("1024", defines[1].value);
 }
 
+test "collectDefineConstants extracts struct literal defines" {
+    const c_source =
+        \\#define BLACK (Color){ 0, 0, 0, 255 }
+        \\#define WHITE CLITERAL(Color){ 255, 255, 255, 255 }
+        \\#define NUM 42
+    ;
+    const defines = try collectDefineConstants(std.testing.allocator, c_source);
+    defer {
+        for (defines) |def| {
+            if (def.struct_values) |vals| std.testing.allocator.free(vals);
+        }
+        std.testing.allocator.free(defines);
+    }
+    try std.testing.expectEqual(@as(usize, 3), defines.len);
+    try std.testing.expectEqualStrings("BLACK", defines[0].name);
+    try std.testing.expect(defines[0].kind == .struct_literal);
+    try std.testing.expectEqualStrings("Color", defines[0].struct_type.?);
+    try std.testing.expectEqual(@as(usize, 4), defines[0].struct_values.?.len);
+    try std.testing.expectEqualStrings("WHITE", defines[1].name);
+    try std.testing.expect(defines[1].kind == .struct_literal);
+    try std.testing.expectEqualStrings("NUM", defines[2].name);
+    try std.testing.expect(defines[2].kind == .numeric);
+}
+
 test "generateBindingSource includes define constants" {
     const result = try generateBindingSource(std.testing.allocator, &.{}, &.{}, &.{
         .{ .name = "PI", .value = "3.14" },
@@ -659,6 +793,57 @@ test "generateBindingSource structs with pointer fields" {
     }, &.{});
     defer std.testing.allocator.free(result);
     try std.testing.expect(mem.indexOf(u8, result, "next: *mut node") != null);
+}
+
+test "generateBindingSource includes struct literal defines" {
+    const result = try generateBindingSource(std.testing.allocator, &.{}, &.{
+        .{ .name = "Color", .fields = &.{
+            .{ .name = "r", .c_type = .u8 },
+            .{ .name = "g", .c_type = .u8 },
+            .{ .name = "b", .c_type = .u8 },
+            .{ .name = "a", .c_type = .u8 },
+        } },
+    }, &.{
+        .{ .name = "BLACK", .value = "(Color){ 0, 0, 0, 255 }", .kind = .struct_literal, .struct_type = "Color", .struct_values = &.{ "0", "0", "0", "255" } },
+    });
+    defer std.testing.allocator.free(result);
+    try std.testing.expect(mem.indexOf(u8, result, "pub BLACK :: Color { .r = 0, .g = 0, .b = 0, .a = 255 }") != null);
+}
+
+test "collectDefineConstants skips internal and keyword defines" {
+    const c_source =
+        \\#define __INTERNAL 1
+        \\#define _PRIVATE 2
+        \\#define true 1
+        \\#define false 0
+        \\#define CLITERAL(type) (type)
+        \\#define VALID 42
+    ;
+    const defines = try collectDefineConstants(std.testing.allocator, c_source);
+    defer std.testing.allocator.free(defines);
+    try std.testing.expectEqual(@as(usize, 1), defines.len);
+    try std.testing.expectEqualStrings("VALID", defines[0].name);
+}
+
+test "parseStructLiteralDefine parses both patterns" {
+    // (Type){ ... } form
+    const result1 = try parseStructLiteralDefine(std.testing.allocator, "(Color){ 0, 0, 0, 255 }");
+    try std.testing.expect(result1 != null);
+    try std.testing.expectEqualStrings("Color", result1.?.type_name);
+    try std.testing.expectEqual(@as(usize, 4), result1.?.values.len);
+    std.testing.allocator.free(result1.?.values);
+
+    // CLITERAL(Type){ ... } form
+    const result2 = try parseStructLiteralDefine(std.testing.allocator, "CLITERAL(Color){ 255, 255, 255, 255 }");
+    try std.testing.expect(result2 != null);
+    try std.testing.expectEqualStrings("Color", result2.?.type_name);
+    std.testing.allocator.free(result2.?.values);
+
+    // Non-matching values
+    const result3 = try parseStructLiteralDefine(std.testing.allocator, "42");
+    try std.testing.expect(result3 == null);
+    const result4 = try parseStructLiteralDefine(std.testing.allocator, "hello");
+    try std.testing.expect(result4 == null);
 }
 
 /// Write the generated binding file to zig-out/ for debugging/inspection.

@@ -1764,6 +1764,15 @@ pub const SemanticContext = struct {
 
         const expr_type = try self.checkExpression(decl.value, declared_type);
 
+        // Update symbol type if it was unresolved and the expression resolved it
+        if (declared_type.isUnresolved()) {
+            if (expr_type) |et| {
+                if (!et.isUnresolved()) {
+                    self.symbols.resolve(sym_idx, et);
+                }
+            }
+        }
+
         if (!declared_type.isUnresolved()) {
             if (expr_type) |et| {
                 if (!self.typesCompatible(declared_type, et)) {
@@ -2987,7 +2996,15 @@ pub const SemanticContext = struct {
                 const type_token = self.tokens.items[type_ident.token_idx];
                 const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
 
-                const sym_idx = self.symbols.lookup(type_name) orelse {
+                const sym_idx = self.symbols.lookup(type_name) orelse ns_blk: {
+                    // Try with namespace prefix for imports (e.g. Color → rl.Color)
+                    if (self.current_namespace_prefix.len > 0) {
+                        var buf: [512]u8 = undefined;
+                        const qualified = std.fmt.bufPrint(&buf, "{s}.{s}", .{ self.current_namespace_prefix, type_name }) catch break :ns_blk null;
+                        break :ns_blk self.symbols.lookup(qualified);
+                    }
+                    break :ns_blk null;
+                } orelse {
                     try self.addError(.{
                         .kind = .undefined_symbol,
                         .start = type_token.start,
