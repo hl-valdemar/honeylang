@@ -132,6 +132,30 @@ test "codegen string with escape sequences" {
 }
 
 // ============================================================
+// codegen: comptime string constants
+// ============================================================
+
+test "codegen comptime string constant passed to function" {
+    var r = try compileTo(.codegen,
+        \\get_first :: func(data: []u8) u8 {
+        \\    return data[0]
+        \\}
+        \\GREETING :: "hello"
+        \\main :: func() u8 {
+        \\    return get_first(GREETING)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    // comptime string constant emitted as global byte array
+    try r.expectLLVMContains("private constant [6 x i8]");
+    // fat pointer construction (ptr + length)
+    try r.expectLLVMContains("store ptr");
+    try r.expectLLVMContains("store i64");
+}
+
+// ============================================================
 // sentinel type: coercion
 // ============================================================
 

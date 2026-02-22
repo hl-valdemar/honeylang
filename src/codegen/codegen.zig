@@ -1582,6 +1582,7 @@ pub const CodeGenContext = struct {
 
         return switch (type_id) {
             .primitive => |prim| self.generatePrimitiveImmediate(prim, value_str),
+            .slice => self.generateStringLiteral(value_str),
             else => null,
         };
     }
