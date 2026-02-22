@@ -712,6 +712,63 @@ data := read(path) catch |e| {
 }
 ```
 
+### Labeled Blocks
+
+Blocks can be labeled with `name:` to enable yielding from a specific scope in nested contexts. An unlabeled `yield` always exits the innermost block. A labeled `yield :name value` exits the block with that label, even from within nested blocks or conditions:
+
+```honey
+result := outer: {
+    mut status := 500
+
+    if some_condition {
+        yield :outer 404        # exits the outer block with 404
+    }
+
+    {
+        yield :outer status     # can target outer from a nested block too
+    }
+}
+```
+
+Unlabeled `yield` without a label exits the immediately enclosing block — this is the common case and keeps simple code concise:
+
+```honey
+value := {
+    yield 42                    # no label needed for the simple case
+}
+```
+
+Labels are useful when:
+- An `if` or `match` inside a block needs to produce the block's value
+- Nested blocks need to exit an outer block
+- You want to make the target scope explicit for clarity
+
+```honey
+# labeled yield from within a match arm
+config := setup: {
+    mut cfg := default_config()
+
+    match mode {
+        .fast: yield :setup fast_config(),
+        .safe: {
+            validate()
+            yield :setup safe_config()
+        },
+    }
+
+    yield cfg
+}
+```
+
+A labeled `yield` that targets the immediately enclosing block is equivalent to an unlabeled one — the label is optional in that case:
+
+```honey
+x := blk: {
+    yield :blk 42       # labeled — explicit
+    # yield 42          # unlabeled — equivalent, less verbose
+}
+```
+
 ## Pointers
 
 Honey has two kinds of pointers, both **non-nullable by default**:
@@ -3127,7 +3184,8 @@ data := read_file(path) catch |e| match e {
 | `try expr` | Unwrap success or propagate error |
 | `expr catch fallback` | Provide fallback value on error |
 | `expr catch |e| { ... }` | Handle error with block |
-| `yield value` | Provide value from block (catch, match arm, scoped block) |
+| `yield value` | Provide value from innermost block |
+| `yield :label value` | Provide value from labeled block |
 | `return` / `return value` | Exit function from within catch block |
 
 ## Summary of Syntax
@@ -3155,7 +3213,9 @@ data := read_file(path) catch |e| match e {
 | `if cond { }` | Conditional execution |
 | `if cond { } else { }` | Conditional with else branch |
 | `match val { pat: expr, ... }` | Pattern matching (statement or expression) |
-| `yield value` | Produce a value from a block (match arm, catch, scoped block) |
+| `yield value` | Produce a value from the innermost block |
+| `yield :label value` | Produce a value from the labeled block |
+| `name: { ... }` | Labeled block (target for `yield :name`) |
 | `for collection \|val\| { }` | Iterate over elements |
 | `for collection \|val, idx\| { }` | Iterate with index |
 | `for 0..n \|i\| { }` | Iterate over exclusive range |
@@ -3275,7 +3335,8 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 | `try expr` | Unwrap success or propagate error |
 | `expr catch fallback` | Provide fallback value on error |
 | `expr catch |e| { ... }` | Handle error with block |
-| `yield value` | Provide value from block (catch, match arm, scoped block) |
+| `yield value` | Provide value from innermost block |
+| `yield :label value` | Provide value from labeled block |
 
 ### Interfaces
 
