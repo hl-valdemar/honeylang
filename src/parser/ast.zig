@@ -107,6 +107,7 @@ pub const StructDecl = struct {
     name: NodeIndex,
     fields: Range, // pairs of (name_ident, type_ident) in extra_data
     call_conv: CallingConvention,
+    is_tuple: bool = false, // true for positional fields (Name :: struct {T1, T2})
 };
 
 pub const OpaqueDecl = struct {
@@ -543,6 +544,7 @@ pub const Ast = struct {
         name: NodeIndex,
         fields: Range,
         calling_conv: CallingConvention,
+        is_tuple: bool,
         start: SourceIndex,
         end: SourceIndex,
     ) !NodeIndex {
@@ -557,6 +559,7 @@ pub const Ast = struct {
             .name = name,
             .fields = fields,
             .call_conv = calling_conv,
+            .is_tuple = is_tuple,
         });
 
         return node_idx;

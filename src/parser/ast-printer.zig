@@ -221,7 +221,9 @@ fn getNodeInfo(
         },
         .struct_literal => blk: {
             const lit = ast.getStructLiteral(idx);
-            const name = if (ast.getKind(lit.type_name) == .field_access)
+            const name = if (lit.type_name == std.math.maxInt(@TypeOf(lit.type_name)))
+                "(anon)"
+            else if (ast.getKind(lit.type_name) == .field_access)
                 getIdentifierName(ast, tokens, src, ast.getFieldAccess(lit.type_name).field)
             else
                 getIdentifierName(ast, tokens, src, lit.type_name);
@@ -297,6 +299,12 @@ fn getFieldAccessPath(ast: *const Ast, tokens: *const TokenList, src: *const Sou
 }
 
 fn getIdentifierName(ast: *const Ast, tokens: *const TokenList, src: *const SourceCode, idx: NodeIndex) []const u8 {
+    // Handle both identifier and literal nodes (for tuple .0 .1 field access)
+    if (ast.getKind(idx) == .literal) {
+        const lit = ast.getLiteral(idx);
+        const token = tokens.items[lit.token_idx];
+        return src.getSlice(token.start, token.start + token.len);
+    }
     const ident = ast.getIdentifier(idx);
     const token = tokens.items[ident.token_idx];
     return src.getSlice(token.start, token.start + token.len);
@@ -388,9 +396,15 @@ fn printNode(
             const field_count = fields.len / 2;
             std.debug.print("{s}└─ fields: {d}\n", .{ child_prefix, field_count });
 
+            const synth_field_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
+            var pos_idx: usize = 0;
             var fi: usize = 0;
             while (fi < fields.len) : (fi += 2) {
-                const fname = getIdentifierName(ast, tokens, src, fields[fi]);
+                const fname = if (fields[fi] == std.math.maxInt(@TypeOf(fields[fi]))) blk: {
+                    const n = if (pos_idx < synth_field_names.len) synth_field_names[pos_idx] else "?";
+                    pos_idx += 1;
+                    break :blk n;
+                } else getIdentifierName(ast, tokens, src, fields[fi]);
                 const is_last_field = (fi + 2 >= fields.len);
                 const connector: []const u8 = if (is_last_field) "└" else "├";
                 std.debug.print("{s}    {s}─ {s}: ", .{ child_prefix, connector, fname });
@@ -547,7 +561,9 @@ fn printNode(
             std.debug.print("struct_literal:\n", .{});
 
             std.debug.print("{s}├─ type: ", .{child_prefix});
-            if (ast.getKind(lit.type_name) == .field_access) {
+            if (lit.type_name == std.math.maxInt(@TypeOf(lit.type_name))) {
+                std.debug.print("(anonymous tuple)\n", .{});
+            } else if (ast.getKind(lit.type_name) == .field_access) {
                 printNode(ast, tokens, src, lit.type_name, child_prefix, false);
             } else {
                 printIdentifierValue(ast, tokens, src, lit.type_name);
@@ -558,9 +574,15 @@ fn printNode(
             const field_count = field_data.len / 2;
             std.debug.print("{s}└─ fields: {d}\n", .{ child_prefix, field_count });
 
+            const synth_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
+            var positional_idx: usize = 0;
             var fi: usize = 0;
             while (fi < field_data.len) : (fi += 2) {
-                const fname = getIdentifierName(ast, tokens, src, field_data[fi]);
+                const fname = if (field_data[fi] == std.math.maxInt(@TypeOf(field_data[fi]))) blk: {
+                    const name = if (positional_idx < synth_names.len) synth_names[positional_idx] else "?";
+                    positional_idx += 1;
+                    break :blk name;
+                } else getIdentifierName(ast, tokens, src, field_data[fi]);
                 const is_last_field = (fi + 2 >= field_data.len);
                 const connector: []const u8 = if (is_last_field) "└" else "├";
                 std.debug.print("{s}    {s}─ .{s} =\n", .{ child_prefix, connector, fname });
@@ -905,6 +927,13 @@ fn printIdentifierValue(
     src: *const SourceCode,
     idx: NodeIndex,
 ) void {
+    // Handle literal nodes for tuple .0 .1 field access
+    if (ast.getKind(idx) == .literal) {
+        const lit = ast.getLiteral(idx);
+        const token = tokens.items[lit.token_idx];
+        std.debug.print("{s}", .{src.getSlice(token.start, token.start + token.len)});
+        return;
+    }
     const ident = ast.getIdentifier(idx);
     const token = tokens.items[ident.token_idx];
     const value = src.getSlice(token.start, token.start + token.len);

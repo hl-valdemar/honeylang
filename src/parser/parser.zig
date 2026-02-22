@@ -489,15 +489,28 @@ pub const Parser = struct {
         // expect {
         try self.expectToken(.left_curly, .expected_left_curly);
 
-        // parse fields (same format as parameters: name: Type pairs)
-        const fields = try self.parseStructFields();
+        // Detect tuple vs named struct: if identifier followed by colon → named fields;
+        // otherwise → positional (tuple) fields
+        const is_tuple = blk: {
+            if (self.check(.right_curly)) break :blk false; // empty struct
+            if (self.peekOffset(1)) |after_first| {
+                break :blk after_first.kind != .colon;
+            }
+            break :blk false;
+        };
+
+        // parse fields
+        const fields = if (is_tuple)
+            try self.parseTupleFields()
+        else
+            try self.parseStructFields();
 
         // expect }
         try self.expectToken(.right_curly, .expected_right_curly);
 
         const end_pos = self.previousEnd();
 
-        return try self.ast.addStructDecl(name, fields, calling_conv, start_pos, end_pos);
+        return try self.ast.addStructDecl(name, fields, calling_conv, is_tuple, start_pos, end_pos);
     }
 
     fn parseOpaqueDecl(self: *Parser) ParseError!NodeIndex {
@@ -528,6 +541,32 @@ pub const Parser = struct {
 
             // expect :
             try self.expectToken(.colon, .expected_colon);
+
+            // parse field type
+            const field_type = try self.parseType();
+            try fields.append(self.allocator, field_type);
+
+            // handle optional comma
+            if (self.check(.comma)) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        return try self.ast.addExtra(fields.items);
+    }
+
+    /// Parse tuple fields: comma-separated types with placeholder name nodes.
+    /// Produces (name, type) pairs like parseStructFields, but name nodes use a sentinel
+    /// value (maxInt) indicating the field should use a synthetic positional name.
+    fn parseTupleFields(self: *Parser) ParseError!ast.Range {
+        var fields = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
+        defer fields.deinit(self.allocator);
+
+        while (!self.check(.right_curly)) {
+            // Sentinel for positional field name — semantic analysis maps to "0", "1", etc.
+            try fields.append(self.allocator, std.math.maxInt(NodeIndex));
 
             // parse field type
             const field_type = try self.parseType();
@@ -1116,12 +1155,30 @@ pub const Parser = struct {
                     if (next.kind == .left_paren) {
                         break :blk try self.parseCallExpr();
                     }
-                    // struct literal: Identifier { .field = ... }
-                    // disambiguate from blocks by checking for dot after {
+                    // struct/tuple literal: Identifier { .field = ... } or Identifier { val, val }
                     if (next.kind == .left_curly) {
                         if (self.peekOffset(2)) |after_curly| {
                             if (after_curly.kind == .dot or after_curly.kind == .right_curly) {
+                                // named struct literal: starts with . or empty
                                 break :blk try self.parseStructLiteral();
+                            }
+                            // tuple literal: Identifier { expr, expr }
+                            // Check for expr followed by comma or } to distinguish from blocks
+                            // We parse it and look for comma after first expression
+                            if (after_curly.kind == .number or after_curly.kind == .string_literal or after_curly.kind == .bool or after_curly.kind == .left_bracket or after_curly.kind == .left_paren) {
+                                // likely a tuple literal (expression start, not a keyword)
+                                const name_node = try self.parseIdentifier();
+                                break :blk try self.parseTupleLiteralWithType(name_node);
+                            }
+                            // Could be Identifier { identifier, ... } — check if the identifier
+                            // after { is followed by comma (tuple) vs other (block/statement)
+                            if (after_curly.kind == .identifier) {
+                                if (self.peekOffset(3)) |after_first_expr| {
+                                    if (after_first_expr.kind == .comma) {
+                                        const name_node = try self.parseIdentifier();
+                                        break :blk try self.parseTupleLiteralWithType(name_node);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1130,6 +1187,11 @@ pub const Parser = struct {
             },
             .number, .bool, .string_literal => try self.parseLiteral(),
             .left_bracket => try self.parseArrayLiteral(),
+            .left_curly => blk: {
+                // Anonymous tuple literal: { expr, expr, ... }
+                // Only valid when { appears in expression position with comma-separated values
+                break :blk try self.parseAnonymousTupleLiteral();
+            },
             .left_paren => blk: {
                 const paren_start = self.currentStart();
                 self.advance();
@@ -1151,7 +1213,11 @@ pub const Parser = struct {
             if (self.check(.dot)) {
                 const start_pos = self.ast.getLocation(expr).start;
                 self.advance(); // consume dot
-                const field = try self.parseIdentifier();
+                // Allow .0, .1 for tuple field access (number after dot)
+                const field = if (self.check(.number))
+                    try self.parseLiteral() // creates a literal node with the number token
+                else
+                    try self.parseIdentifier();
                 const end_pos = self.previousEnd();
                 expr = try self.ast.addFieldAccess(expr, field, start_pos, end_pos);
             } else if (self.check(.caret)) {
@@ -1516,6 +1582,71 @@ pub const Parser = struct {
         const end_pos = self.previousEnd();
 
         return try self.ast.addStructLiteral(type_name, fields_range, start_pos, end_pos);
+    }
+
+    /// Parse a tuple literal when the type name has already been parsed: TypeName { val1, val2 }
+    fn parseTupleLiteralWithType(self: *Parser, type_name: NodeIndex) ParseError!NodeIndex {
+        const start_pos = self.ast.getLocation(type_name).start;
+
+        // expect {
+        try self.expectToken(.left_curly, .expected_left_curly);
+
+        // parse positional values with sentinel name nodes
+        var fields = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
+        defer fields.deinit(self.allocator);
+
+        while (!self.check(.right_curly) and !self.check(.eof)) {
+            // sentinel name node — semantic analysis maps to "0", "1", etc.
+            try fields.append(self.allocator, std.math.maxInt(NodeIndex));
+
+            // parse value expression
+            const value = try self.parseExpression();
+            try fields.append(self.allocator, value);
+
+            // optional comma
+            if (!self.match(.comma)) break;
+        }
+
+        // expect }
+        try self.expectToken(.right_curly, .expected_right_curly);
+
+        const fields_range = try self.ast.addExtra(fields.items);
+        const end_pos = self.previousEnd();
+
+        return try self.ast.addStructLiteral(type_name, fields_range, start_pos, end_pos);
+    }
+
+    /// Parse an anonymous tuple literal: { expr, expr, ... }
+    /// Uses maxInt(NodeIndex) for type_name to indicate anonymous (type inferred from elements).
+    fn parseAnonymousTupleLiteral(self: *Parser) ParseError!NodeIndex {
+        const start_pos = self.currentStart();
+
+        // expect {
+        try self.expectToken(.left_curly, .expected_left_curly);
+
+        var fields = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
+        defer fields.deinit(self.allocator);
+
+        while (!self.check(.right_curly) and !self.check(.eof)) {
+            // sentinel name node for positional field
+            try fields.append(self.allocator, std.math.maxInt(NodeIndex));
+
+            // parse value expression
+            const value = try self.parseExpression();
+            try fields.append(self.allocator, value);
+
+            // optional comma
+            if (!self.match(.comma)) break;
+        }
+
+        // expect }
+        try self.expectToken(.right_curly, .expected_right_curly);
+
+        const fields_range = try self.ast.addExtra(fields.items);
+        const end_pos = self.previousEnd();
+
+        // Use maxInt for type_name to indicate anonymous tuple
+        return try self.ast.addStructLiteral(std.math.maxInt(NodeIndex), fields_range, start_pos, end_pos);
     }
 
     fn peek(self: *const Parser) ?Token {

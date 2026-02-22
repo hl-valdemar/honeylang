@@ -957,23 +957,40 @@ pub const SemanticContext = struct {
         var seen_fields = std.StringHashMap(void).init(self.allocator);
         defer seen_fields.deinit();
 
+        const synth_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
+        var positional_idx: usize = 0;
+
         var i: usize = 0;
         while (i < field_data.len) : (i += 2) {
             const field_name_idx = field_data[i];
             const field_type_idx = field_data[i + 1];
 
-            const field_ident = self.ast.getIdentifier(field_name_idx);
-            const field_token = self.tokens.items[field_ident.token_idx];
-            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+            // Tuple fields use sentinel (maxInt) for name — use synthetic "0", "1", etc.
+            const field_name = if (field_name_idx == std.math.maxInt(NodeIndex)) blk: {
+                if (positional_idx < synth_names.len) {
+                    const name = synth_names[positional_idx];
+                    positional_idx += 1;
+                    break :blk name;
+                }
+                break :blk "?";
+            } else blk: {
+                const field_ident = self.ast.getIdentifier(field_name_idx);
+                const field_token = self.tokens.items[field_ident.token_idx];
+                break :blk self.src.getSlice(field_token.start, field_token.start + field_token.len);
+            };
 
-            if (seen_fields.contains(field_name)) {
-                try self.addError(.{
-                    .kind = .duplicate_field,
-                    .start = field_token.start,
-                    .end = field_token.start + field_token.len,
-                });
-            } else {
-                try seen_fields.put(field_name, {});
+            if (field_name_idx != std.math.maxInt(NodeIndex)) {
+                // only check duplicates for named fields (tuple fields are unique by construction)
+                if (seen_fields.contains(field_name)) {
+                    const loc = self.ast.getLocation(field_name_idx);
+                    try self.addError(.{
+                        .kind = .duplicate_field,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                } else {
+                    try seen_fields.put(field_name, {});
+                }
             }
 
             const field_type = self.resolveTypeNode(field_type_idx) orelse blk: {
@@ -2763,6 +2780,19 @@ pub const SemanticContext = struct {
         return return_type;
     }
 
+    /// Get field name from a field access node — handles both identifier (.name) and literal (.0) fields.
+    fn getFieldName(self: *SemanticContext, field_node: NodeIndex) []const u8 {
+        const kind = self.ast.getKind(field_node);
+        if (kind == .literal) {
+            const lit = self.ast.getLiteral(field_node);
+            const token = self.tokens.items[lit.token_idx];
+            return self.src.getSlice(token.start, token.start + token.len);
+        }
+        const ident = self.ast.getIdentifier(field_node);
+        const token = self.tokens.items[ident.token_idx];
+        return self.src.getSlice(token.start, token.start + token.len);
+    }
+
     fn checkFieldAccess(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
         const access = self.ast.getFieldAccess(node_idx);
         const loc = self.ast.getLocation(node_idx);
@@ -2774,10 +2804,8 @@ pub const SemanticContext = struct {
             if (ot.isStruct()) {
                 const struct_type = self.types.getStructType(ot) orelse return null;
 
-                // get field name
-                const field_ident = self.ast.getIdentifier(access.field);
-                const field_token = self.tokens.items[field_ident.token_idx];
-                const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+                // get field name — identifier for named fields, literal for tuple .0 .1
+                const field_name = self.getFieldName(access.field);
 
                 // look up field
                 for (struct_type.fields) |field| {
@@ -2789,8 +2817,8 @@ pub const SemanticContext = struct {
                 // field not found
                 try self.addError(.{
                     .kind = .no_such_field,
-                    .start = field_token.start,
-                    .end = field_token.start + field_token.len,
+                    .start = loc.start,
+                    .end = loc.end,
                 });
                 return null;
             } else if (ot.isNamespace()) {
@@ -2875,6 +2903,11 @@ pub const SemanticContext = struct {
         const lit = self.ast.getStructLiteral(node_idx);
         const loc = self.ast.getLocation(node_idx);
 
+        // anonymous tuple literal: { expr, expr, ... }
+        if (lit.type_name == std.math.maxInt(NodeIndex)) {
+            return try self.checkAnonymousTupleLiteral(node_idx);
+        }
+
         // resolve type name to struct type — handle both identifier and field_access
         const type_id: TypeId = blk: {
             if (self.ast.getKind(lit.type_name) == .field_access) {
@@ -2919,23 +2952,40 @@ pub const SemanticContext = struct {
         var seen_fields = std.StringHashMap(void).init(self.allocator);
         defer seen_fields.deinit();
 
+        const synth_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
+        var positional_idx: usize = 0;
+
         var fi: usize = 0;
         while (fi < field_data.len) : (fi += 2) {
             const field_name_idx = field_data[fi];
             const field_value_idx = field_data[fi + 1];
 
-            // get field name
-            const field_ident = self.ast.getIdentifier(field_name_idx);
-            const field_token = self.tokens.items[field_ident.token_idx];
-            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+            // get field name — sentinel means positional (tuple literal)
+            const field_name = if (field_name_idx == std.math.maxInt(NodeIndex)) blk: {
+                if (positional_idx < synth_names.len) {
+                    const name = synth_names[positional_idx];
+                    positional_idx += 1;
+                    break :blk name;
+                }
+                break :blk "?";
+            } else blk: {
+                const field_ident = self.ast.getIdentifier(field_name_idx);
+                const field_token = self.tokens.items[field_ident.token_idx];
+                break :blk self.src.getSlice(field_token.start, field_token.start + field_token.len);
+            };
 
-            // check for duplicate fields
-            if (seen_fields.contains(field_name)) {
-                try self.addError(.{
-                    .kind = .duplicate_literal_field,
-                    .start = field_token.start,
-                    .end = field_token.start + field_token.len,
-                });
+            // check for duplicate fields (skip duplicate check for positional, but still record)
+            if (field_name_idx != std.math.maxInt(NodeIndex)) {
+                if (seen_fields.contains(field_name)) {
+                    const dup_loc = self.ast.getLocation(field_name_idx);
+                    try self.addError(.{
+                        .kind = .duplicate_literal_field,
+                        .start = dup_loc.start,
+                        .end = dup_loc.end,
+                    });
+                } else {
+                    try seen_fields.put(field_name, {});
+                }
             } else {
                 try seen_fields.put(field_name, {});
             }
@@ -2962,10 +3012,11 @@ pub const SemanticContext = struct {
             }
 
             if (!found) {
+                const val_loc = self.ast.getLocation(field_value_idx);
                 try self.addError(.{
                     .kind = .no_such_field,
-                    .start = field_token.start,
-                    .end = field_token.start + field_token.len,
+                    .start = val_loc.start,
+                    .end = val_loc.end,
                 });
             }
         }
@@ -2981,6 +3032,40 @@ pub const SemanticContext = struct {
                 break; // one error is enough
             }
         }
+
+        return type_id;
+    }
+
+    fn checkAnonymousTupleLiteral(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
+        const lit = self.ast.getStructLiteral(node_idx);
+        const field_data = self.ast.getExtra(lit.fields);
+        const field_count = field_data.len / 2;
+
+        const synth_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
+
+        // collect element types by type-checking each value
+        var field_names = try std.ArrayList([]const u8).initCapacity(self.allocator, field_count);
+        defer field_names.deinit(self.allocator);
+        var field_types = try std.ArrayList(TypeId).initCapacity(self.allocator, field_count);
+        defer field_types.deinit(self.allocator);
+
+        var fi: usize = 0;
+        var idx: usize = 0;
+        while (fi < field_data.len) : (fi += 2) {
+            const field_value_idx = field_data[fi + 1];
+            // Use i32 as default context for untyped numeric literals in anonymous tuples
+            var value_type = try self.checkExpression(field_value_idx, TypeId.i32) orelse TypeId.i32;
+            if (value_type.isUnresolved()) value_type = TypeId.i32;
+            const name = if (idx < synth_names.len) synth_names[idx] else "?";
+            try field_names.append(self.allocator, name);
+            try field_types.append(self.allocator, value_type);
+            idx += 1;
+        }
+
+        // create anonymous struct type
+        const anon_name = std.fmt.allocPrint(self.types.arena.allocator(), "__anon_tuple_{d}", .{self.types.struct_types.items.len}) catch return null;
+        const type_id = try self.types.reserveStructType(anon_name);
+        try self.types.finalizeStructType(type_id, field_names.items, field_types.items, .honey);
 
         return type_id;
     }

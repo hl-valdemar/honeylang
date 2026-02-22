@@ -1208,10 +1208,8 @@ pub const CodeGenContext = struct {
         const struct_idx = object_type.struct_type;
         const struct_type = self.types.getStructType(object_type) orelse return;
 
-        // Get field name
-        const field_ident = self.ast.getIdentifier(access.field);
-        const field_token = self.tokens.items[field_ident.token_idx];
-        const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+        // Get field name — identifier for named fields, literal for tuple .0 .1
+        const field_name = self.getFieldNameFromNode(access.field);
 
         // Find field index and emit store
         for (struct_type.fields, 0..) |field, i| {
@@ -1877,10 +1875,8 @@ pub const CodeGenContext = struct {
         const struct_idx = object_type.struct_type;
         const struct_type = self.types.getStructType(object_type) orelse return null;
 
-        // get field name
-        const field_ident = self.ast.getIdentifier(access.field);
-        const field_token = self.tokens.items[field_ident.token_idx];
-        const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+        // get field name — identifier for named fields, literal for tuple .0 .1
+        const field_name = self.getFieldNameFromNode(access.field);
 
         // find field index
         for (struct_type.fields, 0..) |field, i| {
@@ -1891,6 +1887,19 @@ pub const CodeGenContext = struct {
         }
 
         return null;
+    }
+
+    /// Get field name from a field access node — handles both .identifier and .literal (numeric) fields.
+    fn getFieldNameFromNode(self: *CodeGenContext, field_node: NodeIndex) []const u8 {
+        const kind = self.ast.getKind(field_node);
+        if (kind == .literal) {
+            const lit = self.ast.getLiteral(field_node);
+            const token = self.tokens.items[lit.token_idx];
+            return self.src.getSlice(token.start, token.start + token.len);
+        }
+        const ident = self.ast.getIdentifier(field_node);
+        const token = self.tokens.items[ident.token_idx];
+        return self.src.getSlice(token.start, token.start + token.len);
     }
 
     fn generateAddressOf(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {
@@ -2207,16 +2216,24 @@ pub const CodeGenContext = struct {
         const base = try func.emitAllocaStruct(struct_idx);
 
         // store each field value
+        const synth_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
+        var positional_idx: usize = 0;
+
         const field_data = self.ast.getExtra(lit.fields);
         var fi: usize = 0;
         while (fi < field_data.len) : (fi += 2) {
             const field_name_idx = field_data[fi];
             const field_value_idx = field_data[fi + 1];
 
-            // get field name
-            const field_ident = self.ast.getIdentifier(field_name_idx);
-            const field_token = self.tokens.items[field_ident.token_idx];
-            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+            // get field name — sentinel means positional (tuple literal)
+            const field_name = if (field_name_idx == std.math.maxInt(NodeIndex)) blk: {
+                if (positional_idx < synth_names.len) {
+                    const name = synth_names[positional_idx];
+                    positional_idx += 1;
+                    break :blk name;
+                }
+                break :blk "?";
+            } else self.getFieldNameFromNode(field_name_idx);
 
             // find field index in struct definition
             for (struct_type.fields, 0..) |field, i| {
