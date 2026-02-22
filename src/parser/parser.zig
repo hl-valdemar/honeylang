@@ -1334,11 +1334,16 @@ pub const Parser = struct {
                     }
                 }
             } else if (self.check(.left_curly)) {
-                // struct literal: expr { .field = value, ... }
-                if (self.peekOffset(1)) |after_curly| {
-                    if (after_curly.kind == .dot or after_curly.kind == .right_curly) {
-                        expr = try self.parseStructLiteralWithType(expr);
-                        continue;
+                // struct literal: Type { .field = value, ... }
+                // Only try struct literal if expr is a type name (identifier or field access).
+                // Literals, calls, unary ops etc. are never type names — { starts a block.
+                const expr_kind = self.ast.getKind(expr);
+                if (expr_kind == .identifier or expr_kind == .field_access) {
+                    if (self.peekOffset(1)) |after_curly| {
+                        if (after_curly.kind == .dot or after_curly.kind == .right_curly) {
+                            expr = try self.parseStructLiteralWithType(expr);
+                            continue;
+                        }
                     }
                 }
                 break; // not a struct literal, exit postfix loop

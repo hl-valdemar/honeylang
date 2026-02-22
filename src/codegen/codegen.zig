@@ -14,6 +14,7 @@ const NodeIndex = @import("../parser/ast.zig").NodeIndex;
 const NodeKind = @import("../parser/ast.zig").NodeKind;
 const TokenList = @import("../lexer/token.zig").TokenList;
 const SourceCode = @import("../source/source.zig").SourceCode;
+const SourceIndex = @import("../source/source.zig").SourceIndex;
 
 const mir = @import("mir.zig");
 const MIRModule = mir.MIRModule;
@@ -191,6 +192,7 @@ pub fn generate(
     tokens: *const TokenList,
     src: *const SourceCode,
     resolved_imports: ?*const ResolvedImports,
+    lexer_error_positions: []const SourceIndex,
 ) !CodeGenResult {
     // generate MIR (architecture-independent)
     var ctx = CodeGenContext.init(
@@ -206,6 +208,7 @@ pub fn generate(
         tokens,
         src,
         resolved_imports,
+        lexer_error_positions,
     );
 
     try ctx.generate();
@@ -239,6 +242,7 @@ pub const CodeGenContext = struct {
     next_string_id: u32 = 0,
     loop_end_label: ?LabelId = null,
     loop_cont_label: ?LabelId = null,
+    lexer_error_positions: []const SourceIndex,
 
     pub fn init(
         allocator: mem.Allocator,
@@ -253,6 +257,7 @@ pub const CodeGenContext = struct {
         tokens: *const TokenList,
         src: *const SourceCode,
         resolved_imports: ?*const ResolvedImports,
+        lexer_error_positions: []const SourceIndex,
     ) CodeGenContext {
         return .{
             .allocator = allocator,
@@ -271,6 +276,7 @@ pub const CodeGenContext = struct {
             .mir = MIRModule.init(allocator),
             .current_func = null,
             .locals = LocalVars.init(),
+            .lexer_error_positions = lexer_error_positions,
         };
     }
 
@@ -1390,6 +1396,15 @@ pub const CodeGenContext = struct {
     }
 
     fn generateExpression(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {
+        // Trap at expressions containing lexer errors
+        const loc = self.ast.getLocation(node_idx);
+        for (self.lexer_error_positions) |err_pos| {
+            if (err_pos >= loc.start and err_pos < loc.end) {
+                try self.current_func.?.emitTrap();
+                return null;
+            }
+        }
+
         const kind = self.ast.getKind(node_idx);
         return switch (kind) {
             .literal => try self.generateLiteral(node_idx),

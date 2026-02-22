@@ -18,6 +18,11 @@ pub const LexerErrorKind = enum {
 
     // general errors
     unexpected_eof,
+
+    // operator suggestions
+    use_not_instead,
+    use_and_instead,
+    use_or_instead,
 };
 
 pub const LexerError = struct {

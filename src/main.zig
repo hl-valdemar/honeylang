@@ -5,6 +5,16 @@ const builtin = @import("builtin");
 
 const honey = @import("honeylang");
 
+fn extractLexerErrorPositions(allocator: mem.Allocator, lexer_result: *const honey.lexer.LexerResult) ![]const honey.source.SourceIndex {
+    const errors = lexer_result.errors.errors.items;
+    if (errors.len == 0) return &.{};
+    var positions = try std.ArrayList(honey.source.SourceIndex).initCapacity(allocator, errors.len);
+    for (errors) |err| {
+        try positions.append(allocator, err.start);
+    }
+    return positions.items;
+}
+
 pub fn main() !void {
     honey.ansi.init();
 
@@ -291,6 +301,9 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     var codegen_arena = std.heap.ArenaAllocator.init(gpa);
     defer codegen_arena.deinit();
 
+    // extract lexer error positions for codegen trap insertion
+    const lexer_error_positions = try extractLexerErrorPositions(codegen_arena.allocator(), &lexer_result);
+
     const codegen_result = try honey.codegen.generate(
         codegen_arena.allocator(),
         target,
@@ -304,6 +317,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
         &lexer_result.tokens,
         &src,
         &resolved_imports,
+        lexer_error_positions,
     );
 
     // print generated MIR
@@ -421,6 +435,8 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
     var codegen_arena = std.heap.ArenaAllocator.init(gpa);
     defer codegen_arena.deinit();
 
+    const lexer_error_positions = try extractLexerErrorPositions(codegen_arena.allocator(), &lexer_result);
+
     const codegen_result = try honey.codegen.generate(
         codegen_arena.allocator(),
         target,
@@ -434,6 +450,7 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
         &lexer_result.tokens,
         &src,
         &resolved_imports,
+        lexer_error_positions,
     );
 
     // 7. link into executable

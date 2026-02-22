@@ -81,6 +81,6 @@ pub fn compileTo(phase: Phase, src_input: []const u8) !CompileResult {
 
     // codegen
     const target: honey.codegen.Target = .{ .arch = .aarch64, .os = .macos };
-    const codegen_result = try honey.codegen.generate(allocator, target, &comptime_result, &sem.symbols, &sem.types, &sem.node_types, &sem.import_node_types, &sem.skip_nodes, &parse.ast, &lex.tokens, &src, null);
+    const codegen_result = try honey.codegen.generate(allocator, target, &comptime_result, &sem.symbols, &sem.types, &sem.node_types, &sem.import_node_types, &sem.skip_nodes, &parse.ast, &lex.tokens, &src, null, &.{});
     return .{ .arena = arena, .lex = lex, .parse = parse, .sem = sem, .codegen = codegen_result };
 }

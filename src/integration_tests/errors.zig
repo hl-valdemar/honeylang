@@ -14,13 +14,13 @@ test "unexpected character produces lexer error" {
     try r.expectLexerError(.unexpected_character);
 }
 
-test "standalone bang produces lexer error" {
+test "standalone bang suggests not keyword" {
     var r = try compileTo(.lexer,
         \\x :: 10 ! 20
         \\
     );
     defer r.deinit();
-    try r.expectLexerError(.unexpected_character);
+    try r.expectLexerError(.use_not_instead);
 }
 
 test "multiple decimal points produces lexer error" {

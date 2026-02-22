@@ -104,6 +104,79 @@ test "continue with continue expression executes cont expr" {
 }
 
 // ============================================================
+// correct programs: edge cases
+// ============================================================
+
+test "while with not condition" {
+    var r = try compileTo(.codegen,
+        \\main :: func() i32 {
+        \\    mut done := false
+        \\    mut i := 0
+        \\    while not done {
+        \\        i += 1
+        \\        if i == 5 {
+        \\            done = true
+        \\        }
+        \\    }
+        \\    return i
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "while with empty body" {
+    var r = try compileTo(.codegen,
+        \\main :: func() void {
+        \\    while false {
+        \\    }
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "while with function call condition" {
+    var r = try compileTo(.codegen,
+        \\check :: func() bool {
+        \\    return false
+        \\}
+        \\main :: func() void {
+        \\    while check() {
+        \\    }
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "nested while loops with break" {
+    var r = try compileTo(.codegen,
+        \\main :: func() i32 {
+        \\    mut total := 0
+        \\    mut i: i32 = 0
+        \\    while i < 3 : i += 1 {
+        \\        mut j: i32 = 0
+        \\        while j < 10 {
+        \\            if j == 2 {
+        \\                break
+        \\            }
+        \\            j += 1
+        \\        }
+        \\        total += j
+        \\    }
+        \\    return total
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+// ============================================================
 // semantic errors: break/continue outside loop
 // ============================================================
 
