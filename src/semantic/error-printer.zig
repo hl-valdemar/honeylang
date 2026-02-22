@@ -6,23 +6,27 @@ const ErrorList = errors.ErrorList;
 const ErrorInfo = errors.ErrorInfo;
 const SourceCode = @import("../source/source.zig").SourceCode;
 const SourceIndex = @import("../source/source.zig").SourceIndex;
+const SourceId = @import("../source/source.zig").Id;
+const ResolvedImports = @import("../imports/imports.zig").ResolvedImports;
 
 /// Print all diagnostics (errors and warnings) to stderr.
-pub fn print(error_list: *const ErrorList, src: *const SourceCode, file_path: []const u8) void {
+pub fn print(error_list: *const ErrorList, src: *const SourceCode, file_path: []const u8, resolved_imports: ?*const ResolvedImports) void {
     var stderr_buffer: [4096]u8 = undefined;
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
     const writer = &stderr_writer.interface;
 
     // print warnings
     for (error_list.warnings.items) |warn| {
-        writeDiagnostic(warn, src, file_path, writer) catch {
+        const diag_src, const diag_path = resolveSource(warn.src_id, src, file_path, resolved_imports);
+        writeDiagnostic(warn, diag_src, diag_path, writer) catch {
             std.fs.File.stderr().writeAll("error: failed to write diagnostic\n") catch {};
         };
     }
 
     // print errors
     for (error_list.errors.items) |err| {
-        writeDiagnostic(err, src, file_path, writer) catch {
+        const diag_src, const diag_path = resolveSource(err.src_id, src, file_path, resolved_imports);
+        writeDiagnostic(err, diag_src, diag_path, writer) catch {
             std.fs.File.stderr().writeAll("error: failed to write diagnostic\n") catch {};
         };
     }
@@ -154,4 +158,24 @@ fn digitCount(n: u32) u32 {
         count += 1;
     }
     return count;
+}
+
+/// Look up the correct source buffer and file path for a given source ID.
+/// ID 0 = main file, non-zero = imported file.
+fn resolveSource(
+    src_id: SourceId,
+    main_src: *const SourceCode,
+    main_path: []const u8,
+    resolved_imports: ?*const ResolvedImports,
+) struct { *const SourceCode, []const u8 } {
+    if (src_id == 0) return .{ main_src, main_path };
+    if (resolved_imports) |ri| {
+        for (ri.imports.items) |*imp| {
+            if (imp.src.id == src_id) {
+                return .{ &imp.src, imp.file_path };
+            }
+        }
+    }
+    // fallback to main file if source not found
+    return .{ main_src, main_path };
 }

@@ -252,7 +252,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
 
     // print semantic diagnostics if any
     if (sem_result.errors.hasErrors() or sem_result.errors.hasWarnings()) {
-        honey.semantic.error_printer.print(&sem_result.errors, &src, file_path);
+        honey.semantic.error_printer.print(&sem_result.errors, &src, file_path, &resolved_imports);
     }
 
     // 5. comptime expression evaluation
@@ -386,7 +386,7 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
 
     // print semantic diagnostics if any
     if (sem_result.errors.hasErrors() or sem_result.errors.hasWarnings()) {
-        honey.semantic.error_printer.print(&sem_result.errors, &src, file_path);
+        honey.semantic.error_printer.print(&sem_result.errors, &src, file_path, &resolved_imports);
     }
 
     // 5. comptime expression evaluation

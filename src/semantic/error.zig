@@ -308,6 +308,7 @@ pub const SemanticError = struct {
     kind: SemanticErrorKind,
     start: SourceIndex,
     end: SourceIndex,
+    src_id: @import("../source/source.zig").Id = 0, // 0 = main file, non-zero = import
 };
 
 pub const ErrorList = struct {

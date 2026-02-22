@@ -6,6 +6,7 @@ const NodeIndex = @import("../parser/ast.zig").NodeIndex;
 const BinaryOp = @import("../parser/ast.zig").BinaryOp;
 const TokenList = @import("../lexer/token.zig").TokenList;
 const SourceCode = @import("../source/source.zig").SourceCode;
+const SourceIndex = @import("../source/source.zig").SourceIndex;
 
 const SymbolTable = @import("symbols.zig").SymbolTable;
 const SymbolIndex = @import("symbols.zig").SymbolIndex;
@@ -99,6 +100,20 @@ pub const SemanticContext = struct {
         };
     }
 
+    /// Add a semantic error with the current source file ID.
+    fn addError(self: *SemanticContext, err: struct {
+        kind: @import("error.zig").SemanticErrorKind,
+        start: SourceIndex,
+        end: SourceIndex,
+    }) !void {
+        try self.errors.add(.{
+            .kind = err.kind,
+            .start = err.start,
+            .end = err.end,
+            .src_id = self.src.id,
+        });
+    }
+
     pub fn analyze(self: *SemanticContext) !SemanticResult {
         // 1. collect all symbols
         try self.collectSymbols();
@@ -161,7 +176,7 @@ pub const SemanticContext = struct {
                     .@"type" => .unused_type,
                     .namespace => .unused_namespace,
                 };
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = err_kind,
                     .start = start,
                     .end = start + len,
@@ -176,7 +191,7 @@ pub const SemanticContext = struct {
                 if (type_id == .unresolved and kind != .function and kind != .@"type" and kind != .namespace) {
                     const start = self.symbols.name_starts.items[idx];
                     const len = self.symbols.name_lengths.items[idx];
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .unresolved_type,
                         .start = start,
                         .end = start + len,
@@ -238,7 +253,7 @@ pub const SemanticContext = struct {
         );
 
         if (result == null) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = name_token.start,
                 .end = name_token.start + name_token.len,
@@ -295,7 +310,7 @@ pub const SemanticContext = struct {
         );
 
         if (result == null) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = name_token.start,
                 .end = name_token.start + name_token.len,
@@ -479,7 +494,7 @@ pub const SemanticContext = struct {
         }
 
         if (register_result == null) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = main_loc.start,
                 .end = main_loc.end,
@@ -578,7 +593,7 @@ pub const SemanticContext = struct {
         );
 
         if (result == null) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = ns_name_token.start,
                 .end = ns_name_token.start + ns_name_token.len,
@@ -632,14 +647,14 @@ pub const SemanticContext = struct {
                     type_state = .resolved;
                 } else {
                     const loc = self.ast.getLocation(type_idx);
-                    try self.errors.add(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
+                    try self.addError(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
                 }
             }
         }
 
         const result = try self.symbols.register(name, name_token.start, .constant, type_state, type_id, decl.value, false);
         if (result == null) {
-            try self.errors.add(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
+            try self.addError(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
             return null;
         }
         return result;
@@ -667,7 +682,7 @@ pub const SemanticContext = struct {
 
         const result = try self.symbols.register(name, name_token.start, .function, .resolved, func_type, node_idx, false);
         if (result == null) {
-            try self.errors.add(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
+            try self.addError(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
             return null;
         }
         return result;
@@ -692,14 +707,14 @@ pub const SemanticContext = struct {
                     type_state = .resolved;
                 } else {
                     const loc = self.ast.getLocation(type_idx);
-                    try self.errors.add(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
+                    try self.addError(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
                 }
             }
         }
 
         const result = try self.symbols.register(name, name_token.start, .variable, type_state, type_id, decl.value, decl.is_mutable);
         if (result == null) {
-            try self.errors.add(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
+            try self.addError(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
             return null;
         }
         return result;
@@ -913,7 +928,7 @@ pub const SemanticContext = struct {
             const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
 
             if (seen_fields.contains(field_name)) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .duplicate_field,
                     .start = field_token.start,
                     .end = field_token.start + field_token.len,
@@ -924,7 +939,7 @@ pub const SemanticContext = struct {
 
             const field_type = self.resolveTypeNode(field_type_idx) orelse blk: {
                 const field_loc = self.ast.getLocation(field_type_idx);
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .unknown_type,
                     .start = field_loc.start,
                     .end = field_loc.end,
@@ -979,7 +994,7 @@ pub const SemanticContext = struct {
                     type_state = .resolved;
                 } else {
                     const loc = self.ast.getLocation(type_idx);
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .unknown_type,
                         .start = loc.start,
                         .end = loc.end,
@@ -1001,7 +1016,7 @@ pub const SemanticContext = struct {
 
         if (result == null) {
             // duplicate symbol
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = name_token.start,
                 .end = name_token.start + name_token.len,
@@ -1032,7 +1047,7 @@ pub const SemanticContext = struct {
                     type_state = .resolved;
                 } else {
                     const loc = self.ast.getLocation(type_idx);
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .unknown_type,
                         .start = loc.start,
                         .end = loc.end,
@@ -1054,7 +1069,7 @@ pub const SemanticContext = struct {
 
         if (result == null) {
             // duplicate symbol
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = name_token.start,
                 .end = name_token.start + name_token.len,
@@ -1106,7 +1121,7 @@ pub const SemanticContext = struct {
         );
 
         if (result == null) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = name_token.start,
                 .end = name_token.start + name_token.len,
@@ -1622,7 +1637,7 @@ pub const SemanticContext = struct {
         if (!declared_type.isUnresolved()) {
             if (expr_type) |et| {
                 if (!self.typesCompatible(declared_type, et)) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
                         .end = loc.end,
@@ -1632,7 +1647,7 @@ pub const SemanticContext = struct {
                 // expression type is unresolved (e.g., literals without anchors)
                 // check if the expression structure is compatible with declared type
                 if (!self.isExprCompatibleWithType(decl.value, declared_type)) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
                         .end = loc.end,
@@ -1697,7 +1712,7 @@ pub const SemanticContext = struct {
         if (!declared_type.isUnresolved()) {
             if (expr_type) |et| {
                 if (!self.typesCompatible(declared_type, et)) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
                         .end = loc.end,
@@ -1705,7 +1720,7 @@ pub const SemanticContext = struct {
                 }
             } else {
                 if (!self.isExprCompatibleWithType(decl.value, declared_type)) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
                         .end = loc.end,
@@ -1753,7 +1768,7 @@ pub const SemanticContext = struct {
         if (decl.body == null) {
             if (decl.call_conv == .honey) {
                 const loc = self.ast.getLocation(node_idx);
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .missing_function_body,
                     .start = loc.start,
                     .end = loc.end,
@@ -1801,7 +1816,7 @@ pub const SemanticContext = struct {
         if (!expected_return_type.isVoid() and !expected_return_type.isUnresolved()) {
             if (!self.blockAlwaysReturns(decl.body.?)) {
                 const loc = self.ast.getLocation(node_idx);
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .missing_return,
                     .start = loc.start,
                     .end = loc.end,
@@ -1837,7 +1852,7 @@ pub const SemanticContext = struct {
                         break :blk if (lp.is_mutable and !rp.is_mutable) .mutability_mismatch else .type_mismatch;
                     } else .type_mismatch;
                     const val_loc = self.ast.getLocation(decl.value);
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = err_kind,
                         .start = val_loc.start,
                         .end = val_loc.end,
@@ -1847,7 +1862,7 @@ pub const SemanticContext = struct {
                 // expression type is unresolved (e.g., literals without anchors)
                 if (!self.isExprCompatibleWithType(decl.value, expected_type)) {
                     const loc = self.ast.getLocation(node_idx);
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
                         .end = loc.end,
@@ -2011,7 +2026,7 @@ pub const SemanticContext = struct {
                     if (self.types.getPointerType(pt)) |ptr_info| {
                         is_mutable = ptr_info.is_mutable;
                         if (!ptr_info.is_mutable) {
-                            try self.errors.add(.{
+                            try self.addError(.{
                                 .kind = .assign_through_immutable_ptr,
                                 .start = loc.start,
                                 .end = loc.end,
@@ -2082,7 +2097,7 @@ pub const SemanticContext = struct {
                 if (obj_type.isArray()) {
                     if (self.types.getArrayType(obj_type)) |arr_info| {
                         if (!arr_info.is_mutable) {
-                            try self.errors.add(.{
+                            try self.addError(.{
                                 .kind = .assign_to_immutable_element,
                                 .start = loc.start,
                                 .end = loc.end,
@@ -2094,7 +2109,7 @@ pub const SemanticContext = struct {
                 } else if (obj_type.isSlice()) {
                     if (self.types.getSliceType(obj_type)) |slice_info| {
                         if (!slice_info.is_mutable) {
-                            try self.errors.add(.{
+                            try self.addError(.{
                                 .kind = .assign_to_immutable_element,
                                 .start = loc.start,
                                 .end = loc.end,
@@ -2123,7 +2138,7 @@ pub const SemanticContext = struct {
                 is_mutable = self.symbols.isMutable(sym_idx);
                 self.symbols.markReferenced(sym_idx);
             } else {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .undefined_symbol,
                     .start = loc.start,
                     .end = loc.end,
@@ -2139,7 +2154,7 @@ pub const SemanticContext = struct {
         // for deref assignments with unresolved pointer type, skip — can't verify yet
         const skip_mutability_check = target_kind == .deref and target_type.isUnresolved();
         if (!is_mutable and !skip_mutability_check) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .assignment_to_immutable,
                 .start = loc.start,
                 .end = loc.end,
@@ -2152,7 +2167,7 @@ pub const SemanticContext = struct {
         const value_type = try self.checkExpression(assign.value, target_type);
         if (value_type) |vt| {
             if (!self.typesCompatible(target_type, vt)) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .type_mismatch,
                     .start = loc.start,
                     .end = loc.end,
@@ -2169,7 +2184,7 @@ pub const SemanticContext = struct {
 
         if (expr_type) |et| {
             if (!self.typesCompatible(self.current_ret_type, et)) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .return_type_mismatch,
                     .start = loc.start,
                     .end = loc.end,
@@ -2214,7 +2229,7 @@ pub const SemanticContext = struct {
 
         if (guard_type) |gt| {
             if (!gt.isBool() and !gt.isUnresolved()) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .condition_not_bool,
                     .start = loc.start,
                     .end = loc.end,
@@ -2306,7 +2321,7 @@ pub const SemanticContext = struct {
         }
 
         // undefined symbol
-        try self.errors.add(.{
+        try self.addError(.{
             .kind = .undefined_symbol,
             .start = token.start,
             .end = token.start + token.len,
@@ -2326,7 +2341,7 @@ pub const SemanticContext = struct {
 
                 if (operand_type) |t| {
                     if (!t.isBool() and !t.isUnresolved()) {
-                        try self.errors.add(.{
+                        try self.addError(.{
                             .kind = .logical_op_requires_bool,
                             .start = loc.start,
                             .end = loc.end,
@@ -2349,7 +2364,7 @@ pub const SemanticContext = struct {
                     }
 
                     if (!t.isNumeric()) {
-                        try self.errors.add(.{
+                        try self.addError(.{
                             .kind = .arithmetic_op_requires_numeric,
                             .start = loc.start,
                             .end = loc.end,
@@ -2359,7 +2374,7 @@ pub const SemanticContext = struct {
 
                     // can only negate signed types and floats
                     if (t.isInteger() and !t.isSignedInteger()) {
-                        try self.errors.add(.{
+                        try self.addError(.{
                             .kind = .cannot_negate_unsigned,
                             .start = loc.start,
                             .end = loc.end,
@@ -2383,7 +2398,7 @@ pub const SemanticContext = struct {
 
         // only variables and field accesses are addressable
         if (operand_kind != .identifier and operand_kind != .field_access) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .cannot_take_address,
                 .start = loc.start,
                 .end = loc.end,
@@ -2454,7 +2469,7 @@ pub const SemanticContext = struct {
 
         // verify it's a pointer
         if (!operand_type.isPointer()) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .deref_non_pointer,
                 .start = loc.start,
                 .end = loc.end,
@@ -2496,7 +2511,7 @@ pub const SemanticContext = struct {
                 }
 
                 // single-item pointer arithmetic is not allowed
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .pointer_arithmetic,
                     .start = loc.start,
                     .end = loc.end,
@@ -2506,7 +2521,7 @@ pub const SemanticContext = struct {
 
             if (operand_type) |t| {
                 if (!t.isNumeric() and !t.isUnresolved()) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .arithmetic_op_requires_numeric,
                         .start = loc.start,
                         .end = loc.end,
@@ -2514,7 +2529,7 @@ pub const SemanticContext = struct {
                 }
                 if (left_type != null and right_type != null) {
                     if (!self.typesCompatible(left_type.?, right_type.?)) {
-                        try self.errors.add(.{
+                        try self.addError(.{
                             .kind = .type_mismatch,
                             .start = loc.start,
                             .end = loc.end,
@@ -2541,7 +2556,7 @@ pub const SemanticContext = struct {
             // if both sides have resolved types, they must match
             if (left_type != null and right_type != null) {
                 if (!self.typesCompatible(left_type.?, right_type.?)) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
                         .end = loc.end,
@@ -2564,7 +2579,7 @@ pub const SemanticContext = struct {
                 self.isExprCompatibleWithType(binary_op.left, TypeId.bool);
 
             if (!left_ok) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .logical_op_requires_bool,
                     .start = loc.start,
                     .end = loc.end,
@@ -2578,7 +2593,7 @@ pub const SemanticContext = struct {
                 self.isExprCompatibleWithType(binary_op.right, TypeId.bool);
 
             if (!right_ok) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .logical_op_requires_bool,
                     .start = loc.start,
                     .end = loc.end,
@@ -2606,7 +2621,7 @@ pub const SemanticContext = struct {
             const func_name = self.src.getSlice(func_token.start, func_token.start + func_token.len);
 
             const sym_idx = self.symbols.lookup(func_name) orelse {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .undefined_symbol,
                     .start = loc.start,
                     .end = loc.end,
@@ -2617,7 +2632,7 @@ pub const SemanticContext = struct {
             self.symbols.markReferenced(sym_idx);
 
             if (self.symbols.getKind(sym_idx) != .function) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .not_callable,
                     .start = loc.start,
                     .end = loc.end,
@@ -2632,7 +2647,7 @@ pub const SemanticContext = struct {
             const ft = try self.checkFieldAccess(call.func) orelse return null;
 
             if (!ft.isFunction()) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .not_callable,
                     .start = loc.start,
                     .end = loc.end,
@@ -2642,7 +2657,7 @@ pub const SemanticContext = struct {
 
             func_type_id = ft;
         } else {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .not_callable,
                 .start = loc.start,
                 .end = loc.end,
@@ -2659,7 +2674,7 @@ pub const SemanticContext = struct {
 
         // check args count
         if (args.len != param_types.len) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .argument_count_mismatch,
                 .start = loc.start,
                 .end = loc.end,
@@ -2681,7 +2696,7 @@ pub const SemanticContext = struct {
                         const rp = self.types.getPointerType(at) orelse break :blk .argument_type_mismatch;
                         break :blk if (lp.is_mutable and !rp.is_mutable) .mutability_mismatch else .argument_type_mismatch;
                     } else .argument_type_mismatch;
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = err_kind,
                         .start = arg_loc.start,
                         .end = arg_loc.end,
@@ -2719,7 +2734,7 @@ pub const SemanticContext = struct {
                 }
 
                 // field not found
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .no_such_field,
                     .start = field_token.start,
                     .end = field_token.start + field_token.len,
@@ -2738,7 +2753,7 @@ pub const SemanticContext = struct {
                     if (mem.eql(u8, member.name, field_name)) {
                         // check pub visibility
                         if (!member.is_pub) {
-                            try self.errors.add(.{
+                            try self.addError(.{
                                 .kind = .access_private_member,
                                 .start = field_token.start,
                                 .end = field_token.start + field_token.len,
@@ -2751,7 +2766,7 @@ pub const SemanticContext = struct {
                 }
 
                 // member not found
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .no_such_field,
                     .start = field_token.start,
                     .end = field_token.start + field_token.len,
@@ -2767,7 +2782,7 @@ pub const SemanticContext = struct {
                     return TypeId.usize;
                 }
 
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .no_such_field,
                     .start = field_token.start,
                     .end = field_token.start + field_token.len,
@@ -2783,7 +2798,7 @@ pub const SemanticContext = struct {
                     return TypeId.usize;
                 }
 
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .no_such_field,
                     .start = field_token.start,
                     .end = field_token.start + field_token.len,
@@ -2791,7 +2806,7 @@ pub const SemanticContext = struct {
                 return null;
             } else if (!ot.isUnresolved()) {
                 // dot access on non-struct/non-namespace
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .field_access_on_non_struct,
                     .start = loc.start,
                     .end = loc.end,
@@ -2820,7 +2835,7 @@ pub const SemanticContext = struct {
                 const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
 
                 const sym_idx = self.symbols.lookup(type_name) orelse {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .undefined_symbol,
                         .start = type_token.start,
                         .end = type_token.start + type_token.len,
@@ -2831,7 +2846,7 @@ pub const SemanticContext = struct {
                 self.symbols.markReferenced(sym_idx);
 
                 if (self.symbols.getKind(sym_idx) != .@"type") {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .unknown_type,
                         .start = type_token.start,
                         .end = type_token.start + type_token.len,
@@ -2863,7 +2878,7 @@ pub const SemanticContext = struct {
 
             // check for duplicate fields
             if (seen_fields.contains(field_name)) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .duplicate_literal_field,
                     .start = field_token.start,
                     .end = field_token.start + field_token.len,
@@ -2882,7 +2897,7 @@ pub const SemanticContext = struct {
                     if (value_type) |vt| {
                         if (!self.typesCompatible(field.type_id, vt)) {
                             const val_loc = self.ast.getLocation(field_value_idx);
-                            try self.errors.add(.{
+                            try self.addError(.{
                                 .kind = .type_mismatch,
                                 .start = val_loc.start,
                                 .end = val_loc.end,
@@ -2894,7 +2909,7 @@ pub const SemanticContext = struct {
             }
 
             if (!found) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .no_such_field,
                     .start = field_token.start,
                     .end = field_token.start + field_token.len,
@@ -2905,7 +2920,7 @@ pub const SemanticContext = struct {
         // check all struct fields are initialized
         for (struct_type.fields) |field| {
             if (!seen_fields.contains(field.name)) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .missing_field,
                     .start = loc.start,
                     .end = loc.end,
@@ -2936,7 +2951,7 @@ pub const SemanticContext = struct {
         // check length matches if context provides one
         if (expected_length) |exp_len| {
             if (elements.len != exp_len) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .array_length_mismatch,
                     .start = loc.start,
                     .end = loc.end,
@@ -2978,7 +2993,7 @@ pub const SemanticContext = struct {
         const index_type = try self.checkExpression(idx_node.index, TypeId.usize);
         if (index_type) |it| {
             if (!it.isInteger() and !it.isUnresolved()) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .index_not_integer,
                     .start = loc.start,
                     .end = loc.end,
@@ -2997,7 +3012,7 @@ pub const SemanticContext = struct {
                     return slice_info.element_type;
                 }
             } else if (!ot.isUnresolved()) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .index_non_array,
                     .start = loc.start,
                     .end = loc.end,
@@ -3020,7 +3035,7 @@ pub const SemanticContext = struct {
             const start_type = try self.checkExpression(start_idx, TypeId.usize);
             if (start_type) |st| {
                 if (!st.isInteger() and !st.isUnresolved()) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .index_not_integer,
                         .start = loc.start,
                         .end = loc.end,
@@ -3033,7 +3048,7 @@ pub const SemanticContext = struct {
             const end_type = try self.checkExpression(end_idx, TypeId.usize);
             if (end_type) |et| {
                 if (!et.isInteger() and !et.isUnresolved()) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .index_not_integer,
                         .start = loc.start,
                         .end = loc.end,
@@ -3055,7 +3070,7 @@ pub const SemanticContext = struct {
                 }
                 return ot;
             } else if (!ot.isUnresolved()) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .index_non_array,
                     .start = loc.start,
                     .end = loc.end,
