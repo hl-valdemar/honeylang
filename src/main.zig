@@ -24,6 +24,8 @@ pub fn main() !void {
     defer c_sources.deinit(allocator);
     var link_libs = try std.ArrayList([]const u8).initCapacity(allocator, 0);
     defer link_libs.deinit(allocator);
+    var link_paths = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    defer link_paths.deinit(allocator);
     var include_paths = try std.ArrayList([]const u8).initCapacity(allocator, 0);
     defer include_paths.deinit(allocator);
 
@@ -58,6 +60,12 @@ pub fn main() !void {
                 try link_libs.append(allocator, args[i]);
             }
             if (i < args.len and mem.startsWith(u8, args[i], "--")) i -= 1;
+        } else if (mem.eql(u8, arg, "--link-path")) {
+            i += 1;
+            while (i < args.len and !mem.startsWith(u8, args[i], "--")) : (i += 1) {
+                try link_paths.append(allocator, args[i]);
+            }
+            if (i < args.len and mem.startsWith(u8, args[i], "--")) i -= 1;
         } else if (mem.eql(u8, arg, "--include-path")) {
             i += 1;
             while (i < args.len and !mem.startsWith(u8, args[i], "--")) : (i += 1) {
@@ -81,9 +89,16 @@ pub fn main() !void {
         std.debug.print("  --list-targets          List all supported compilation targets\n", .{});
         std.debug.print("  --c-source <files...>   C source files to compile and link\n", .{});
         std.debug.print("  --link-lib <libs...>    Libraries to link (-l)\n", .{});
+        std.debug.print("  --link-path <dirs...>   Library search paths (-L)\n", .{});
         std.debug.print("  --include-path <dirs..> Additional C header search paths\n", .{});
         return error.MissingArgument;
     }
+
+    // check that the source file exists
+    std.fs.cwd().access(file_path.?, .{}) catch {
+        std.debug.print("Error: file not found: {s}\n", .{file_path.?});
+        std.process.exit(1);
+    };
 
     // default to native target, auto-fallback to LLVM for unsupported architectures
     const final_target = target orelse getNativeTarget() orelse {
@@ -92,8 +107,8 @@ pub fn main() !void {
     };
 
     switch (builtin.mode) {
-        .Debug => try compileDebug(allocator, file_path.?, final_target, c_sources.items, link_libs.items, include_paths.items),
-        else => try compileRelease(allocator, file_path.?, final_target, c_sources.items, link_libs.items, include_paths.items),
+        .Debug => try compileDebug(allocator, file_path.?, final_target, c_sources.items, link_libs.items, link_paths.items, include_paths.items),
+        else => try compileRelease(allocator, file_path.?, final_target, c_sources.items, link_libs.items, link_paths.items, include_paths.items),
     }
 }
 
@@ -164,7 +179,7 @@ fn getNativeTarget() ?honey.codegen.Target {
     return .{ .arch = arch, .os = os };
 }
 
-pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.codegen.Target, c_sources: []const []const u8, link_libs: []const []const u8, include_paths: []const []const u8) !void {
+pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.codegen.Target, c_sources: []const []const u8, link_libs: []const []const u8, link_paths: []const []const u8, include_paths: []const []const u8) !void {
     const ansi = honey.ansi;
 
     // 1. read source
@@ -316,6 +331,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
         "program",
         c_sources,
         link_libs,
+        link_paths,
     );
 
     if (link_result) |result| {
@@ -327,7 +343,7 @@ pub fn compileDebug(gpa: mem.Allocator, file_path: []const u8, target: honey.cod
     }
 }
 
-pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.codegen.Target, c_sources: []const []const u8, link_libs: []const []const u8, include_paths: []const []const u8) !void {
+pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.codegen.Target, c_sources: []const []const u8, link_libs: []const []const u8, link_paths: []const []const u8, include_paths: []const []const u8) !void {
     const ansi = honey.ansi;
 
     // 1. read source
@@ -428,6 +444,7 @@ pub fn compileRelease(gpa: mem.Allocator, file_path: []const u8, target: honey.c
         "program",
         c_sources,
         link_libs,
+        link_paths,
     );
 
     if (link_result) |result| {

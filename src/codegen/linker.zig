@@ -23,6 +23,7 @@ pub fn link(
     output_name: []const u8,
     c_source_files: []const []const u8,
     link_libs: []const []const u8,
+    link_paths: []const []const u8,
 ) LinkerError!LinkerResult {
     const output_dir = "zig-out";
 
@@ -59,6 +60,12 @@ pub fn link(
 
     // Add output and target
     argv.appendSlice(allocator, &.{ "-o", exe_path, "-target", target_triple }) catch return LinkerError.OutOfMemory;
+
+    // Add library search paths (-L flags)
+    for (link_paths) |path| {
+        const flag = std.fmt.allocPrint(allocator, "-L{s}", .{path}) catch return LinkerError.OutOfMemory;
+        argv.append(allocator, flag) catch return LinkerError.OutOfMemory;
+    }
 
     // Add link libraries (-l flags)
     for (link_libs) |lib| {
