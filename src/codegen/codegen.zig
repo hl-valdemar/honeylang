@@ -1047,6 +1047,9 @@ pub const CodeGenContext = struct {
                 _ = try self.generateExpression(node_idx);
             },
             .if_stmt => try self.generateIf(node_idx),
+            .block => {
+                _ = try self.generateBlock(node_idx);
+            },
             else => return null,
         }
         return kind;

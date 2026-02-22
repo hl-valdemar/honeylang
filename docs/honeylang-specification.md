@@ -362,6 +362,78 @@ if (complex_expr and another_expr) {
 
 For optional unwrapping with `if`, see Optional Types.
 
+### Blocks and Scoping
+
+A bare block `{ ... }` can appear anywhere a statement is expected. It introduces a new scope: variables declared inside are local to the block and are dropped when the block exits.
+
+```honey
+main :: func() void {
+    a := 1
+    {
+        b := 2          # b is only visible inside this block
+        use(a + b)      # a is visible from the outer scope
+    }
+    # b is no longer in scope here
+    b := 3              # this is fine — it's a new declaration, not a redeclaration
+}
+```
+
+**Shadowing is not allowed.** Redeclaring a variable that already exists in an enclosing scope (or as a function parameter) is an error:
+
+```honey
+main :: func(x: i32) void {
+    x := 5              # ERROR: variable shadows outer declaration (parameter)
+}
+
+main :: func() void {
+    a := 1
+    {
+        a := 2          # ERROR: variable shadows outer declaration
+    }
+}
+```
+
+Sibling blocks do not conflict — once a block exits, its names are available for reuse:
+
+```honey
+main :: func() void {
+    {
+        temp := compute_a()
+    }
+    {
+        temp := compute_b()     # fine — previous temp was dropped
+    }
+}
+```
+
+### Defer
+
+The `defer` keyword schedules a statement to execute when the enclosing block exits, regardless of how the block is exited (fall-through or return). Multiple defers in the same block execute in reverse order (LIFO):
+
+```honey
+main :: func() void {
+    {
+        defer printf("second\n")
+        defer printf("first\n")
+        printf("inside\n")
+    }
+    # output: inside, first, second
+    printf("after\n")
+}
+```
+
+Defers execute before `return` when a return appears inside the block:
+
+```honey
+open_and_read :: func() i32 {
+    handle := open("file.txt")
+    defer close(handle)             # runs before the function returns
+
+    data := read(handle)
+    return process(data)            # close(handle) runs here, before returning
+}
+```
+
 ### Match Statements and Expressions
 
 Pattern matching on values:

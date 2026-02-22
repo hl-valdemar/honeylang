@@ -280,14 +280,95 @@ main :: func() i32 {
 }
 ```
 
+### Bare Blocks
+
+A bare block `{ ... }` introduces a new scope. Variables declared inside are local to the block:
+
+```honey
+main :: func() i32 {
+    a := 1
+    {
+        b := 2
+        return a + b    # a visible from outer scope
+    }
+}
+```
+
+Variables do not leak out of a block. Once a block exits, names used inside it are available for reuse:
+
+```honey
+main :: func() i32 {
+    {
+        b := 1
+    }
+    # b is no longer in scope
+    b := 2          # fine — new declaration
+    return b
+}
+```
+
+Bare blocks can be nested arbitrarily:
+
+```honey
+main :: func() i32 {
+    a := 1
+    {
+        b := 2
+        {
+            c := 3
+            return a + b + c
+        }
+    }
+}
+```
+
+### Shadowing
+
+Shadowing is not allowed. Redeclaring a variable that exists in any enclosing scope — including function parameters — is an error (`S042`):
+
+```honey
+main :: func(x: i32) void {
+    x := 5                  # ERROR: variable shadows outer declaration
+}
+
+main :: func() void {
+    a := 1
+    {
+        a := 2              # ERROR: variable shadows outer declaration
+    }
+}
+```
+
+Sibling blocks do not conflict:
+
+```honey
+main :: func() void {
+    { a := 1 }
+    { a := 2 }             # fine — previous a was dropped
+}
+```
+
 ### Defer
 
-Deferred statements execute before the function returns:
+Deferred statements execute when the enclosing block exits, in reverse order (LIFO). This works in function bodies and bare blocks:
 
 ```honey
 main :: func() i32 {
     defer y := 10
     return 42
+}
+```
+
+Defer in a bare block runs on block exit:
+
+```honey
+main :: func() void {
+    {
+        defer printf("leaving block\n")
+        printf("inside block\n")
+    }
+    # output: inside block, leaving block
+    printf("after block\n")
 }
 ```
 
@@ -1098,6 +1179,12 @@ The compiler detects errors at each phase and continues processing.
 | ----- | ------- |
 | `arithmetic_op_requires_numeric` | `true + false` |
 | `logical_op_requires_bool` | `1 and 2`, `not 1` |
+
+**Scoping:**
+
+| Error | Example |
+| ----- | ------- |
+| `variable_shadowing` | `a := 1; { a := 2 }` (inner `a` shadows outer) |
 
 **Mutability & Control Flow:**
 

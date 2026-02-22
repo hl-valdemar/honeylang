@@ -759,6 +759,7 @@ pub const Parser = struct {
                 }
             },
             .@"if" => try self.parseIfStmt(),
+            .left_curly => try self.parseBlock(),
             else => try self.parseExpression(),
         };
     }

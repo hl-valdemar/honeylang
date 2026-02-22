@@ -79,6 +79,9 @@ pub const SemanticErrorKind = enum {
     index_not_integer,
     assign_to_immutable_element,
 
+    // scoping errors
+    variable_shadowing,
+
     pub fn info(self: SemanticErrorKind) ErrorInfo {
         return error_info.get(self);
     }
@@ -301,6 +304,11 @@ pub const error_info = std.EnumArray(SemanticErrorKind, ErrorInfo).init(.{
         .code = "S041",
         .message = "cannot assign to immutable array element",
         .help = "use [N]mut T to declare an array with mutable elements",
+    },
+    .variable_shadowing = .{
+        .code = "S042",
+        .message = "variable shadows outer declaration",
+        .help = "shadowing is not supported; use a different name",
     },
 });
 

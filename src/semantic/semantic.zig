@@ -3338,6 +3338,20 @@ pub const SemanticContext = struct {
 
     fn declareLocal(self: *SemanticContext, name: []const u8, type_id: TypeId, is_mutable: bool, node_idx: NodeIndex) !void {
         if (self.scopes.items.len == 0) return; // no scope active
+
+        // check all scopes for shadowing (current scope catches param/local conflicts)
+        for (self.scopes.items) |scope| {
+            if (scope.locals.contains(name)) {
+                const loc = self.ast.getLocation(node_idx);
+                try self.addError(.{
+                    .kind = .variable_shadowing,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+                break;
+            }
+        }
+
         var current = &self.scopes.items[self.scopes.items.len - 1];
         try current.locals.put(name, .{
             .type_id = type_id,
