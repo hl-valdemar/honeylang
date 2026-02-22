@@ -717,7 +717,7 @@ pub const SemanticContext = struct {
             try param_types.append(self.allocator, param_type);
         }
 
-        const func_type = try self.types.addFunctionType(param_types.items, return_type, decl.call_conv);
+        const func_type = try self.types.addFunctionTypeEx(param_types.items, return_type, decl.call_conv, decl.is_variadic);
 
         const result = try self.symbols.register(name, name_token.start, .function, .resolved, func_type, node_idx, false);
         if (result == null) {
@@ -1142,10 +1142,11 @@ pub const SemanticContext = struct {
         }
 
         // register function type
-        const func_type = try self.types.addFunctionType(
+        const func_type = try self.types.addFunctionTypeEx(
             param_types.items,
             return_type,
             decl.call_conv,
+            decl.is_variadic,
         );
 
         // register symbol
@@ -2705,28 +2706,41 @@ pub const SemanticContext = struct {
         }
 
         // get function type from registry
+        const func_type_info = self.types.getFunctionType(func_type_id);
         const param_types = self.types.getParamTypes(func_type_id) orelse &[_]TypeId{};
         const return_type = self.types.getReturnType(func_type_id) orelse TypeId.void;
+        const is_variadic = if (func_type_info) |ft| ft.is_variadic else false;
 
         // get args
         const args = self.ast.getExtra(call.args);
 
-        // check args count
-        if (args.len != param_types.len) {
-            try self.addError(.{
-                .kind = .argument_count_mismatch,
-                .start = loc.start,
-                .end = loc.end,
-            });
+        // check args count — variadic functions allow extra args
+        if (is_variadic) {
+            if (args.len < param_types.len) {
+                try self.addError(.{
+                    .kind = .argument_count_mismatch,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+        } else {
+            if (args.len != param_types.len) {
+                try self.addError(.{
+                    .kind = .argument_count_mismatch,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
         }
 
-        // check each arg type
-        const check_count = @min(args.len, param_types.len);
-        for (0..check_count) |i| {
+        // check each arg type (fixed params get matched, variadic extras just get type-checked)
+        for (0..args.len) |i| {
             const arg_idx = args[i];
-            const expected_type = param_types[i];
+            const expected_type: TypeId = if (i < param_types.len) param_types[i] else .unresolved;
 
             const arg_type = try self.checkExpression(arg_idx, expected_type);
+            // skip compatibility check for variadic extra args (no expected type)
+            if (i >= param_types.len) continue;
             if (arg_type) |at| {
                 if (!self.typesCompatible(expected_type, at)) {
                     const arg_loc = self.ast.getLocation(arg_idx);

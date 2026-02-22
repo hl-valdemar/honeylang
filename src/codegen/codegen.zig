@@ -893,6 +893,7 @@ pub const CodeGenContext = struct {
             try self.allocator.dupe(Width, param_widths.items),
             try self.allocator.dupe(?u32, param_struct_indices.items),
             try self.allocator.dupe(bool, param_slice_flags.items),
+            func.is_variadic,
         );
     }
 
@@ -1695,10 +1696,9 @@ pub const CodeGenContext = struct {
         // 2. Look up function to get calling convention and extern name
         const sym_idx = self.symbols.lookup(func_name) orelse return null;
         const func_type_id = self.symbols.getTypeId(sym_idx);
-        const call_conv = if (self.types.getFunctionType(func_type_id)) |ft|
-            ft.calling_conv
-        else
-            .honey;
+        const func_type_info = self.types.getFunctionType(func_type_id);
+        const call_conv = if (func_type_info) |ft| ft.calling_conv else .honey;
+        const is_variadic = if (func_type_info) |ft| ft.is_variadic else false;
 
         // Use extern_name for imported extern C functions (unqualified symbol name)
         const emit_name = self.symbols.getExternName(sym_idx) orelse func_name;
@@ -1729,13 +1729,17 @@ pub const CodeGenContext = struct {
                 try arg_slice_flags.append(self.allocator, false);
                 continue;
             };
-            // Check if param expects a sentinel-terminated slice in C convention
+            // Check if this is a sentinel-terminated slice in C convention
             // If so, extract just the data pointer — C sees a raw char*, not a fat pointer
             const is_expected_slice = expected_type != null and expected_type.?.isSlice();
-            const is_c_sentinel = is_expected_slice and call_conv == .c and
+            const is_c_sentinel_param = is_expected_slice and call_conv == .c and
                 (if (self.types.getSliceType(expected_type.?)) |si| si.sentinel != null else false);
+            // For variadic extra args: if the arg itself is a sentinel slice, extract data ptr
+            const is_c_sentinel_vararg = expected_type == null and call_conv == .c and
+                arg_type.isSlice() and
+                (if (self.types.getSliceType(arg_type)) |si| si.sentinel != null else false);
 
-            if (is_c_sentinel) {
+            if (is_c_sentinel_param or is_c_sentinel_vararg) {
                 // Extract data pointer from the fat pointer for C interop
                 const data_ptr = try func.emitSliceGetPtr(arg_reg);
                 try arg_regs.append(self.allocator, data_ptr);
@@ -1796,7 +1800,8 @@ pub const CodeGenContext = struct {
             for (arg_slice_flags.items) |f| try sret_slice_flags.append(self.allocator, f);
 
             // call returns void; the struct is written via sret pointer
-            _ = try func.emitCall(emit_name, sret_args.items, sret_widths.items, sret_struct_indices.items, sret_slice_flags.items, call_conv, null, struct_idx);
+            const fixed_count: u32 = if (param_types) |pt| @intCast(pt.len) else 0;
+            _ = try func.emitCall(emit_name, sret_args.items, sret_widths.items, sret_struct_indices.items, sret_slice_flags.items, call_conv, null, struct_idx, is_variadic, fixed_count);
 
             return result_ptr;
         }
@@ -1808,7 +1813,8 @@ pub const CodeGenContext = struct {
             break :blk typeIdToWidth(rt, self.target);
         } else .w32;
 
-        return try func.emitCall(emit_name, arg_regs.items, arg_widths.items, arg_struct_indices.items, arg_slice_flags.items, call_conv, return_width, null);
+        const fixed_count: u32 = if (param_types) |pt| @intCast(pt.len) else 0;
+        return try func.emitCall(emit_name, arg_regs.items, arg_widths.items, arg_struct_indices.items, arg_slice_flags.items, call_conv, return_width, null, is_variadic, fixed_count);
     }
 
     fn generateFieldAccess(self: *CodeGenContext, node_idx: NodeIndex) CodeGenError!?VReg {

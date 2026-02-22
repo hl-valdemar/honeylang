@@ -93,6 +93,7 @@ pub const FuncDecl = struct {
     return_type: NodeIndex,
     body: ?NodeIndex, // null for external functions
     call_conv: CallingConvention,
+    is_variadic: bool = false,
 };
 
 pub const VarDecl = struct {
@@ -488,6 +489,7 @@ pub const Ast = struct {
         return_type: NodeIndex,
         body: ?NodeIndex,
         calling_conv: CallingConvention,
+        is_variadic: bool,
         start: SourceIndex,
         end: SourceIndex,
     ) !NodeIndex {
@@ -504,6 +506,7 @@ pub const Ast = struct {
             .return_type = return_type,
             .body = body,
             .call_conv = calling_conv,
+            .is_variadic = is_variadic,
         });
 
         return node_idx;

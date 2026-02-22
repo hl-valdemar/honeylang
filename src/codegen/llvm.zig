@@ -247,6 +247,11 @@ fn emitExternDecl(emitter: *Emitter, ext: *const mir.ExternFunc, types: *const T
         try emitter.appendSlice(widthToLLVMType(pw));
     }
 
+    if (ext.is_variadic) {
+        if (ext.param_widths.len > 0) try emitter.appendSlice(", ");
+        try emitter.appendSlice("...");
+    }
+
     try emitter.appendSlice(")\n");
 }
 
@@ -272,7 +277,9 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
         }
         try emitter.appendSlice(") {\n");
     } else {
-        const ret_str = if (func.return_width) |w| widthToLLVMType(w) else "void";
+        const is_main = std.mem.eql(u8, func.name, "main");
+        // main always returns i32 for the OS, even if declared void
+        const ret_str = if (is_main and func.return_width == null) "i32" else if (func.return_width) |w| widthToLLVMType(w) else "void";
 
         // function signature with parameters
         try emitter.appendFmt("define {s}{s} @{s}(", .{ cc_attr, ret_str, func.name });
@@ -311,7 +318,11 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
         else => true,
     };
     if (needs_ret) {
-        if (func.return_width) |w| {
+        const is_main = std.mem.eql(u8, func.name, "main");
+        if (is_main and func.return_width == null) {
+            // void main returns i32 0 to the OS
+            try emitter.appendSlice("  ret i32 0\n");
+        } else if (func.return_width) |w| {
             const zero_str: []const u8 = if (w.isFloat()) "0.0" else "0";
             try emitter.appendFmt("  ret {s} {s}\n", .{ widthToLLVMType(w), zero_str });
         } else {
@@ -403,12 +414,16 @@ fn lowerInst(
         },
 
         .ret => |op| {
+            const is_main = std.mem.eql(u8, func.name, "main");
             if (op.value) |vreg| {
                 const src_ssa = ssa_map.get(vreg);
                 const ret_type = if (func.return_width) |w| widthToLLVMType(w) else "i32";
                 try emitter.appendFmt("  ret {s} %{d}\n", .{ ret_type, src_ssa });
             } else {
-                if (func.return_width) |w| {
+                if (is_main and func.return_width == null) {
+                    // void main returns i32 0 to the OS
+                    try emitter.appendSlice("  ret i32 0\n");
+                } else if (func.return_width) |w| {
                     // non-void function with no explicit value — return 0
                     const zero_str: []const u8 = if (w.isFloat()) "0.0" else "0";
                     try emitter.appendFmt("  ret {s} {s}\n", .{ widthToLLVMType(w), zero_str });
@@ -570,13 +585,45 @@ fn lowerInst(
                 if (op.dst) |dst_vreg| {
                     const dst_ssa = ssa_map.allocFor(dst_vreg);
                     const ret_type = widthToLLVMType(op.width);
-                    try emitter.appendFmt("  %{d} = call {s}{s} @{s}({s})\n", .{
-                        dst_ssa, call_cc, ret_type, op.func_name, args_str.items,
-                    });
+                    if (op.is_variadic) {
+                        // Variadic calls need explicit function type: call i32 (ptr, ...) @name(args)
+                        var type_str = try std.ArrayList(u8).initCapacity(emitter.allocator, 64);
+                        defer type_str.deinit(emitter.allocator);
+                        try type_str.appendSlice(emitter.allocator, ret_type);
+                        try type_str.appendSlice(emitter.allocator, " (");
+                        for (0..op.fixed_param_count) |pi| {
+                            if (pi > 0) try type_str.appendSlice(emitter.allocator, ", ");
+                            try type_str.appendSlice(emitter.allocator, widthToLLVMType(op.arg_widths[pi]));
+                        }
+                        if (op.fixed_param_count > 0) try type_str.appendSlice(emitter.allocator, ", ");
+                        try type_str.appendSlice(emitter.allocator, "...)");
+                        try emitter.appendFmt("  %{d} = call {s}{s} @{s}({s})\n", .{
+                            dst_ssa, call_cc, type_str.items, op.func_name, args_str.items,
+                        });
+                    } else {
+                        try emitter.appendFmt("  %{d} = call {s}{s} @{s}({s})\n", .{
+                            dst_ssa, call_cc, ret_type, op.func_name, args_str.items,
+                        });
+                    }
                 } else {
-                    try emitter.appendFmt("  call {s}void @{s}({s})\n", .{
-                        call_cc, op.func_name, args_str.items,
-                    });
+                    if (op.is_variadic) {
+                        var type_str = try std.ArrayList(u8).initCapacity(emitter.allocator, 64);
+                        defer type_str.deinit(emitter.allocator);
+                        try type_str.appendSlice(emitter.allocator, "void (");
+                        for (0..op.fixed_param_count) |pi| {
+                            if (pi > 0) try type_str.appendSlice(emitter.allocator, ", ");
+                            try type_str.appendSlice(emitter.allocator, widthToLLVMType(op.arg_widths[pi]));
+                        }
+                        if (op.fixed_param_count > 0) try type_str.appendSlice(emitter.allocator, ", ");
+                        try type_str.appendSlice(emitter.allocator, "...)");
+                        try emitter.appendFmt("  call {s}{s} @{s}({s})\n", .{
+                            call_cc, type_str.items, op.func_name, args_str.items,
+                        });
+                    } else {
+                        try emitter.appendFmt("  call {s}void @{s}({s})\n", .{
+                            call_cc, op.func_name, args_str.items,
+                        });
+                    }
                 }
             }
         },

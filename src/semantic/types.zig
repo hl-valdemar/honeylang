@@ -179,6 +179,7 @@ pub const FunctionType = struct {
     param_types: []const TypeId,
     return_type: TypeId,
     calling_conv: CallingConvention,
+    is_variadic: bool = false,
 };
 
 pub const StructField = struct {
@@ -277,6 +278,16 @@ pub const TypeRegistry = struct {
         ret: TypeId,
         calling_conv: CallingConvention,
     ) !TypeId {
+        return self.addFunctionTypeEx(params, ret, calling_conv, false);
+    }
+
+    pub fn addFunctionTypeEx(
+        self: *TypeRegistry,
+        params: []const TypeId,
+        ret: TypeId,
+        calling_conv: CallingConvention,
+        is_variadic: bool,
+    ) !TypeId {
         // copy params into arena
         const arena_alloc = self.arena.allocator();
         const params_copy = try arena_alloc.dupe(TypeId, params);
@@ -286,6 +297,7 @@ pub const TypeRegistry = struct {
             .param_types = params_copy,
             .return_type = ret,
             .calling_conv = calling_conv,
+            .is_variadic = is_variadic,
         });
 
         return .{ .function = idx };

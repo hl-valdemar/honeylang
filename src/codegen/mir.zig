@@ -167,6 +167,8 @@ pub const MInst = union(enum) {
         call_conv: CallingConvention,
         width: Width, // return value width
         sret_struct_idx: ?u32 = null, // non-null => first arg is sret pointer
+        is_variadic: bool = false, // true for C variadic calls
+        fixed_param_count: u32 = 0, // number of fixed (non-variadic) params
     },
 
     /// Label (branch target).
@@ -342,6 +344,7 @@ pub const ExternFunc = struct {
     param_widths: []const Width,
     param_struct_indices: []const ?u32 = &.{}, // parallel to param_widths; non-null for struct params
     param_slice_flags: []const bool = &.{}, // parallel to param_widths; true for slice params
+    is_variadic: bool = false,
 };
 
 /// A function in MIR form.
@@ -649,6 +652,8 @@ pub const MIRFunction = struct {
         call_conv: CallingConvention,
         return_width: ?Width,
         sret_struct_idx: ?u32,
+        is_variadic_val: bool,
+        fixed_param_count: u32,
     ) !?VReg {
         const dst: ?VReg = if (return_width != null) self.allocVReg() else null;
         const args_copy = try self.allocator.dupe(VReg, args);
@@ -665,6 +670,8 @@ pub const MIRFunction = struct {
             .call_conv = call_conv,
             .width = return_width orelse .w32,
             .sret_struct_idx = sret_struct_idx,
+            .is_variadic = is_variadic_val,
+            .fixed_param_count = fixed_param_count,
         } });
         return dst;
     }
@@ -824,6 +831,7 @@ pub const MIRModule = struct {
         param_widths: []const Width,
         param_struct_indices: []const ?u32,
         param_slice_flags: []const bool,
+        is_variadic: bool,
     ) !void {
         try self.extern_functions.append(self.allocator, .{
             .name = name,
@@ -832,6 +840,7 @@ pub const MIRModule = struct {
             .param_widths = param_widths,
             .param_struct_indices = param_struct_indices,
             .param_slice_flags = param_slice_flags,
+            .is_variadic = is_variadic,
         });
     }
 };

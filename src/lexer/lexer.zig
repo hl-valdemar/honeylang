@@ -99,7 +99,12 @@ const Lexer = struct {
                     self.advance();
                     if (self.peek() == '.') {
                         self.advance();
-                        try tokens.append(self.allocator, self.makeToken(.dot_dot, start, self.pos));
+                        if (self.peek() == '.') {
+                            self.advance();
+                            try tokens.append(self.allocator, self.makeToken(.ellipsis, start, self.pos));
+                        } else {
+                            try tokens.append(self.allocator, self.makeToken(.dot_dot, start, self.pos));
+                        }
                     } else {
                         try tokens.append(self.allocator, self.makeToken(.dot, start, self.pos));
                     }

@@ -446,8 +446,13 @@ pub const Parser = struct {
         // expect (
         try self.expectToken(.left_paren, .expected_left_paren);
 
-        // parse parameters
+        // parse parameters, checking for variadic ...
+        var is_variadic = false;
         const params = try self.parseParameters();
+        if (self.check(.ellipsis)) {
+            self.advance(); // consume ...
+            is_variadic = true;
+        }
 
         // expect )
         try self.expectToken(.right_paren, .expected_right_paren);
@@ -463,7 +468,7 @@ pub const Parser = struct {
 
         const end_pos = self.previousEnd();
 
-        return try self.ast.addFuncDecl(name, params, return_type, body, calling_conv, start_pos, end_pos);
+        return try self.ast.addFuncDecl(name, params, return_type, body, calling_conv, is_variadic, start_pos, end_pos);
     }
 
     fn parseStructDecl(self: *Parser) ParseError!NodeIndex {
@@ -599,7 +604,7 @@ pub const Parser = struct {
         var params = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 1);
         defer params.deinit(self.allocator);
 
-        while (!self.check(.right_paren)) {
+        while (!self.check(.right_paren) and !self.check(.ellipsis)) {
             // parse parameter name (identifier)
             const param_name = try self.parseIdentifier();
             try params.append(self.allocator, param_name);
@@ -611,7 +616,7 @@ pub const Parser = struct {
             const param_type = try self.parseType();
             try params.append(self.allocator, param_type);
 
-            // handle comma
+            // handle comma (may be followed by ... for variadics)
             if (self.check(.comma)) {
                 self.advance();
             } else {

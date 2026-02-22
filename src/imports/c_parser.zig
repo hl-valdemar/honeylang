@@ -33,6 +33,7 @@ pub const CFunction = struct {
     return_type: CType,
     return_struct_name: ?[]const u8 = null,
     params: []const CParam,
+    is_variadic: bool = false,
 
     pub fn freeAll(functions: []const CFunction, allocator: mem.Allocator) void {
         for (functions) |func| {
@@ -165,6 +166,7 @@ pub fn parse(allocator: mem.Allocator, source: []const u8) !CParseResult {
                 .return_type = func_result.func.return_type,
                 .return_struct_name = duped_ret_struct,
                 .params = duped_params,
+                .is_variadic = func_result.func.is_variadic,
             });
         } else {
             pos = skipToNextDecl(preprocessed, pos);
@@ -311,20 +313,22 @@ fn tryParseFunction(allocator: mem.Allocator, src: []const u8, start: usize, kno
             .return_type = return_type,
             .return_struct_name = return_struct_name,
             .params = params_result.params,
+            .is_variadic = params_result.is_variadic,
         },
         .end_pos = pos,
     };
 }
 
-fn parseParams(allocator: mem.Allocator, src: []const u8, start: usize, known_structs: *std.StringHashMap(void)) !struct { params: []const CParam, end_pos: usize } {
+fn parseParams(allocator: mem.Allocator, src: []const u8, start: usize, known_structs: *std.StringHashMap(void)) !struct { params: []const CParam, end_pos: usize, is_variadic: bool } {
     var params = try std.ArrayList(CParam).initCapacity(allocator, 4);
     defer params.deinit(allocator);
     var pos = start;
+    var is_variadic = false;
 
     // Check for (void) or ()
     const check_pos = skipWhitespace(src, pos);
     if (check_pos < src.len and src[check_pos] == ')') {
-        return .{ .params = &.{}, .end_pos = check_pos };
+        return .{ .params = &.{}, .end_pos = check_pos, .is_variadic = false };
     }
 
     // Check for (void)
@@ -333,7 +337,7 @@ fn parseParams(allocator: mem.Allocator, src: []const u8, start: usize, known_st
         if (mem.eql(u8, vt.text, "void")) {
             const after_void = skipWhitespace(src, vt.end);
             if (after_void < src.len and src[after_void] == ')') {
-                return .{ .params = &.{}, .end_pos = after_void };
+                return .{ .params = &.{}, .end_pos = after_void, .is_variadic = false };
             }
         }
     }
@@ -351,10 +355,11 @@ fn parseParams(allocator: mem.Allocator, src: []const u8, start: usize, known_st
             pos = skipWhitespace(src, pos);
             if (pos >= src.len or src[pos] == ',' or src[pos] == ')') break;
 
-            // Variadic `...` — skip and mark parameter as variadic
+            // Variadic `...` — skip params and mark function as variadic
             if (pos + 2 < src.len and src[pos] == '.' and src[pos + 1] == '.' and src[pos + 2] == '.') {
                 pos += 3;
                 param_tokens.clearRetainingCapacity();
+                is_variadic = true;
                 break;
             }
 
@@ -424,7 +429,7 @@ fn parseParams(allocator: mem.Allocator, src: []const u8, start: usize, known_st
         if (pos < src.len and src[pos] == ',') pos += 1;
     }
 
-    return .{ .params = try allocator.dupe(CParam, params.items), .end_pos = pos };
+    return .{ .params = try allocator.dupe(CParam, params.items), .end_pos = pos, .is_variadic = is_variadic };
 }
 
 /// Resolve a parameter's type info from its tokens, pointer flag, and known struct names.
@@ -1199,6 +1204,7 @@ test "parse function with variadic params" {
     try std.testing.expectEqual(@as(usize, 1), result.functions[0].params.len);
     try std.testing.expectEqualStrings("fmt", result.functions[0].params[0].name);
     try std.testing.expectEqual(CType.ptr, result.functions[0].params[0].c_type);
+    try std.testing.expect(result.functions[0].is_variadic);
 }
 
 test "parse function with __attribute__" {

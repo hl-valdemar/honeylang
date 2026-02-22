@@ -554,6 +554,10 @@ fn generateBindingSource(
             defer allocator.free(type_str);
             try writer.print("{s}: {s}", .{ param.name, type_str });
         }
+        if (func.is_variadic) {
+            if (func.params.len > 0) try writer.writeAll(", ");
+            try writer.writeAll("...");
+        }
 
         const ret_str = try c_parser.formatHoneyType(allocator, func.return_type, func.return_struct_name, null, null);
         defer allocator.free(ret_str);
