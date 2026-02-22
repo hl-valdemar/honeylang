@@ -66,7 +66,7 @@ test "unary not" {
     var r = try compileTo(.semantic,
         \\main :: func() bool {
         \\  x: bool = true
-        \\  return not x
+        \\  return !x
         \\}
         \\
     );

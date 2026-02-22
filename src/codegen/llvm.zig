@@ -236,7 +236,11 @@ fn emitExternDecl(emitter: *Emitter, ext: *const mir.ExternFunc, types: *const T
         if (j < ext.param_struct_indices.len) {
             if (ext.param_struct_indices[j]) |si| {
                 const struct_type = types.struct_types.items[si];
-                try emitter.appendFmt("ptr byval(%{s})", .{struct_type.name});
+                switch (structParamABI(struct_type.size, emitter.target.arch)) {
+                    .register => try emitter.appendSlice(structCoercionType(struct_type.size, emitter.target.arch)),
+                    .two_registers => try emitter.appendSlice("[2 x i64]"),
+                    .indirect => try emitter.appendFmt("ptr byval(%{s})", .{struct_type.name}),
+                }
                 continue;
             }
         }
@@ -540,9 +544,30 @@ fn lowerInst(
                     const is_slice_arg = if (i < op.arg_slice_flags.len) op.arg_slice_flags[i] else false;
                     if (struct_idx_val) |si| {
                         const arg_struct = types.struct_types.items[si];
-                        var abuf: [64]u8 = undefined;
-                        const arg_fmt = std.fmt.bufPrint(&abuf, "ptr byval(%{s}) %{d}", .{ arg_struct.name, arg_ssa }) catch unreachable;
-                        try args_str.appendSlice(emitter.allocator, arg_fmt);
+                        switch (structParamABI(arg_struct.size, emitter.target.arch)) {
+                            .register => {
+                                const coerce_type = structCoercionType(arg_struct.size, emitter.target.arch);
+                                const load_ssa = ssa_map.next_ssa;
+                                ssa_map.next_ssa += 1;
+                                try emitter.appendFmt("  %{d} = load {s}, ptr %{d}\n", .{ load_ssa, coerce_type, arg_ssa });
+                                var abuf: [64]u8 = undefined;
+                                const arg_fmt = std.fmt.bufPrint(&abuf, "{s} %{d}", .{ coerce_type, load_ssa }) catch unreachable;
+                                try args_str.appendSlice(emitter.allocator, arg_fmt);
+                            },
+                            .two_registers => {
+                                const load_ssa = ssa_map.next_ssa;
+                                ssa_map.next_ssa += 1;
+                                try emitter.appendFmt("  %{d} = load [2 x i64], ptr %{d}\n", .{ load_ssa, arg_ssa });
+                                var abuf: [64]u8 = undefined;
+                                const arg_fmt = std.fmt.bufPrint(&abuf, "[2 x i64] %{d}", .{load_ssa}) catch unreachable;
+                                try args_str.appendSlice(emitter.allocator, arg_fmt);
+                            },
+                            .indirect => {
+                                var abuf: [64]u8 = undefined;
+                                const arg_fmt = std.fmt.bufPrint(&abuf, "ptr byval(%{s}) %{d}", .{ arg_struct.name, arg_ssa }) catch unreachable;
+                                try args_str.appendSlice(emitter.allocator, arg_fmt);
+                            },
+                        }
                     } else if (is_slice_arg) {
                         var abuf: [64]u8 = undefined;
                         const arg_fmt = std.fmt.bufPrint(&abuf, "ptr byval(%slice) %{d}", .{arg_ssa}) catch unreachable;
@@ -571,10 +596,31 @@ fn lowerInst(
                     const struct_idx: ?u32 = if (i < op.arg_struct_indices.len) op.arg_struct_indices[i] else null;
                     const is_slice_arg = if (i < op.arg_slice_flags.len) op.arg_slice_flags[i] else false;
                     if (struct_idx) |si| {
-                        const struct_type = types.struct_types.items[si];
-                        var buf: [64]u8 = undefined;
-                        const arg_fmt = std.fmt.bufPrint(&buf, "ptr byval(%{s}) %{d}", .{ struct_type.name, arg_ssa }) catch unreachable;
-                        try args_str.appendSlice(emitter.allocator, arg_fmt);
+                        const arg_struct = types.struct_types.items[si];
+                        switch (structParamABI(arg_struct.size, emitter.target.arch)) {
+                            .register => {
+                                const coerce_type = structCoercionType(arg_struct.size, emitter.target.arch);
+                                const load_ssa = ssa_map.next_ssa;
+                                ssa_map.next_ssa += 1;
+                                try emitter.appendFmt("  %{d} = load {s}, ptr %{d}\n", .{ load_ssa, coerce_type, arg_ssa });
+                                var buf: [64]u8 = undefined;
+                                const arg_fmt = std.fmt.bufPrint(&buf, "{s} %{d}", .{ coerce_type, load_ssa }) catch unreachable;
+                                try args_str.appendSlice(emitter.allocator, arg_fmt);
+                            },
+                            .two_registers => {
+                                const load_ssa = ssa_map.next_ssa;
+                                ssa_map.next_ssa += 1;
+                                try emitter.appendFmt("  %{d} = load [2 x i64], ptr %{d}\n", .{ load_ssa, arg_ssa });
+                                var buf: [64]u8 = undefined;
+                                const arg_fmt = std.fmt.bufPrint(&buf, "[2 x i64] %{d}", .{load_ssa}) catch unreachable;
+                                try args_str.appendSlice(emitter.allocator, arg_fmt);
+                            },
+                            .indirect => {
+                                var buf: [64]u8 = undefined;
+                                const arg_fmt = std.fmt.bufPrint(&buf, "ptr byval(%{s}) %{d}", .{ arg_struct.name, arg_ssa }) catch unreachable;
+                                try args_str.appendSlice(emitter.allocator, arg_fmt);
+                            },
+                        }
                     } else if (is_slice_arg) {
                         var buf: [64]u8 = undefined;
                         const arg_fmt = std.fmt.bufPrint(&buf, "ptr byval(%slice) %{d}", .{arg_ssa}) catch unreachable;
@@ -1004,6 +1050,45 @@ fn floatCmpOpToLLVM(op: CmpOp) []const u8 {
         .le_s, .le_u => "ole",
         .gt_s, .gt_u => "ogt",
         .ge_s, .ge_u => "oge",
+    };
+}
+
+/// Determine how a C ABI struct parameter should be passed based on size and target.
+const StructPassing = enum {
+    /// Coerce to a single integer register
+    register,
+    /// Split across two i64 registers (9-16 byte structs)
+    two_registers,
+    /// Pass by pointer (byval) for large structs
+    indirect,
+};
+
+fn structParamABI(size: u32, arch: codegen.Arch) StructPassing {
+    return switch (arch) {
+        .aarch64 => {
+            if (size <= 8) return .register;
+            if (size <= 16) return .two_registers;
+            return .indirect;
+        },
+        .x86_64 => {
+            if (size <= 8) return .register;
+            if (size <= 16) return .two_registers;
+            return .indirect;
+        },
+        .arm, .x86 => .indirect,
+    };
+}
+
+fn structCoercionType(size: u32, arch: codegen.Arch) []const u8 {
+    return switch (arch) {
+        .aarch64 => "i64",
+        .x86_64 => switch (size) {
+            1 => "i8",
+            2 => "i16",
+            3, 4 => "i32",
+            else => "i64",
+        },
+        else => "i32",
     };
 }
 

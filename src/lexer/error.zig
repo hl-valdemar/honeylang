@@ -20,7 +20,6 @@ pub const LexerErrorKind = enum {
     unexpected_eof,
 
     // operator suggestions
-    use_not_instead,
     use_and_instead,
     use_or_instead,
 };

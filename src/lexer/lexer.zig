@@ -31,8 +31,7 @@ const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     .{ "while", .@"while" },
     .{ "break", .@"break" },
     .{ "continue", .@"continue" },
-    .{ "not", .not },
-    .{ "and", .@"and" },
+.{ "and", .@"and" },
     .{ "or", .@"or" },
     .{ "xor", .xor },
     .{ "namespace", .namespace },
@@ -215,7 +214,6 @@ const Lexer = struct {
                         try tokens.append(self.allocator, self.makeToken(.not_equal, start, self.pos));
                     } else {
                         try tokens.append(self.allocator, self.makeToken(.not, start, self.pos));
-                        try self.errors.addSimple(.use_not_instead, start, self.pos);
                     }
                 },
                 '=' => {

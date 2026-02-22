@@ -51,11 +51,6 @@ const error_info = std.EnumArray(LexerErrorKind, ErrorInfo).init(.{
         .message = "unexpected end of file",
         .help = "the file ended unexpectedly",
     },
-    .use_not_instead = .{
-        .code = "L008",
-        .message = "use `not` instead of `!`",
-        .help = "honey uses `not` for logical negation",
-    },
     .use_and_instead = .{
         .code = "L009",
         .message = "use `and` instead of `&&`",

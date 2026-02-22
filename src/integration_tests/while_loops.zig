@@ -112,7 +112,7 @@ test "while with not condition" {
         \\main :: func() i32 {
         \\    mut done := false
         \\    mut i := 0
-        \\    while not done {
+        \\    while !done {
         \\        i += 1
         \\        if i == 5 {
         \\            done = true

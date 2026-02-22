@@ -14,15 +14,6 @@ test "unexpected character produces lexer error" {
     try r.expectLexerError(.unexpected_character);
 }
 
-test "standalone bang suggests not keyword" {
-    var r = try compileTo(.lexer,
-        \\x :: 10 ! 20
-        \\
-    );
-    defer r.deinit();
-    try r.expectLexerError(.use_not_instead);
-}
-
 test "multiple decimal points produces lexer error" {
     var r = try compileTo(.lexer,
         \\pi :: 3.14.159
@@ -262,7 +253,7 @@ test "not on integer operand" {
     var r = try compileTo(.semantic,
         \\main :: func() bool {
         \\  a: i32 = 1
-        \\  return not a
+        \\  return !a
         \\}
         \\
     );
