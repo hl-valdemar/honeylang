@@ -97,6 +97,11 @@ fn getNodeInfo(
                 "";
             break :blk std.fmt.bufPrint(&S.buf, "{s}struct {s}, fields: {d}", .{ cc_str, name, field_count }) catch "?";
         },
+        .opaque_decl => blk: {
+            const decl = ast.getOpaqueDecl(idx);
+            const name = getIdentifierName(ast, tokens, src, decl.name);
+            break :blk std.fmt.bufPrint(&S.buf, "opaque {s}", .{name}) catch "?";
+        },
         .func_decl => blk: {
             const decl = ast.getFuncDecl(idx);
             const name = getIdentifierName(ast, tokens, src, decl.name);
@@ -392,6 +397,14 @@ fn printNode(
                 printTypeValue(ast, tokens, src, fields[fi + 1]);
                 std.debug.print("\n", .{});
             }
+        },
+
+        .opaque_decl => {
+            std.debug.print("opaque_decl:\n", .{});
+            const decl = ast.getOpaqueDecl(idx);
+            std.debug.print("{s}└─ name: ", .{child_prefix});
+            printIdentifierValue(ast, tokens, src, decl.name);
+            std.debug.print("\n", .{});
         },
 
         .func_decl => {

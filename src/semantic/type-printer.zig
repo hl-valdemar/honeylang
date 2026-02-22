@@ -140,5 +140,11 @@ fn formatTypeId(type_id: TypeId) []const u8 {
             };
             break :blk std.fmt.bufPrint(&S.buf, "slice#{d}", .{idx}) catch "slice#?";
         },
+        .@"opaque" => |idx| blk: {
+            const S = struct {
+                var buf: [16]u8 = undefined;
+            };
+            break :blk std.fmt.bufPrint(&S.buf, "opaque#{d}", .{idx}) catch "opaque#?";
+        },
     };
 }

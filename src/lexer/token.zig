@@ -28,6 +28,7 @@ pub const Kind = enum {
     namespace,
     @"pub",
     import,
+    @"opaque",
 
     // string literals
     string_literal,

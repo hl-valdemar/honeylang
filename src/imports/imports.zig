@@ -500,7 +500,40 @@ fn generateBindingSource(
     var buf = try std.ArrayList(u8).initCapacity(allocator, 256);
     const writer = buf.writer(allocator);
 
-    // Emit struct declarations first (functions may reference them)
+    // Collect all struct names referenced as pointer targets
+    var referenced_structs = std.StringHashMap(void).init(allocator);
+    defer referenced_structs.deinit();
+    for (structs) |s| {
+        for (s.fields) |field| {
+            if (field.pointee_struct_name) |name| {
+                try referenced_structs.put(name, {});
+            }
+        }
+    }
+    for (functions) |func| {
+        for (func.params) |param| {
+            if (param.pointee_struct_name) |name| {
+                try referenced_structs.put(name, {});
+            }
+        }
+    }
+
+    // Collect defined struct names
+    var defined_structs = std.StringHashMap(void).init(allocator);
+    defer defined_structs.deinit();
+    for (structs) |s| {
+        try defined_structs.put(s.name, {});
+    }
+
+    // Emit opaque declarations for undefined struct types
+    var ref_iter = referenced_structs.keyIterator();
+    while (ref_iter.next()) |name| {
+        if (!defined_structs.contains(name.*)) {
+            try writer.print("pub {s} :: opaque\n", .{name.*});
+        }
+    }
+
+    // Emit struct declarations (functions may reference them)
     for (structs) |s| {
         try writer.print("pub {s} :: c struct {{ ", .{s.name});
         for (s.fields) |field| {

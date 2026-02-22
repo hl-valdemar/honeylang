@@ -837,8 +837,8 @@ pub const CodeGenContext = struct {
             .const_decl, .var_decl => {
                 // global constants/variables handled at data section
             },
-            .struct_decl => {
-                // struct declarations are type definitions, handled at LLVM level
+            .struct_decl, .opaque_decl => {
+                // type declarations — no codegen needed
             },
             .namespace_decl => try self.generateNamespaceDecl(node_idx, ""),
             .import_decl, .c_include_decl, .c_import_block => try self.generateImportDecl(node_idx),

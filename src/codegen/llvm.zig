@@ -888,6 +888,7 @@ fn typeIdToLLVMType(type_id: TypeId, target: Target) []const u8 {
         .namespace => "void", // namespaces have no runtime representation
         .array => "ptr", // arrays are stack-allocated, passed as pointers
         .slice => "ptr", // slices are fat pointers { ptr, i64 }, passed as pointers
+        .@"opaque" => "ptr", // opaque types only used through pointers
     };
 }
 

@@ -51,6 +51,7 @@ pub const PointerTypeIndex = u32;
 pub const NamespaceTypeIndex = u32;
 pub const ArrayTypeIndex = u32;
 pub const SliceTypeIndex = u32;
+pub const OpaqueTypeIndex = u32;
 
 pub const TypeId = union(enum) {
     /// Type could not be determined, will trap at runtime
@@ -76,6 +77,9 @@ pub const TypeId = union(enum) {
 
     /// Slice type, index into TypeRegistry.slice_types
     slice: SliceTypeIndex,
+
+    /// Opaque type, index into TypeRegistry.opaque_types
+    @"opaque": OpaqueTypeIndex,
 
     pub const @"void": TypeId = .{ .primitive = .void };
     pub const @"bool": TypeId = .{ .primitive = .bool };
@@ -162,6 +166,10 @@ pub const TypeId = union(enum) {
         return self == .slice;
     }
 
+    pub fn isOpaque(self: TypeId) bool {
+        return self == .@"opaque";
+    }
+
     pub fn eql(self: TypeId, other: TypeId) bool {
         return std.meta.eql(self, other);
     }
@@ -207,6 +215,10 @@ pub const SliceTypeInfo = struct {
     sentinel: ?u8 = null,
 };
 
+pub const OpaqueTypeInfo = struct {
+    name: []const u8,
+};
+
 pub const NamespaceMember = struct {
     name: []const u8,
     symbol_idx: @import("symbols.zig").SymbolIndex,
@@ -227,6 +239,7 @@ pub const TypeRegistry = struct {
     namespace_types: std.ArrayList(NamespaceType),
     array_types: std.ArrayList(ArrayTypeInfo),
     slice_types: std.ArrayList(SliceTypeInfo),
+    opaque_types: std.ArrayList(OpaqueTypeInfo),
     arena: std.heap.ArenaAllocator,
     ptr_size: u32,
 
@@ -239,6 +252,7 @@ pub const TypeRegistry = struct {
             .namespace_types = try std.ArrayList(NamespaceType).initCapacity(allocator, 4),
             .array_types = try std.ArrayList(ArrayTypeInfo).initCapacity(allocator, 4),
             .slice_types = try std.ArrayList(SliceTypeInfo).initCapacity(allocator, 4),
+            .opaque_types = try std.ArrayList(OpaqueTypeInfo).initCapacity(allocator, 4),
             .arena = std.heap.ArenaAllocator.init(allocator),
             .ptr_size = ptr_size,
         };
@@ -251,6 +265,7 @@ pub const TypeRegistry = struct {
         self.namespace_types.deinit(self.allocator);
         self.array_types.deinit(self.allocator);
         self.slice_types.deinit(self.allocator);
+        self.opaque_types.deinit(self.allocator);
         self.arena.deinit();
     }
 
@@ -553,6 +568,27 @@ pub const TypeRegistry = struct {
             else => null,
         };
     }
+
+    /// Register an opaque type and return a TypeId for it.
+    pub fn addOpaqueType(self: *TypeRegistry, name: []const u8) !TypeId {
+        // Deduplicate by name
+        for (self.opaque_types.items, 0..) |existing, i| {
+            if (mem.eql(u8, existing.name, name)) {
+                return .{ .@"opaque" = @intCast(i) };
+            }
+        }
+        const idx: OpaqueTypeIndex = @intCast(self.opaque_types.items.len);
+        try self.opaque_types.append(self.allocator, .{ .name = name });
+        return .{ .@"opaque" = idx };
+    }
+
+    /// Get the opaque type info for a given TypeId.
+    pub fn getOpaqueType(self: *const TypeRegistry, type_id: TypeId) ?OpaqueTypeInfo {
+        return switch (type_id) {
+            .@"opaque" => |idx| self.opaque_types.items[idx],
+            else => null,
+        };
+    }
 };
 
 /// Size in bytes of a type (for C layout computation).
@@ -577,6 +613,7 @@ pub fn sizeOf(type_id: TypeId, types: *const TypeRegistry) u32 {
             return (info.length + extra) * sizeOf(info.element_type, types);
         },
         .slice => 2 * types.ptr_size, // fat pointer: ptr + usize len
+        .@"opaque" => 0, // opaque types have unknown size, can only be used through pointers
     };
 }
 
@@ -601,6 +638,7 @@ pub fn alignmentOf(type_id: TypeId, types: *const TypeRegistry) u32 {
             return alignmentOf(info.element_type, types);
         },
         .slice => types.ptr_size,
+        .@"opaque" => 1, // opaque types: alignment unknown, use 1 as fallback
     };
 }
 

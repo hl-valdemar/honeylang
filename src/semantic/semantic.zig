@@ -205,10 +205,12 @@ pub const SemanticContext = struct {
         const program = self.ast.getProgram(self.ast.root);
         const decls = self.ast.getExtra(program.declarations);
 
-        // Phase 1: Forward-declare all struct types (including those inside namespaces and imports)
+        // Phase 1: Forward-declare all struct and opaque types (including those inside namespaces and imports)
         for (decls) |decl_idx| {
             if (self.ast.getKind(decl_idx) == .struct_decl) {
                 try self.forwardDeclareStruct(decl_idx);
+            } else if (self.ast.getKind(decl_idx) == .opaque_decl) {
+                try self.collectOpaqueDecl(decl_idx, "");
             } else if (self.ast.getKind(decl_idx) == .namespace_decl) {
                 try self.forwardDeclareStructsInNamespace(decl_idx, "");
             } else if (self.ast.getKind(decl_idx) == .import_decl or self.ast.getKind(decl_idx) == .c_include_decl or self.ast.getKind(decl_idx) == .c_import_block) {
@@ -226,7 +228,7 @@ pub const SemanticContext = struct {
                 try self.collectNamespaceDecl(decl_idx, "");
             } else if (kind == .import_decl or kind == .c_include_decl or kind == .c_import_block) {
                 try self.processImportDecl(decl_idx);
-            } else if (kind != .struct_decl) {
+            } else if (kind != .struct_decl and kind != .opaque_decl) {
                 try self.collectDeclaration(decl_idx);
             }
         }
@@ -242,6 +244,41 @@ pub const SemanticContext = struct {
         const type_id = try self.types.reserveStructType(name);
 
         // register symbol so resolveTypeName can find it
+        const result = try self.symbols.register(
+            name,
+            name_token.start,
+            .@"type",
+            .resolved,
+            type_id,
+            node_idx,
+            false,
+        );
+
+        if (result == null) {
+            try self.addError(.{
+                .kind = .duplicate_symbol,
+                .start = name_token.start,
+                .end = name_token.start + name_token.len,
+            });
+        }
+    }
+
+    fn collectOpaqueDecl(self: *SemanticContext, node_idx: NodeIndex, prefix: []const u8) !void {
+        const decl = self.ast.getOpaqueDecl(node_idx);
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const raw_name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        // build qualified name with namespace prefix
+        const name = if (prefix.len > 0)
+            try std.fmt.allocPrint(self.types.arena.allocator(), "{s}.{s}", .{ prefix, raw_name })
+        else
+            raw_name;
+
+        // register opaque type
+        const type_id = try self.types.addOpaqueType(name);
+
+        // register symbol
         const result = try self.symbols.register(
             name,
             name_token.start,
@@ -351,6 +388,8 @@ pub const SemanticContext = struct {
             const inner_kind = self.ast.getKind(inner_idx);
             if (inner_kind == .struct_decl) {
                 try self.forwardDeclareStructWithPrefix(inner_idx, ns_name);
+            } else if (inner_kind == .opaque_decl) {
+                try self.collectOpaqueDecl(inner_idx, ns_name);
             } else if (inner_kind == .namespace_decl) {
                 try self.forwardDeclareStructsInNamespace(inner_idx, ns_name);
             } else if (inner_kind == .import_decl or inner_kind == .c_include_decl or inner_kind == .c_import_block) {

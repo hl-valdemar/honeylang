@@ -69,6 +69,7 @@ fn printSymbol(symbols: *const SymbolTable, src: *const SourceCode, idx: SymbolI
                 .namespace => "namespace",
                 .array => "array",
                 .slice => "slice",
+                .@"opaque" => "opaque",
             };
         },
     };

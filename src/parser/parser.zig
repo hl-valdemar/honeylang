@@ -327,6 +327,8 @@ pub const Parser = struct {
                     return try self.parseStructDecl();
                 } else if (after.kind == .namespace) {
                     return try self.parseNamespaceDecl();
+                } else if (after.kind == .@"opaque") {
+                    return try self.parseOpaqueDecl();
                 } else if (after.kind == .identifier and self.isCallingConvention(2)) {
                     // check if calling convention is followed by func or struct
                     const after_cc = self.peekOffset(3) orelse {
@@ -491,6 +493,23 @@ pub const Parser = struct {
         const end_pos = self.previousEnd();
 
         return try self.ast.addStructDecl(name, fields, calling_conv, start_pos, end_pos);
+    }
+
+    fn parseOpaqueDecl(self: *Parser) ParseError!NodeIndex {
+        const start_pos = self.currentStart();
+
+        // parse name
+        const name = try self.parseIdentifier();
+
+        // expect ::
+        try self.expectToken(.double_colon, .expected_double_colon);
+
+        // expect 'opaque'
+        try self.expectToken(.@"opaque", .unexpected_token);
+
+        const end_pos = self.previousEnd();
+
+        return try self.ast.addOpaqueDecl(name, start_pos, end_pos);
     }
 
     fn parseStructFields(self: *Parser) ParseError!ast.Range {

@@ -14,6 +14,7 @@ pub const NodeKind = enum {
     func_decl,
     var_decl,
     struct_decl,
+    opaque_decl,
     namespace_decl,
     pub_decl,
     import_decl,
@@ -105,6 +106,10 @@ pub const StructDecl = struct {
     name: NodeIndex,
     fields: Range, // pairs of (name_ident, type_ident) in extra_data
     call_conv: CallingConvention,
+};
+
+pub const OpaqueDecl = struct {
+    name: NodeIndex,
 };
 
 pub const NamespaceDecl = struct {
@@ -315,6 +320,7 @@ pub const Ast = struct {
     func_decls: std.ArrayList(FuncDecl),
     var_decls: std.ArrayList(VarDecl),
     struct_decls: std.ArrayList(StructDecl),
+    opaque_decls: std.ArrayList(OpaqueDecl),
     namespace_decls: std.ArrayList(NamespaceDecl),
     pub_decls: std.ArrayList(PubDecl),
     import_decls: std.ArrayList(ImportDecl),
@@ -361,6 +367,7 @@ pub const Ast = struct {
             .func_decls = try std.ArrayList(FuncDecl).initCapacity(allocator, capacity),
             .var_decls = try std.ArrayList(VarDecl).initCapacity(allocator, capacity),
             .struct_decls = try std.ArrayList(StructDecl).initCapacity(allocator, capacity),
+            .opaque_decls = try std.ArrayList(OpaqueDecl).initCapacity(allocator, capacity),
             .namespace_decls = try std.ArrayList(NamespaceDecl).initCapacity(allocator, capacity),
             .pub_decls = try std.ArrayList(PubDecl).initCapacity(allocator, capacity),
             .import_decls = try std.ArrayList(ImportDecl).initCapacity(allocator, capacity),
@@ -402,6 +409,7 @@ pub const Ast = struct {
         self.func_decls.deinit(self.allocator);
         self.var_decls.deinit(self.allocator);
         self.struct_decls.deinit(self.allocator);
+        self.opaque_decls.deinit(self.allocator);
         self.namespace_decls.deinit(self.allocator);
         self.pub_decls.deinit(self.allocator);
         self.import_decls.deinit(self.allocator);
@@ -547,6 +555,24 @@ pub const Ast = struct {
             .fields = fields,
             .call_conv = calling_conv,
         });
+
+        return node_idx;
+    }
+
+    pub fn addOpaqueDecl(
+        self: *Ast,
+        name: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.opaque_decls.items.len);
+
+        try self.kinds.append(self.allocator, .opaque_decl);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.opaque_decls.append(self.allocator, .{ .name = name });
 
         return node_idx;
     }
@@ -1188,6 +1214,12 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .struct_decl);
         const data_idx = self.data_indices.items[idx];
         return self.struct_decls.items[data_idx];
+    }
+
+    pub fn getOpaqueDecl(self: *const Ast, idx: NodeIndex) OpaqueDecl {
+        std.debug.assert(self.kinds.items[idx] == .opaque_decl);
+        const data_idx = self.data_indices.items[idx];
+        return self.opaque_decls.items[data_idx];
     }
 
     pub fn getNamespaceDecl(self: *const Ast, idx: NodeIndex) NamespaceDecl {
