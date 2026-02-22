@@ -415,6 +415,97 @@ Packet :: c struct { tag: u8, len: u16, data: i32 }
 Entity :: struct { id: i32, x: f32, y: f32 }
 ```
 
+## Tuples
+
+Tuples are structs with positional (unnamed) fields. They use `{}` syntax and fields are accessed by position with `.0`, `.1`, etc.
+
+### Named Tuple Types
+
+A tuple type is declared as a struct with positional field types:
+
+```honey
+Pair :: struct {i32, i32}
+Info :: struct {[:0]u8, i32}
+```
+
+### Tuple Literals
+
+```honey
+p := Pair{10, 20}
+x := p.0              # 10
+y := p.1              # 20
+```
+
+### Anonymous Tuples
+
+Tuples can be created without a named type — the type is inferred from the element values:
+
+```honey
+t := {42, "hello"}
+n := t.0              # 42
+s := t.1              # "hello"
+```
+
+Numeric literals in anonymous tuples resolve their type from usage context, just like regular variables.
+
+### Tuples vs Named Structs
+
+Both are structs under the hood. The difference is whether fields are named or positional:
+
+```honey
+# Named struct: fields by name
+Point :: struct { x: i32, y: i32 }
+p := Point{ .x = 1, .y = 2 }
+p.x
+
+# Tuple struct: fields by position
+Pair :: struct { i32, i32 }
+q := Pair{1, 2}
+q.0
+```
+
+## Variadic Arguments
+
+Functions can accept a variable number of arguments using `...` as the last parameter type.
+
+### C Variadic Functions
+
+For calling C variadic functions like `printf`:
+
+```honey
+printf :: c func(fmt: [:0]u8, ...) i32
+
+main :: func() void {
+    printf("hello %s, age %d\n", "world", 42)
+}
+```
+
+The `...` must be the last parameter. Extra arguments are passed according to the C calling convention. String literals (`[:0]u8`) are automatically passed as raw pointers to C functions.
+
+### Imported C Variadics
+
+C variadic functions from imported headers work automatically:
+
+```honey
+import c "stdio.h"
+
+main :: func() void {
+    stdio.printf("x = %d\n", 42)
+}
+```
+
+### Argument Checking
+
+The compiler validates that at least the fixed (non-variadic) parameters are provided:
+
+```honey
+printf :: c func(fmt: [:0]u8, ...) i32
+
+printf("ok")              # OK: 0 extra args
+printf("x=%d", 42)        # OK: 1 extra arg
+# printf()                # ERROR: missing fixed param 'fmt'
+```
+
 ## Arrays
 
 Fixed-size arrays with a length known at compile time.

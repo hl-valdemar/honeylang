@@ -13,4 +13,5 @@ test {
     _ = @import("integration_tests/codegen.zig");
     _ = @import("integration_tests/bounds_checking.zig");
     _ = @import("integration_tests/strings.zig");
+    _ = @import("integration_tests/tuples.zig");
 }

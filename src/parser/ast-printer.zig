@@ -1,4 +1,5 @@
 const std = @import("std");
+const tupleFieldName = @import("../utils/tuple.zig").fieldName;
 const Ast = @import("ast.zig").Ast;
 const NodeIndex = @import("ast.zig").NodeIndex;
 const NodeKind = @import("ast.zig").NodeKind;
@@ -396,12 +397,11 @@ fn printNode(
             const field_count = fields.len / 2;
             std.debug.print("{s}└─ fields: {d}\n", .{ child_prefix, field_count });
 
-            const synth_field_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
             var pos_idx: usize = 0;
             var fi: usize = 0;
             while (fi < fields.len) : (fi += 2) {
                 const fname = if (fields[fi] == std.math.maxInt(@TypeOf(fields[fi]))) blk: {
-                    const n = if (pos_idx < synth_field_names.len) synth_field_names[pos_idx] else "?";
+                    const n = tupleFieldName(std.heap.page_allocator, pos_idx) catch "?";
                     pos_idx += 1;
                     break :blk n;
                 } else getIdentifierName(ast, tokens, src, fields[fi]);
@@ -574,12 +574,11 @@ fn printNode(
             const field_count = field_data.len / 2;
             std.debug.print("{s}└─ fields: {d}\n", .{ child_prefix, field_count });
 
-            const synth_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
             var positional_idx: usize = 0;
             var fi: usize = 0;
             while (fi < field_data.len) : (fi += 2) {
                 const fname = if (field_data[fi] == std.math.maxInt(@TypeOf(field_data[fi]))) blk: {
-                    const name = if (positional_idx < synth_names.len) synth_names[positional_idx] else "?";
+                    const name = tupleFieldName(std.heap.page_allocator, positional_idx) catch "?";
                     positional_idx += 1;
                     break :blk name;
                 } else getIdentifierName(ast, tokens, src, field_data[fi]);

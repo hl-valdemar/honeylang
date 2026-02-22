@@ -7,6 +7,7 @@ const BinaryOp = @import("../parser/ast.zig").BinaryOp;
 const TokenList = @import("../lexer/token.zig").TokenList;
 const SourceCode = @import("../source/source.zig").SourceCode;
 const SourceIndex = @import("../source/source.zig").SourceIndex;
+const tupleFieldName = @import("../utils/tuple.zig").fieldName;
 
 const SymbolTable = @import("symbols.zig").SymbolTable;
 const SymbolIndex = @import("symbols.zig").SymbolIndex;
@@ -957,7 +958,6 @@ pub const SemanticContext = struct {
         var seen_fields = std.StringHashMap(void).init(self.allocator);
         defer seen_fields.deinit();
 
-        const synth_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
         var positional_idx: usize = 0;
 
         var i: usize = 0;
@@ -967,12 +967,9 @@ pub const SemanticContext = struct {
 
             // Tuple fields use sentinel (maxInt) for name — use synthetic "0", "1", etc.
             const field_name = if (field_name_idx == std.math.maxInt(NodeIndex)) blk: {
-                if (positional_idx < synth_names.len) {
-                    const name = synth_names[positional_idx];
-                    positional_idx += 1;
-                    break :blk name;
-                }
-                break :blk "?";
+                const name = tupleFieldName(self.allocator, positional_idx) catch "?";
+                positional_idx += 1;
+                break :blk name;
             } else blk: {
                 const field_ident = self.ast.getIdentifier(field_name_idx);
                 const field_token = self.tokens.items[field_ident.token_idx];
@@ -2952,7 +2949,6 @@ pub const SemanticContext = struct {
         var seen_fields = std.StringHashMap(void).init(self.allocator);
         defer seen_fields.deinit();
 
-        const synth_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
         var positional_idx: usize = 0;
 
         var fi: usize = 0;
@@ -2962,12 +2958,9 @@ pub const SemanticContext = struct {
 
             // get field name — sentinel means positional (tuple literal)
             const field_name = if (field_name_idx == std.math.maxInt(NodeIndex)) blk: {
-                if (positional_idx < synth_names.len) {
-                    const name = synth_names[positional_idx];
-                    positional_idx += 1;
-                    break :blk name;
-                }
-                break :blk "?";
+                const name = tupleFieldName(self.allocator, positional_idx) catch "?";
+                positional_idx += 1;
+                break :blk name;
             } else blk: {
                 const field_ident = self.ast.getIdentifier(field_name_idx);
                 const field_token = self.tokens.items[field_ident.token_idx];
@@ -3041,8 +3034,6 @@ pub const SemanticContext = struct {
         const field_data = self.ast.getExtra(lit.fields);
         const field_count = field_data.len / 2;
 
-        const synth_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
-
         // collect element types by type-checking each value
         var field_names = try std.ArrayList([]const u8).initCapacity(self.allocator, field_count);
         defer field_names.deinit(self.allocator);
@@ -3053,11 +3044,10 @@ pub const SemanticContext = struct {
         var idx: usize = 0;
         while (fi < field_data.len) : (fi += 2) {
             const field_value_idx = field_data[fi + 1];
-            // Use i32 as default context for untyped numeric literals in anonymous tuples
-            var value_type = try self.checkExpression(field_value_idx, TypeId.i32) orelse TypeId.i32;
-            if (value_type.isUnresolved()) value_type = TypeId.i32;
-            const name = if (idx < synth_names.len) synth_names[idx] else "?";
-            try field_names.append(self.allocator, name);
+            // Let numeric literals stay unresolved — backward inference resolves them
+            // from usage context (e.g. return type, variable type annotation)
+            const value_type = try self.checkExpression(field_value_idx, .unresolved) orelse TypeId.unresolved;
+            try field_names.append(self.allocator, tupleFieldName(self.allocator, idx) catch "?");
             try field_types.append(self.allocator, value_type);
             idx += 1;
         }

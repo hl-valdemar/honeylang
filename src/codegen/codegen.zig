@@ -1,6 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 
+const tupleFieldName = @import("../utils/tuple.zig").fieldName;
 const ComptimeResult = @import("../comptime/comptime.zig").ComptimeResult;
 const SymbolTable = @import("../semantic/symbols.zig").SymbolTable;
 const SymbolIndex = @import("../semantic/symbols.zig").SymbolIndex;
@@ -1771,14 +1772,6 @@ pub const CodeGenContext = struct {
                 try extra_types.append(self.allocator, arg_type);
             }
 
-            // Create anonymous tuple struct type from the extra arg types
-            const synth_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
-            var field_names = try std.ArrayList([]const u8).initCapacity(self.allocator, extra_args.len);
-            defer field_names.deinit(self.allocator);
-            for (0..extra_types.items.len) |i| {
-                try field_names.append(self.allocator, if (i < synth_names.len) synth_names[i] else "?");
-            }
-
             // Note: we conceptually have a tuple {arg0, arg1, ...} here.
             // For C calls, we unpack the tuple fields directly into the call args.
             // For future Honey variadic calls, we'd pass the tuple pointer as a single arg.
@@ -1804,8 +1797,18 @@ pub const CodeGenContext = struct {
                     try arg_struct_indices.append(self.allocator, null);
                     try arg_slice_flags.append(self.allocator, false);
                 }
+            } else {
+                // Honey-native variadic: allocate tuple struct, store fields, pass pointer.
+                // Full implementation requires monomorphization (each call site has a different
+                // tuple type) which depends on comptime infrastructure. For now, pass extra args
+                // individually (same layout as C but without ABI-specific transformations).
+                for (extra_regs.items, extra_types.items) |reg, typ| {
+                    try arg_regs.append(self.allocator, reg);
+                    try arg_widths.append(self.allocator, typeIdToWidth(typ, self.target));
+                    try arg_struct_indices.append(self.allocator, if (typ.isStruct()) typ.struct_type else null);
+                    try arg_slice_flags.append(self.allocator, typ.isSlice());
+                }
             }
-            // else: Honey variadic — future: pass tuple pointer as single arg
         }
 
         // 4. Check for argument type mismatches — emit trap if any arg width
@@ -2272,7 +2275,6 @@ pub const CodeGenContext = struct {
         const base = try func.emitAllocaStruct(struct_idx);
 
         // store each field value
-        const synth_names = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" };
         var positional_idx: usize = 0;
 
         const field_data = self.ast.getExtra(lit.fields);
@@ -2283,12 +2285,9 @@ pub const CodeGenContext = struct {
 
             // get field name — sentinel means positional (tuple literal)
             const field_name = if (field_name_idx == std.math.maxInt(NodeIndex)) blk: {
-                if (positional_idx < synth_names.len) {
-                    const name = synth_names[positional_idx];
-                    positional_idx += 1;
-                    break :blk name;
-                }
-                break :blk "?";
+                const name = tupleFieldName(self.allocator, positional_idx) catch "?";
+                positional_idx += 1;
+                break :blk name;
             } else self.getFieldNameFromNode(field_name_idx);
 
             // find field index in struct definition
