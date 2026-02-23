@@ -145,6 +145,55 @@ test "usize codegen emits i64" {
     try r.expectLLVMContains("i64");
 }
 
+// ============================================================
+// hex literals
+// ============================================================
+
+test "hex literal constant" {
+    var r = try compileTo(.semantic,
+        \\X :: 0xff
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "hex literal variable" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\  x: i32 = 0xFF
+        \\  return x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "hex literal codegen" {
+    var r = try compileTo(.codegen,
+        \\main :: func() i32 {
+        \\  x: i32 = 0x1A
+        \\  return x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("26");
+}
+
+test "hex literal arithmetic" {
+    var r = try compileTo(.semantic,
+        \\MASK: i32 :: 0xff
+        \\SHIFT: i32 :: 0x10
+        \\COMBINED :: MASK + SHIFT
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
 test "usize as function parameter" {
     var r = try compileTo(.semantic,
         \\identity :: func(n: usize) usize {

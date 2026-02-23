@@ -285,7 +285,7 @@ pub const ComptimeContext = struct {
                     const result = -val;
                     return std.fmt.allocPrint(arena_alloc, "{d}", .{result}) catch return error.OutOfMemory;
                 } else if (type_id.isSignedInteger()) {
-                    const val = std.fmt.parseInt(i64, operand, 10) catch return null;
+                    const val = std.fmt.parseInt(i64, operand, 0) catch return null;
                     const result = -%val;
                     return std.fmt.allocPrint(arena_alloc, "{d}", .{result}) catch return error.OutOfMemory;
                 } else {
@@ -356,8 +356,8 @@ pub const ComptimeContext = struct {
             return std.fmt.allocPrint(arena_alloc, "{d}", .{result}) catch return error.OutOfMemory;
         } else if (type_id.isInteger()) {
             if (type_id.isSignedInteger()) {
-                const left_val = std.fmt.parseInt(i64, left, 10) catch return null;
-                const right_val = std.fmt.parseInt(i64, right, 10) catch return null;
+                const left_val = std.fmt.parseInt(i64, left, 0) catch return null;
+                const right_val = std.fmt.parseInt(i64, right, 0) catch return null;
 
                 // check for comparison operations
                 const cmp_result: ?bool = switch (binary_op.op) {
@@ -385,8 +385,8 @@ pub const ComptimeContext = struct {
                 return std.fmt.allocPrint(arena_alloc, "{d}", .{result}) catch return error.OutOfMemory;
             } else {
                 // unsigned integers
-                const left_val = std.fmt.parseInt(u64, left, 10) catch return null;
-                const right_val = std.fmt.parseInt(u64, right, 10) catch return null;
+                const left_val = std.fmt.parseInt(u64, left, 0) catch return null;
+                const right_val = std.fmt.parseInt(u64, right, 0) catch return null;
 
                 // check for comparison operations
                 const cmp_result: ?bool = switch (binary_op.op) {

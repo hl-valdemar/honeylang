@@ -285,6 +285,26 @@ const Lexer = struct {
         var has_decimal = false;
         var has_error = false;
 
+        // check for hex prefix: 0x or 0X
+        if (self.peek()) |c| {
+            if (c == '0') {
+                if (self.peekOffset(1)) |next| {
+                    if (next == 'x' or next == 'X') {
+                        self.advance(); // consume '0'
+                        self.advance(); // consume 'x'/'X'
+                        while (self.peek()) |h| {
+                            if (ascii.isDigit(h) or (h >= 'a' and h <= 'f') or (h >= 'A' and h <= 'F')) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                        return self.makeToken(.number, start, self.pos);
+                    }
+                }
+            }
+        }
+
         while (self.peek()) |c| {
             if (ascii.isDigit(c)) {
                 self.advance();

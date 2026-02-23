@@ -438,7 +438,7 @@ pub const CodeGenContext = struct {
 
         return switch (token.kind) {
             .bool => if (std.mem.eql(u8, value_str, "true")) 1 else 0,
-            .number => std.fmt.parseInt(i64, value_str, 10) catch null,
+            .number => std.fmt.parseInt(i64, value_str, 0) catch null,
             else => null,
         };
     }
@@ -465,7 +465,7 @@ pub const CodeGenContext = struct {
                         else => {},
                     }
                 }
-                return std.fmt.parseInt(i64, value_str, 10) catch null;
+                return std.fmt.parseInt(i64, value_str, 0) catch null;
             },
             else => null,
         };
@@ -1469,7 +1469,7 @@ pub const CodeGenContext = struct {
                     const bits: i64 = @bitCast(float_val);
                     return try func.emitMovImm(bits, width);
                 }
-                const value = std.fmt.parseInt(i64, value_str, 10) catch 0;
+                const value = std.fmt.parseInt(i64, value_str, 0) catch 0;
                 return try func.emitMovImm(value, width);
             },
             .string_literal => {
@@ -1682,23 +1682,23 @@ pub const CodeGenContext = struct {
                 return try func.emitMovImm(val, .w8);
             },
             .i8, .u8 => {
-                const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
+                const val = std.fmt.parseInt(i64, value_str, 0) catch 0;
                 return try func.emitMovImm(val, .w8);
             },
             .i16, .u16 => {
-                const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
+                const val = std.fmt.parseInt(i64, value_str, 0) catch 0;
                 return try func.emitMovImm(val, .w16);
             },
             .i32, .u32 => {
-                const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
+                const val = std.fmt.parseInt(i64, value_str, 0) catch 0;
                 return try func.emitMovImm(val, .w32);
             },
             .i64, .u64 => {
-                const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
+                const val = std.fmt.parseInt(i64, value_str, 0) catch 0;
                 return try func.emitMovImm(val, .w64);
             },
             .usize => {
-                const val = std.fmt.parseInt(i64, value_str, 10) catch 0;
+                const val = std.fmt.parseInt(i64, value_str, 0) catch 0;
                 return try func.emitMovImm(val, self.target.ptrWidth());
             },
             .f16, .f32 => {
