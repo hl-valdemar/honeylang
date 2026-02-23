@@ -1093,7 +1093,6 @@ pub const CodeGenContext = struct {
         if (type_id.isArray()) {
             const array_idx = type_id.array;
             const arr_info = self.types.getArrayType(type_id) orelse return;
-            const elem_width = typeIdToWidth(arr_info.element_type, self.target);
 
             const offset = try self.locals.add(self.allocator, name, .ptr);
             const func = self.current_func.?;
@@ -1104,10 +1103,19 @@ pub const CodeGenContext = struct {
                 const base = try func.emitAddrOfLocal(offset);
                 const lit = self.ast.getArrayLiteral(var_decl.value);
                 const elements = self.ast.getExtra(lit.elements);
+                const is_struct_elem = arr_info.element_type.isStruct();
+
                 for (elements, 0..) |elem_idx, i| {
                     const value_reg = try self.generateExpression(elem_idx) orelse continue;
                     const index_reg = try func.emitMovImm(@intCast(i), self.target.ptrWidth());
-                    try func.emitStoreElement(base, index_reg, value_reg, array_idx, elem_width);
+
+                    if (is_struct_elem) {
+                        const slot_ptr = try func.emitAddrOfElement(base, index_reg, array_idx);
+                        try func.emitCopyStruct(slot_ptr, value_reg, arr_info.element_type.struct_type);
+                    } else {
+                        const elem_width = typeIdToWidth(arr_info.element_type, self.target);
+                        try func.emitStoreElement(base, index_reg, value_reg, array_idx, elem_width);
+                    }
                 }
             }
             return;

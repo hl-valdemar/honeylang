@@ -445,11 +445,11 @@ fn lowerInst(
         .trap => {
             try emitter.appendSlice("  call void @llvm.trap()\n");
             try emitter.appendSlice("  unreachable\n");
-            // Start a new basic block after unreachable — LLVM implicitly creates one
-            // which consumes an SSA number, so we must account for it.
+            // Start a new basic block after unreachable — LLVM requires every
+            // basic block to have a terminator, so add unreachable here too.
             const dead_label = ssa_map.next_ssa;
             ssa_map.next_ssa += 1;
-            try emitter.appendFmt("dead.{d}:\n", .{dead_label});
+            try emitter.appendFmt("dead.{d}:\n  unreachable\n", .{dead_label});
         },
 
         .store_arg => |op| {
