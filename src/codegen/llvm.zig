@@ -1112,7 +1112,12 @@ fn structParamABI(size: u32, arch: codegen.Arch) StructPassing {
 
 fn structCoercionType(size: u32, arch: codegen.Arch) []const u8 {
     return switch (arch) {
-        .aarch64 => "i64",
+        .aarch64 => switch (size) {
+            1 => "i8",
+            2 => "i16",
+            3, 4 => "i32",
+            else => "i64",
+        },
         .x86_64 => switch (size) {
             1 => "i8",
             2 => "i16",
