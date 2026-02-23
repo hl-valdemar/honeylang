@@ -359,3 +359,86 @@ test "codegen inferred mutable array emits store" {
     try r.expectLLVMContains("alloca [3 x i32]");
     try r.expectLLVMContains("getelementptr inbounds [3 x i32]");
 }
+
+// ============================================================
+// correct programs: arrays of structs
+// ============================================================
+
+test "array of structs with explicit size" {
+    var r = try compileTo(.semantic,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\main :: func() i32 {
+        \\    points: [2]Point = [Point{ .x = 1, .y = 2 }, Point{ .x = 3, .y = 4 }]
+        \\    return points[0].x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "array of structs with inferred size" {
+    var r = try compileTo(.semantic,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\main :: func() i32 {
+        \\    points: [_]Point = [Point{ .x = 1, .y = 2 }, Point{ .x = 3, .y = 4 }, Point{ .x = 5, .y = 6 }]
+        \\    return points[1].y
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "mutable array of structs element reassignment" {
+    var r = try compileTo(.semantic,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\main :: func() i32 {
+        \\    arr: [2]mut Point = [Point{ .x = 1, .y = 2 }, Point{ .x = 3, .y = 4 }]
+        \\    arr[0] = Point{ .x = 10, .y = 20 }
+        \\    return arr[0].x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+// ============================================================
+// codegen: arrays of structs
+// ============================================================
+
+test "codegen array of structs emits alloca and GEP" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\main :: func() i32 {
+        \\    points: [2]Point = [Point{ .x = 1, .y = 2 }, Point{ .x = 3, .y = 4 }]
+        \\    return points[0].x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("%Point = type { i32, i32 }");
+    try r.expectLLVMContains("alloca [2 x %Point]");
+    try r.expectLLVMContains("getelementptr inbounds [2 x %Point]");
+}
+
+test "codegen inferred array of structs emits correct alloca size" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\main :: func() i32 {
+        \\    points: [_]Point = [Point{ .x = 1, .y = 2 }, Point{ .x = 3, .y = 4 }, Point{ .x = 5, .y = 6 }]
+        \\    return points[2].y
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("alloca [3 x %Point]");
+}
