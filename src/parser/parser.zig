@@ -774,7 +774,7 @@ pub const Parser = struct {
 
         // bare return (void) — next token cannot start an expression
         const expr = if (self.peek()) |token| switch (token.kind) {
-            .identifier, .number, .bool, .left_paren, .left_bracket, .minus, .not, .ampersand => try self.parseExpression(),
+            .identifier, .number, .bool, .char_literal, .left_paren, .left_bracket, .minus, .not, .ampersand => try self.parseExpression(),
             else => try self.ast.addVoidLiteral(start_pos, self.previousEnd()),
         } else try self.ast.addVoidLiteral(start_pos, self.previousEnd());
 
@@ -1210,7 +1210,7 @@ pub const Parser = struct {
                             // tuple literal: Identifier { expr, expr }
                             // Check for expr followed by comma or } to distinguish from blocks
                             // We parse it and look for comma after first expression
-                            if (after_curly.kind == .number or after_curly.kind == .string_literal or after_curly.kind == .bool or after_curly.kind == .left_bracket or after_curly.kind == .left_paren) {
+                            if (after_curly.kind == .number or after_curly.kind == .string_literal or after_curly.kind == .char_literal or after_curly.kind == .bool or after_curly.kind == .left_bracket or after_curly.kind == .left_paren) {
                                 // likely a tuple literal (expression start, not a keyword)
                                 const name_node = try self.parseIdentifier();
                                 break :blk try self.parseTupleLiteralWithType(name_node);
@@ -1230,7 +1230,7 @@ pub const Parser = struct {
                 }
                 break :blk try self.parseIdentifier();
             },
-            .number, .bool, .string_literal => try self.parseLiteral(),
+            .number, .bool, .string_literal, .char_literal => try self.parseLiteral(),
             .left_bracket => try self.parseArrayLiteral(),
             .left_curly => blk: {
                 // Anonymous tuple literal: { expr, expr, ... }

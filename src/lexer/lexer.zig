@@ -237,6 +237,9 @@ const Lexer = struct {
                 '"' => {
                     try tokens.append(self.allocator, try self.scanString());
                 },
+                '\'' => {
+                    try tokens.append(self.allocator, try self.scanChar());
+                },
                 '|' => {
                     self.advance();
                     if (self.peek() == '|') {
@@ -366,6 +369,30 @@ const Lexer = struct {
         // unterminated string
         try self.errors.addSimple(.unterminated_string, quote_start, self.pos);
         return self.makeToken(.string_literal, content_start, self.pos);
+    }
+
+    fn scanChar(self: *Lexer) !Token {
+        const quote_start = self.pos;
+        self.advance(); // skip opening '
+
+        const content_start = self.pos;
+
+        while (self.peek()) |c| {
+            if (c == '\'') {
+                const content_end = self.pos;
+                self.advance(); // skip closing '
+                return self.makeToken(.char_literal, content_start, content_end);
+            }
+            if (c == '\n') break; // unterminated
+            if (c == '\\') {
+                self.advance(); // skip backslash
+            }
+            self.advance();
+        }
+
+        // unterminated char literal
+        try self.errors.addSimple(.unterminated_string, quote_start, self.pos);
+        return self.makeToken(.char_literal, content_start, self.pos);
     }
 
     fn peek(self: *const Lexer) ?u8 {

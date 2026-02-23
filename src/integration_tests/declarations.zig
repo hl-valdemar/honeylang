@@ -232,6 +232,46 @@ test "binary literal codegen" {
     try r.expectLLVMContains("10");
 }
 
+// ============================================================
+// char literals
+// ============================================================
+
+test "char literal" {
+    var r = try compileTo(.semantic,
+        \\main :: func() u8 {
+        \\  c := 'a'
+        \\  return c
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "char literal escape sequence" {
+    var r = try compileTo(.semantic,
+        \\main :: func() u8 {
+        \\  c := '\n'
+        \\  return c
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "char literal codegen" {
+    var r = try compileTo(.codegen,
+        \\main :: func() u8 {
+        \\  return 'x'
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("120");
+}
+
 test "binary literal arithmetic" {
     var r = try compileTo(.semantic,
         \\A: i32 :: 0b1100

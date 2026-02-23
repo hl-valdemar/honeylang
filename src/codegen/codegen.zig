@@ -439,6 +439,7 @@ pub const CodeGenContext = struct {
         return switch (token.kind) {
             .bool => if (std.mem.eql(u8, value_str, "true")) 1 else 0,
             .number => std.fmt.parseInt(i64, value_str, 0) catch null,
+            .char_literal => charLiteralToByte(value_str),
             else => null,
         };
     }
@@ -455,6 +456,7 @@ pub const CodeGenContext = struct {
 
         return switch (token.kind) {
             .bool => if (std.mem.eql(u8, value_str, "true")) 1 else 0,
+            .char_literal => charLiteralToByte(value_str),
             .number => {
                 if (target_type == .primitive) {
                     switch (target_type.primitive) {
@@ -1463,6 +1465,10 @@ pub const CodeGenContext = struct {
                 const value: i64 = if (std.mem.eql(u8, value_str, "true")) 1 else 0;
                 return try func.emitMovImm(value, width);
             },
+            .char_literal => {
+                const byte_val = charLiteralToByte(value_str) orelse 0;
+                return try func.emitMovImm(byte_val, .w8);
+            },
             .number => {
                 if (width.isFloat()) {
                     const float_val = std.fmt.parseFloat(f64, value_str) catch 0.0;
@@ -1554,6 +1560,22 @@ pub const CodeGenContext = struct {
         }
 
         return buf[0..out_len];
+    }
+
+    fn charLiteralToByte(raw: []const u8) ?i64 {
+        if (raw.len == 0) return null;
+        if (raw[0] == '\\' and raw.len >= 2) {
+            return switch (raw[1]) {
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                '0' => 0,
+                '\\' => '\\',
+                '\'' => '\'',
+                else => raw[1],
+            };
+        }
+        return raw[0];
     }
 
     fn generateIdentifier(self: *CodeGenContext, node_idx: NodeIndex) !?VReg {

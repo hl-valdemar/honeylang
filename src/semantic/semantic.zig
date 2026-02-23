@@ -1421,6 +1421,11 @@ pub const SemanticContext = struct {
             return TypeId.bool;
         }
 
+        // char literals are always u8
+        if (token.kind == .char_literal) {
+            return .{ .primitive = .u8 };
+        }
+
         // string literals are always [:0]u8 (null-terminated immutable slice)
         if (token.kind == .string_literal) {
             return self.types.addSliceTypeWithSentinel(.{ .primitive = .u8 }, false, 0) catch return null;
@@ -2408,6 +2413,11 @@ pub const SemanticContext = struct {
 
         if (token.kind == .bool) {
             return .bool;
+        }
+
+        // char literals are always u8
+        if (token.kind == .char_literal) {
+            return .{ .primitive = .u8 };
         }
 
         // string literals are always [:0]u8 (null-terminated immutable slice)
