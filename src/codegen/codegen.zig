@@ -1836,6 +1836,7 @@ pub const CodeGenContext = struct {
         defer arg_slice_flags.deinit(self.allocator);
 
         const fixed_param_len: usize = if (param_types) |pt| pt.len else 0;
+        var has_error_arg = false;
 
         // Phase A: Process fixed (non-variadic) parameters
         for (arg_nodes, 0..) |arg_idx, arg_i| {
@@ -1843,6 +1844,11 @@ pub const CodeGenContext = struct {
 
             const arg_type = self.node_types.get(arg_idx) orelse .unresolved;
             const expected_type: ?TypeId = if (param_types) |pt| (if (arg_i < pt.len) pt[arg_i] else null) else null;
+
+            // .unresolved arg type means semantic analysis reported an error
+            if (arg_type == .unresolved and expected_type != null and expected_type.? != .unresolved) {
+                has_error_arg = true;
+            }
 
             const arg_width = typeIdToWidth(arg_type, self.target);
             const arg_reg = try self.generateExpression(arg_idx) orelse {
@@ -1932,23 +1938,29 @@ pub const CodeGenContext = struct {
             }
         }
 
-        // 4. Check for argument type mismatches — emit trap if any arg width
-        //    doesn't match the expected parameter width (error already reported
-        //    by semantic analysis; always-compile inserts a runtime trap).
+        // 4. Determine return type (needed for trap placeholders and sret)
+        const return_type = self.node_types.get(node_idx);
+        const trap_width: Width = if (return_type) |rt| typeIdToWidth(rt, self.target) else .w32;
+
+        // 5. Check for argument type mismatches — emit trap if any arg has an
+        //    error (error already reported by semantic analysis; always-compile
+        //    inserts a runtime trap). Also check width mismatches as a fallback.
+        if (has_error_arg) {
+            try func.emitTrap();
+            return try func.emitMovImm(0, trap_width);
+        }
         if (param_types) |pt| {
             const check_count = @min(arg_widths.items.len, pt.len);
             for (0..check_count) |i| {
                 const expected_width = typeIdToWidth(pt[i], self.target);
                 if (arg_widths.items[i] != expected_width) {
                     try func.emitTrap();
-                    // Return a zero register as placeholder for the call result
-                    return try func.emitMovImm(0, .w32);
+                    return try func.emitMovImm(0, trap_width);
                 }
             }
         }
 
-        // 5. Determine return type and check for sret
-        const return_type = self.node_types.get(node_idx);
+        // 6. Check for sret
         const callee_returns_struct = if (return_type) |rt| rt.isStruct() else false;
 
         if (callee_returns_struct) {

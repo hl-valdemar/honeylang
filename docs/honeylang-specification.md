@@ -158,42 +158,50 @@ X: f32 :: 10
 
 ## Type Casting
 
-Honeylang does not support implicit type casting. All conversions must be explicit using one of four compile-time functions:
+Honeylang does not support implicit type casting. All casts must be explicit.
 
-| Function | Purpose | Traps when... |
-| -- | -- | -- |
-| `as!(x, T)` | Convert value, preserving meaning | Value doesn't fit in target type |
-| `truncate!(x, T)` | Keep low bits, discard rest | Never |
-| `bitcast!(x, T)` | Reinterpret bits, no conversion | Sizes don't match (compile error) |
-| `ptrcast!(p, T)` | Change pointer type | Gaining mutability (compile error) |
+### `as` — Checked Cast
 
-**Examples:**
+The `as` keyword is an infix operator that casts a value to a target type, preserving its meaning. It traps at runtime if the value doesn't fit in the target type.
 
 ```honey
-# checked conversion
 x: i64 = 1000
-y := as!(x, i32)      # OK: 1000 fits in i32
-z := as!(x, u8)       # TRAP: 1000 > 255
+y := x as i32          # OK: 1000 fits in i32
+z := x as u8           # TRAP: 1000 > 255
 
+key := 'q' as i32      # OK: char to int
+ratio := count as f64  # int to float
+```
+
+`as` binds tighter than arithmetic but looser than unary operators: `x as i32 + 1` is `(x as i32) + 1`.
+
+### Builtins — Unchecked Casts
+
+For casts that bypass safety checks, Honey provides builtin functions:
+
+| Builtin | Purpose | Traps when... |
+| -- | -- | -- |
+| `truncate(x, T)` | Keep low bits, discard rest | Never |
+| `bitcast(x, T)` | Reinterpret bits, no cast | Sizes don't match (compile error) |
+| `ptrcast(p, T)` | Change pointer type | Gaining mutability (compile error) |
+
+```honey
 # truncation
 a: u32 = 0xDEADBEEF
-b := truncate!(a, u8) # b == 0xEF (low byte)
+b := truncate(a, u8)  # b == 0xEF (low byte)
 
 # bit reinterpretation
 n: i32 = -1
-m := bitcast!(n, u32) # m == 0xFFFFFFFF (same bits)
+m := bitcast(n, u32)  # m == 0xFFFFFFFF (same bits)
 f: f32 = 3.14
-bits := bitcast!(f, u32)  # IEEE 754 representation
+bits := bitcast(f, u32)   # IEEE 754 representation
 
-# pointer to integer (usize only)
-ptr: @u8 = &data
-addr := as!(ptr, usize)
-ptr2 := as!(addr, @u8)
-
-# pointer type change
+# pointer casts (element type, many ↔ single, pointer ↔ usize)
 buf: *u8 = get_buffer()
-ints := ptrcast!(buf, *u32)  # element type change
-single := ptrcast!(buf, @u8) # many → single (restricting)
+ints := ptrcast(buf, *u32)    # element type change
+single := ptrcast(buf, @u8)   # many → single (restricting)
+addr := ptrcast(buf, usize)   # pointer to integer
+ptr := ptrcast(addr, @u8)     # integer to pointer
 ```
 
 ## Declarations
@@ -1363,16 +1371,15 @@ make_array_type :: comptime func(T: type, N: u32) type {
     return [N]T
 }
 
-# the `!` postfix is required when calling comptime functions
-MyArray :: make_array_type!(i32, 16)
+MyArray :: make_array_type(i32, 16)
 ```
 
 Built-in comptime functions also use this syntax:
 
 ```honey
 main :: func() void {
-    size := size_of!(Buffer)
-    alignment := align_of!(Buffer)
+    size := size_of(Buffer)
+    alignment := align_of(Buffer)
 }
 ```
 
@@ -1380,10 +1387,7 @@ main :: func() void {
 
 Runtime functions can have specific parameters marked as `comptime`. These must be known at compile time, enabling specialization.
 
-**Note:** The `!` postfix is only required for comptime-only functions (declared with comptime func). Runtime functions with comptime parameters are called normally:
-
 ```honey
-# comptime-only function - requires `!` to call
 make_array_type :: comptime func(T: type, N: u32) type {
     return [N]T
 }
@@ -1396,14 +1400,14 @@ print_n_times :: func(comptime N: u32, msg: []u8) void {
 
 # wrapper around builtin - still a runtime function
 sizeof :: func(comptime T: type) u64 {
-    return size_of!(T)  # builtin comptime call uses `!`
+    return size_of(T)
 }
 
 main :: func() void {
-    MyArray :: make_array_type!(i32, 16)  # comptime func, needs `!`
-    
-    print_n_times(5, "hello")  # runtime func, no `!`
-    x := sizeof(i32)           # runtime func, no `!`
+    MyArray :: make_array_type(i32, 16)
+
+    print_n_times(5, "hello")
+    x := sizeof(i32)
 }
 ```
 
@@ -1418,8 +1422,8 @@ make_pair :: comptime func(T: type) type {
         second: T,
     }
 }
-IntPair :: make_pair!(i32)
-FloatPair :: make_pair!(f32)
+IntPair :: make_pair(i32)
+FloatPair :: make_pair(f32)
 ```
 
 ### Function Inlining
@@ -1750,7 +1754,7 @@ ProcessState :: struct {
 
 accumulate :: func(value: i32, state: @mut ProcessState) void {
     state.count += 1
-    state.sum += as!(value, i64)
+    state.sum += value as i64
 }
 
 main :: func() void {
@@ -2208,7 +2212,7 @@ main :: func() void {
 Opaque types cannot be:
 
 * Instantiated directly (no `FILE{}` or stack allocation)
-* Measured (`size_of!(FILE)` is an error)
+* Measured (`size_of(FILE)` is an error)
 * Copied or inspected
 
 They can only be used as pointer targets (`@FILE`, `?@FILE`, etc.), which matches how C APIs expose them.
@@ -2719,7 +2723,7 @@ sum_all :: func(comptime I: Collection, container: @I.Container) i64 {
     mut total: i64 = 0
     for 0..I.len(container) |i| {
         if I.get(container, i) |val| {
-            total += as!(val^, i64)
+            total += val^ as i64
         }
     }
     return total
@@ -3311,7 +3315,7 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 | Syntax | Meaning |
 | -- | -- |
 | `func_name(args)` | Runtime function call |
-| `func_name!(args)` | Comptime function call (required for `comptime func`) |
+| `func_name(args)` | Comptime function call (same syntax as runtime calls) |
 
 ### Function Modifiers
 
