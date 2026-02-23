@@ -1781,11 +1781,16 @@ pub const CodeGenContext = struct {
             }
         }
 
+        const operand_type = self.node_types.get(binary.left) orelse .unresolved;
+        const signed = operand_type.isSignedInteger();
+
         const mir_op: BinOp = switch (binary.op) {
             .add => .add,
             .sub => .sub,
             .mul => .mul,
-            .div => .div_s, // TODO: signed vs unsigned based on type
+            .div => if (signed) BinOp.div_s else BinOp.div_u,
+            .@"and" => .bit_and,
+            .@"or" => .bit_or,
             else => return error.UnsupportedFeature,
         };
 
