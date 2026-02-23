@@ -1467,7 +1467,7 @@ pub const CodeGenContext = struct {
             },
             .char_literal => {
                 const byte_val = charLiteralToByte(value_str) orelse 0;
-                return try func.emitMovImm(byte_val, .w8);
+                return try func.emitMovImm(byte_val, width);
             },
             .number => {
                 if (width.isFloat()) {

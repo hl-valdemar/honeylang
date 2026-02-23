@@ -2415,8 +2415,11 @@ pub const SemanticContext = struct {
             return .bool;
         }
 
-        // char literals are always u8
+        // char literals coerce to any integer type; default to u8
         if (token.kind == .char_literal) {
+            if (context_type.isInteger()) {
+                return context_type;
+            }
             return .{ .primitive = .u8 };
         }
 

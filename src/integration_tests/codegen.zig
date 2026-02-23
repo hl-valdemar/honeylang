@@ -346,3 +346,61 @@ test "i16 local variable" {
     try r.expectLLVMContains("store i16");
     try r.expectLLVMContains("load i16");
 }
+
+// ============================================================
+// codegen: char literal coercion to integer types
+// ============================================================
+
+test "char literal coerces to u32" {
+    var r = try compileTo(.codegen,
+        \\main :: func() u32 {
+        \\    x: u32 = 'a'
+        \\    return x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("add i32 0, 97");
+}
+
+test "char literal coerces to i64" {
+    var r = try compileTo(.codegen,
+        \\main :: func() i64 {
+        \\    x: i64 = 'z'
+        \\    return x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("add i64 0, 122");
+}
+
+test "char literal coerces to u32 function parameter" {
+    var r = try compileTo(.codegen,
+        \\process :: func(c: u32) u32 { return c }
+        \\
+        \\main :: func() u32 {
+        \\    return process('x')
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("add i32 0, 120");
+}
+
+test "char literal defaults to u8 without context" {
+    var r = try compileTo(.codegen,
+        \\identity :: func(x: u8) u8 { return x }
+        \\
+        \\main :: func() u8 {
+        \\    return identity('a')
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("add i8 0, 97");
+}
