@@ -1433,9 +1433,17 @@ pub const SemanticContext = struct {
 
     fn inferStructLiteral(self: *SemanticContext, node_idx: NodeIndex) ?TypeId {
         const lit = self.ast.getStructLiteral(node_idx);
-        const ident = self.ast.getIdentifier(lit.type_name);
-        const token = self.tokens.items[ident.token_idx];
-        const name = self.src.getSlice(token.start, token.start + token.len);
+
+        // resolve the type name — may be a simple identifier or a qualified field_access (e.g. ns.Color)
+        const name: []const u8 = if (self.ast.getKind(lit.type_name) == .field_access) blk: {
+            // build qualified name from source span (e.g. "ns.Color")
+            const loc = self.ast.getLocation(lit.type_name);
+            break :blk self.src.getSlice(loc.start, loc.end);
+        } else blk: {
+            const ident = self.ast.getIdentifier(lit.type_name);
+            const token = self.tokens.items[ident.token_idx];
+            break :blk self.src.getSlice(token.start, token.start + token.len);
+        };
 
         if (self.symbols.lookup(name)) |sym_idx| {
             if (self.symbols.getTypeState(sym_idx) == .resolved) {
