@@ -194,6 +194,55 @@ test "hex literal arithmetic" {
     try r.expectNoErrors();
 }
 
+// ============================================================
+// binary literals
+// ============================================================
+
+test "binary literal constant" {
+    var r = try compileTo(.semantic,
+        \\X :: 0b1010
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "binary literal variable" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\  x: i32 = 0b11111111
+        \\  return x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "binary literal codegen" {
+    var r = try compileTo(.codegen,
+        \\main :: func() i32 {
+        \\  x: i32 = 0b1010
+        \\  return x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("10");
+}
+
+test "binary literal arithmetic" {
+    var r = try compileTo(.semantic,
+        \\A: i32 :: 0b1100
+        \\B: i32 :: 0b0011
+        \\C :: A + B
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
 test "usize as function parameter" {
     var r = try compileTo(.semantic,
         \\identity :: func(n: usize) usize {

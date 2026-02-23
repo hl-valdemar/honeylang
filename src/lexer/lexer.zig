@@ -285,7 +285,7 @@ const Lexer = struct {
         var has_decimal = false;
         var has_error = false;
 
-        // check for hex prefix: 0x or 0X
+        // check for hex (0x/0X) or binary (0b/0B) prefix
         if (self.peek()) |c| {
             if (c == '0') {
                 if (self.peekOffset(1)) |next| {
@@ -294,6 +294,17 @@ const Lexer = struct {
                         self.advance(); // consume 'x'/'X'
                         while (self.peek()) |h| {
                             if (ascii.isDigit(h) or (h >= 'a' and h <= 'f') or (h >= 'A' and h <= 'F')) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                        return self.makeToken(.number, start, self.pos);
+                    } else if (next == 'b' or next == 'B') {
+                        self.advance(); // consume '0'
+                        self.advance(); // consume 'b'/'B'
+                        while (self.peek()) |h| {
+                            if (h == '0' or h == '1') {
                                 self.advance();
                             } else {
                                 break;
