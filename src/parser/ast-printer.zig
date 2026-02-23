@@ -1,4 +1,5 @@
 const std = @import("std");
+const tupleFieldName = @import("../utils/tuple.zig").fieldName;
 const Ast = @import("ast.zig").Ast;
 const NodeIndex = @import("ast.zig").NodeIndex;
 const NodeKind = @import("ast.zig").NodeKind;
@@ -97,6 +98,11 @@ fn getNodeInfo(
                 "";
             break :blk std.fmt.bufPrint(&S.buf, "{s}struct {s}, fields: {d}", .{ cc_str, name, field_count }) catch "?";
         },
+        .opaque_decl => blk: {
+            const decl = ast.getOpaqueDecl(idx);
+            const name = getIdentifierName(ast, tokens, src, decl.name);
+            break :blk std.fmt.bufPrint(&S.buf, "opaque {s}", .{name}) catch "?";
+        },
         .func_decl => blk: {
             const decl = ast.getFuncDecl(idx);
             const name = getIdentifierName(ast, tokens, src, decl.name);
@@ -181,6 +187,9 @@ fn getNodeInfo(
         .return_stmt => "return",
         .defer_stmt => "defer",
         .if_stmt => "if",
+        .while_stmt => "while",
+        .break_stmt => "break",
+        .continue_stmt => "continue",
         .assignment => blk: {
             const assign = ast.getAssignment(idx);
             if (ast.getKind(assign.target) == .field_access) {
@@ -216,7 +225,9 @@ fn getNodeInfo(
         },
         .struct_literal => blk: {
             const lit = ast.getStructLiteral(idx);
-            const name = if (ast.getKind(lit.type_name) == .field_access)
+            const name = if (lit.type_name == std.math.maxInt(@TypeOf(lit.type_name)))
+                "(anon)"
+            else if (ast.getKind(lit.type_name) == .field_access)
                 getIdentifierName(ast, tokens, src, ast.getFieldAccess(lit.type_name).field)
             else
                 getIdentifierName(ast, tokens, src, lit.type_name);
@@ -238,11 +249,13 @@ fn getNodeInfo(
             else
                 "[_]";
         },
+        .slice_type => "[]",
         .array_literal => blk: {
             const arr = ast.getArrayLiteral(idx);
             break :blk std.fmt.bufPrint(&S.buf, "elements: {d}", .{arr.elements.len}) catch "?";
         },
         .array_index => "index",
+        .array_slice => "slice",
         .void_literal => "void",
         .err => blk: {
             const err = ast.getError(idx);
@@ -290,6 +303,12 @@ fn getFieldAccessPath(ast: *const Ast, tokens: *const TokenList, src: *const Sou
 }
 
 fn getIdentifierName(ast: *const Ast, tokens: *const TokenList, src: *const SourceCode, idx: NodeIndex) []const u8 {
+    // Handle both identifier and literal nodes (for tuple .0 .1 field access)
+    if (ast.getKind(idx) == .literal) {
+        const lit = ast.getLiteral(idx);
+        const token = tokens.items[lit.token_idx];
+        return src.getSlice(token.start, token.start + token.len);
+    }
     const ident = ast.getIdentifier(idx);
     const token = tokens.items[ident.token_idx];
     return src.getSlice(token.start, token.start + token.len);
@@ -381,15 +400,28 @@ fn printNode(
             const field_count = fields.len / 2;
             std.debug.print("{s}└─ fields: {d}\n", .{ child_prefix, field_count });
 
+            var pos_idx: usize = 0;
             var fi: usize = 0;
             while (fi < fields.len) : (fi += 2) {
-                const fname = getIdentifierName(ast, tokens, src, fields[fi]);
+                const fname = if (fields[fi] == std.math.maxInt(@TypeOf(fields[fi]))) blk: {
+                    const n = tupleFieldName(std.heap.page_allocator, pos_idx) catch "?";
+                    pos_idx += 1;
+                    break :blk n;
+                } else getIdentifierName(ast, tokens, src, fields[fi]);
                 const is_last_field = (fi + 2 >= fields.len);
                 const connector: []const u8 = if (is_last_field) "└" else "├";
                 std.debug.print("{s}    {s}─ {s}: ", .{ child_prefix, connector, fname });
                 printTypeValue(ast, tokens, src, fields[fi + 1]);
                 std.debug.print("\n", .{});
             }
+        },
+
+        .opaque_decl => {
+            std.debug.print("opaque_decl:\n", .{});
+            const decl = ast.getOpaqueDecl(idx);
+            std.debug.print("{s}└─ name: ", .{child_prefix});
+            printIdentifierValue(ast, tokens, src, decl.name);
+            std.debug.print("\n", .{});
         },
 
         .func_decl => {
@@ -532,7 +564,9 @@ fn printNode(
             std.debug.print("struct_literal:\n", .{});
 
             std.debug.print("{s}├─ type: ", .{child_prefix});
-            if (ast.getKind(lit.type_name) == .field_access) {
+            if (lit.type_name == std.math.maxInt(@TypeOf(lit.type_name))) {
+                std.debug.print("(anonymous tuple)\n", .{});
+            } else if (ast.getKind(lit.type_name) == .field_access) {
                 printNode(ast, tokens, src, lit.type_name, child_prefix, false);
             } else {
                 printIdentifierValue(ast, tokens, src, lit.type_name);
@@ -543,9 +577,14 @@ fn printNode(
             const field_count = field_data.len / 2;
             std.debug.print("{s}└─ fields: {d}\n", .{ child_prefix, field_count });
 
+            var positional_idx: usize = 0;
             var fi: usize = 0;
             while (fi < field_data.len) : (fi += 2) {
-                const fname = getIdentifierName(ast, tokens, src, field_data[fi]);
+                const fname = if (field_data[fi] == std.math.maxInt(@TypeOf(field_data[fi]))) blk: {
+                    const name = tupleFieldName(std.heap.page_allocator, positional_idx) catch "?";
+                    positional_idx += 1;
+                    break :blk name;
+                } else getIdentifierName(ast, tokens, src, field_data[fi]);
                 const is_last_field = (fi + 2 >= field_data.len);
                 const connector: []const u8 = if (is_last_field) "└" else "├";
                 std.debug.print("{s}    {s}─ .{s} =\n", .{ child_prefix, connector, fname });
@@ -729,6 +768,31 @@ fn printNode(
             }
         },
 
+        .while_stmt => {
+            const wh = ast.getWhile(idx);
+            std.debug.print("while:\n", .{});
+
+            std.debug.print("{s}├─ condition:\n", .{child_prefix});
+            const cond_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+            printNode(ast, tokens, src, wh.condition, cond_prefix, true);
+
+            if (wh.cont_expr) |cont| {
+                std.debug.print("{s}├─ continue:\n", .{child_prefix});
+                const cont_child = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+                printNode(ast, tokens, src, cont, cont_child, true);
+            }
+
+            printNode(ast, tokens, src, wh.body, child_prefix, true);
+        },
+
+        .break_stmt => {
+            std.debug.print("break\n", .{});
+        },
+
+        .continue_stmt => {
+            std.debug.print("continue\n", .{});
+        },
+
         .assignment => {
             std.debug.print("assignment:\n", .{});
             const assign = ast.getAssignment(idx);
@@ -802,6 +866,37 @@ fn printNode(
             printNode(ast, tokens, src, ai.index, idx_prefix, true);
         },
 
+        .array_slice => {
+            std.debug.print("array_slice:\n", .{});
+            const as = ast.getArraySlice(idx);
+            std.debug.print("{s}├─ object:\n", .{child_prefix});
+            const obj_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+            printNode(ast, tokens, src, as.object, obj_prefix, true);
+            if (as.range_start) |s| {
+                std.debug.print("{s}├─ start:\n", .{child_prefix});
+                const start_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}│   ", .{child_prefix}) catch unreachable;
+                printNode(ast, tokens, src, s, start_prefix, true);
+            } else {
+                std.debug.print("{s}├─ start: (open)\n", .{child_prefix});
+            }
+            if (as.range_end) |e| {
+                std.debug.print("{s}└─ end:\n", .{child_prefix});
+                const end_prefix = std.fmt.allocPrint(std.heap.page_allocator, "{s}    ", .{child_prefix}) catch unreachable;
+                printNode(ast, tokens, src, e, end_prefix, true);
+            } else {
+                std.debug.print("{s}└─ end: (open)\n", .{child_prefix});
+            }
+        },
+
+        .slice_type => {
+            const slc = ast.getSliceType(idx);
+            if (slc.is_mutable)
+                std.debug.print("slice_type: []mut\n", .{})
+            else
+                std.debug.print("slice_type: []\n", .{});
+            printNode(ast, tokens, src, slc.element_type, child_prefix, true);
+        },
+
         .err => {
             const err_data = ast.getError(idx);
             std.debug.print("error: {s}\n", .{err_data.msg});
@@ -840,6 +935,14 @@ fn printTypeValue(
             }
         }
         printTypeValue(ast, tokens, src, arr.element_type);
+    } else if (ast.getKind(idx) == .slice_type) {
+        const slc = ast.getSliceType(idx);
+        if (slc.is_mutable) {
+            std.debug.print("[]mut ", .{});
+        } else {
+            std.debug.print("[]", .{});
+        }
+        printTypeValue(ast, tokens, src, slc.element_type);
     } else {
         printIdentifierValue(ast, tokens, src, idx);
     }
@@ -851,6 +954,13 @@ fn printIdentifierValue(
     src: *const SourceCode,
     idx: NodeIndex,
 ) void {
+    // Handle literal nodes for tuple .0 .1 field access
+    if (ast.getKind(idx) == .literal) {
+        const lit = ast.getLiteral(idx);
+        const token = tokens.items[lit.token_idx];
+        std.debug.print("{s}", .{src.getSlice(token.start, token.start + token.len)});
+        return;
+    }
     const ident = ast.getIdentifier(idx);
     const token = tokens.items[ident.token_idx];
     const value = src.getSlice(token.start, token.start + token.len);

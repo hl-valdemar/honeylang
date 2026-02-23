@@ -1,3 +1,4 @@
+const std = @import("std");
 const helpers = @import("helpers.zig");
 const compileTo = helpers.compileTo;
 
@@ -358,6 +359,169 @@ test "codegen inferred mutable array emits store" {
     try r.expectNoErrors();
     try r.expectLLVMContains("alloca [3 x i32]");
     try r.expectLLVMContains("getelementptr inbounds [3 x i32]");
+}
+
+// codegen: local arrays use direct [N x T] storage (no ptr wrapper)
+// ============================================================
+
+test "local array has no alloca ptr indirection" {
+    var r = try compileTo(.codegen,
+        \\main :: func() i32 {
+        \\    arr: [3]i32 = [10, 20, 30]
+        \\    return arr[1]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("alloca [3 x i32]");
+    // Should NOT have an `alloca ptr` — the local IS the array
+    const cg = r.codegen orelse return error.TestExpectedEqual;
+    try std.testing.expect(std.mem.indexOf(u8, cg.output, "alloca ptr") == null);
+}
+
+// ============================================================
+// correct programs: global arrays
+// ============================================================
+
+test "global array with static initializer" {
+    var r = try compileTo(.codegen,
+        \\arr: [3]i32 = [10, 20, 30]
+        \\main :: func() i32 {
+        \\    return arr[1]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("@arr = global [3 x i32] [i32 10, i32 20, i32 30]");
+}
+
+test "global mutable array" {
+    var r = try compileTo(.codegen,
+        \\mut arr: [3]mut i32 = [1, 2, 3]
+        \\main :: func() i32 {
+        \\    arr[0] = 42
+        \\    return arr[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("@arr = global [3 x i32] [i32 1, i32 2, i32 3]");
+    try r.expectLLVMContains("getelementptr inbounds [3 x i32]");
+}
+
+test "global array with inferred size" {
+    var r = try compileTo(.codegen,
+        \\arr: [_]i32 = [5, 10, 15, 20]
+        \\main :: func() i32 {
+        \\    return arr[3]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("@arr = global [4 x i32] [i32 5, i32 10, i32 15, i32 20]");
+}
+
+// ============================================================
+// correct programs: comptime array constants
+// ============================================================
+
+test "comptime array constant" {
+    var r = try compileTo(.codegen,
+        \\ARR: [3]i32 :: [10, 20, 30]
+        \\main :: func() i32 {
+        \\    return ARR[2]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("@ARR = constant [3 x i32] [i32 10, i32 20, i32 30]");
+}
+
+test "comptime array constant with inferred size" {
+    var r = try compileTo(.codegen,
+        \\VALS: [_]i32 :: [1, 2, 3, 4, 5]
+        \\main :: func() i32 {
+        \\    return VALS[4]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("@VALS = constant [5 x i32] [i32 1, i32 2, i32 3, i32 4, i32 5]");
+}
+
+test "comptime f32 array constant" {
+    var r = try compileTo(.codegen,
+        \\VALS: [2]f32 :: [1, 2]
+        \\main :: func() f32 {
+        \\    return VALS[0]
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("@VALS = constant [2 x float]");
+}
+
+// ============================================================
+// correct programs: array .len property
+// ============================================================
+
+test "array .len semantic" {
+    var r = try compileTo(.semantic,
+        \\main :: func() usize {
+        \\    arr: [3]i32 = [1, 2, 3]
+        \\    return arr.len
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "array .len with inferred size" {
+    var r = try compileTo(.semantic,
+        \\main :: func() usize {
+        \\    arr: [_]i32 = [10, 20, 30]
+        \\    return arr.len
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "array .len wrong property name" {
+    var r = try compileTo(.semantic,
+        \\main :: func() i32 {
+        \\    arr: [3]i32 = [1, 2, 3]
+        \\    return arr.foo
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.no_such_field);
+}
+
+test "codegen array .len emits immediate" {
+    var r = try compileTo(.codegen,
+        \\main :: func() usize {
+        \\    arr: [5]i32 = [1, 2, 3, 4, 5]
+        \\    return arr.len
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    // array .len should NOT emit a GEP into a fat pointer (it's a constant)
+    // It should emit the array length as an immediate value
+    const cg = r.codegen orelse return error.TestExpectedEqual;
+    try std.testing.expect(std.mem.indexOf(u8, cg.output, "getelementptr inbounds { ptr,") == null);
 }
 
 // ============================================================

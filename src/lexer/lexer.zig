@@ -25,16 +25,19 @@ const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     .{ "defer", .@"defer" },
     .{ "return", .@"return" },
 
-    // logic-related
+    // control flow
     .{ "if", .@"if" },
     .{ "else", .@"else" },
-    .{ "not", .not },
-    .{ "and", .@"and" },
+    .{ "while", .@"while" },
+    .{ "break", .@"break" },
+    .{ "continue", .@"continue" },
+.{ "and", .@"and" },
     .{ "or", .@"or" },
     .{ "xor", .xor },
     .{ "namespace", .namespace },
     .{ "pub", .@"pub" },
     .{ "import", .import },
+    .{ "opaque", .@"opaque" },
     .{ "true", .bool },
     .{ "false", .bool },
 });
@@ -96,7 +99,17 @@ const Lexer = struct {
                 },
                 '.' => {
                     self.advance();
-                    try tokens.append(self.allocator, self.makeToken(.dot, start, self.pos));
+                    if (self.peek() == '.') {
+                        self.advance();
+                        if (self.peek() == '.') {
+                            self.advance();
+                            try tokens.append(self.allocator, self.makeToken(.ellipsis, start, self.pos));
+                        } else {
+                            try tokens.append(self.allocator, self.makeToken(.dot_dot, start, self.pos));
+                        }
+                    } else {
+                        try tokens.append(self.allocator, self.makeToken(.dot, start, self.pos));
+                    }
                 },
                 '@' => {
                     self.advance();
@@ -104,7 +117,13 @@ const Lexer = struct {
                 },
                 '&' => {
                     self.advance();
-                    try tokens.append(self.allocator, self.makeToken(.ampersand, start, self.pos));
+                    if (self.peek() == '&') {
+                        self.advance();
+                        try tokens.append(self.allocator, self.makeToken(.@"and", start, self.pos));
+                        try self.errors.addSimple(.use_and_instead, start, self.pos);
+                    } else {
+                        try tokens.append(self.allocator, self.makeToken(.ampersand, start, self.pos));
+                    }
                 },
                 '^' => {
                     self.advance();
@@ -194,8 +213,7 @@ const Lexer = struct {
                         self.advance();
                         try tokens.append(self.allocator, self.makeToken(.not_equal, start, self.pos));
                     } else {
-                        // standalone '!' is unexpected
-                        try self.errors.addWithChar(.unexpected_character, '!', start, self.pos);
+                        try tokens.append(self.allocator, self.makeToken(.not, start, self.pos));
                     }
                 },
                 '=' => {
@@ -218,6 +236,16 @@ const Lexer = struct {
                 },
                 '"' => {
                     try tokens.append(self.allocator, try self.scanString());
+                },
+                '|' => {
+                    self.advance();
+                    if (self.peek() == '|') {
+                        self.advance();
+                        try tokens.append(self.allocator, self.makeToken(.@"or", start, self.pos));
+                        try self.errors.addSimple(.use_or_instead, start, self.pos);
+                    } else {
+                        try self.errors.addWithChar(.unexpected_character, '|', start, self.pos);
+                    }
                 },
                 else => {
                     // record error and skip the character

@@ -51,6 +51,16 @@ const error_info = std.EnumArray(LexerErrorKind, ErrorInfo).init(.{
         .message = "unexpected end of file",
         .help = "the file ended unexpectedly",
     },
+    .use_and_instead = .{
+        .code = "L009",
+        .message = "use `and` instead of `&&`",
+        .help = "Honey uses `and` for logical conjunction",
+    },
+    .use_or_instead = .{
+        .code = "L010",
+        .message = "use `or` instead of `||`",
+        .help = "Honey uses `or` for logical disjunction",
+    },
 });
 
 fn getInfo(kind: LexerErrorKind) ErrorInfo {

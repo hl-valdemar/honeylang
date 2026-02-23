@@ -17,10 +17,11 @@ pub const PrimitiveType = enum(u8) {
     f16,
     f32,
     f64,
+    usize,
 
     pub fn isInteger(self: PrimitiveType) bool {
         return switch (self) {
-            .u8, .u16, .u32, .u64, .i8, .i16, .i32, .i64 => true,
+            .u8, .u16, .u32, .u64, .i8, .i16, .i32, .i64, .usize => true,
             else => false,
         };
     }
@@ -49,6 +50,8 @@ pub const StructTypeIndex = u32;
 pub const PointerTypeIndex = u32;
 pub const NamespaceTypeIndex = u32;
 pub const ArrayTypeIndex = u32;
+pub const SliceTypeIndex = u32;
+pub const OpaqueTypeIndex = u32;
 
 pub const TypeId = union(enum) {
     /// Type could not be determined, will trap at runtime
@@ -72,6 +75,12 @@ pub const TypeId = union(enum) {
     /// Array type, index into TypeRegistry.array_types
     array: ArrayTypeIndex,
 
+    /// Slice type, index into TypeRegistry.slice_types
+    slice: SliceTypeIndex,
+
+    /// Opaque type, index into TypeRegistry.opaque_types
+    @"opaque": OpaqueTypeIndex,
+
     pub const @"void": TypeId = .{ .primitive = .void };
     pub const @"bool": TypeId = .{ .primitive = .bool };
     pub const @"u8": TypeId = .{ .primitive = .u8 };
@@ -85,6 +94,7 @@ pub const TypeId = union(enum) {
     pub const @"f16": TypeId = .{ .primitive = .f16 };
     pub const @"f32": TypeId = .{ .primitive = .f32 };
     pub const @"f64": TypeId = .{ .primitive = .f64 };
+    pub const @"usize": TypeId = .{ .primitive = .usize };
 
     pub fn isUnresolved(self: TypeId) bool {
         return self == .unresolved;
@@ -152,6 +162,14 @@ pub const TypeId = union(enum) {
         return self == .array;
     }
 
+    pub fn isSlice(self: TypeId) bool {
+        return self == .slice;
+    }
+
+    pub fn isOpaque(self: TypeId) bool {
+        return self == .@"opaque";
+    }
+
     pub fn eql(self: TypeId, other: TypeId) bool {
         return std.meta.eql(self, other);
     }
@@ -161,6 +179,7 @@ pub const FunctionType = struct {
     param_types: []const TypeId,
     return_type: TypeId,
     calling_conv: CallingConvention,
+    is_variadic: bool = false,
 };
 
 pub const StructField = struct {
@@ -188,6 +207,17 @@ pub const ArrayTypeInfo = struct {
     element_type: TypeId,
     length: u32,
     is_mutable: bool,
+    sentinel: ?u8 = null,
+};
+
+pub const SliceTypeInfo = struct {
+    element_type: TypeId,
+    is_mutable: bool,
+    sentinel: ?u8 = null,
+};
+
+pub const OpaqueTypeInfo = struct {
+    name: []const u8,
 };
 
 pub const NamespaceMember = struct {
@@ -209,9 +239,12 @@ pub const TypeRegistry = struct {
     pointer_types: std.ArrayList(PointerTypeInfo),
     namespace_types: std.ArrayList(NamespaceType),
     array_types: std.ArrayList(ArrayTypeInfo),
+    slice_types: std.ArrayList(SliceTypeInfo),
+    opaque_types: std.ArrayList(OpaqueTypeInfo),
     arena: std.heap.ArenaAllocator,
+    ptr_size: u32,
 
-    pub fn init(allocator: mem.Allocator) !TypeRegistry {
+    pub fn init(allocator: mem.Allocator, ptr_size: u32) !TypeRegistry {
         return .{
             .allocator = allocator,
             .function_types = try std.ArrayList(FunctionType).initCapacity(allocator, 16),
@@ -219,7 +252,10 @@ pub const TypeRegistry = struct {
             .pointer_types = try std.ArrayList(PointerTypeInfo).initCapacity(allocator, 4),
             .namespace_types = try std.ArrayList(NamespaceType).initCapacity(allocator, 4),
             .array_types = try std.ArrayList(ArrayTypeInfo).initCapacity(allocator, 4),
+            .slice_types = try std.ArrayList(SliceTypeInfo).initCapacity(allocator, 4),
+            .opaque_types = try std.ArrayList(OpaqueTypeInfo).initCapacity(allocator, 4),
             .arena = std.heap.ArenaAllocator.init(allocator),
+            .ptr_size = ptr_size,
         };
     }
 
@@ -229,6 +265,8 @@ pub const TypeRegistry = struct {
         self.pointer_types.deinit(self.allocator);
         self.namespace_types.deinit(self.allocator);
         self.array_types.deinit(self.allocator);
+        self.slice_types.deinit(self.allocator);
+        self.opaque_types.deinit(self.allocator);
         self.arena.deinit();
     }
 
@@ -240,6 +278,16 @@ pub const TypeRegistry = struct {
         ret: TypeId,
         calling_conv: CallingConvention,
     ) !TypeId {
+        return self.addFunctionTypeEx(params, ret, calling_conv, false);
+    }
+
+    pub fn addFunctionTypeEx(
+        self: *TypeRegistry,
+        params: []const TypeId,
+        ret: TypeId,
+        calling_conv: CallingConvention,
+        is_variadic: bool,
+    ) !TypeId {
         // copy params into arena
         const arena_alloc = self.arena.allocator();
         const params_copy = try arena_alloc.dupe(TypeId, params);
@@ -249,6 +297,7 @@ pub const TypeRegistry = struct {
             .param_types = params_copy,
             .return_type = ret,
             .calling_conv = calling_conv,
+            .is_variadic = is_variadic,
         });
 
         return .{ .function = idx };
@@ -468,8 +517,12 @@ pub const TypeRegistry = struct {
     /// Register an array type and return a TypeId for it.
     /// Deduplicates: returns existing TypeId if an identical array type exists.
     pub fn addArrayType(self: *TypeRegistry, element_type: TypeId, length: u32, is_mutable: bool) !TypeId {
+        return self.addArrayTypeWithSentinel(element_type, length, is_mutable, null);
+    }
+
+    pub fn addArrayTypeWithSentinel(self: *TypeRegistry, element_type: TypeId, length: u32, is_mutable: bool, sentinel: ?u8) !TypeId {
         for (self.array_types.items, 0..) |existing, i| {
-            if (existing.length == length and existing.element_type.eql(element_type) and existing.is_mutable == is_mutable) {
+            if (existing.length == length and existing.element_type.eql(element_type) and existing.is_mutable == is_mutable and existing.sentinel == sentinel) {
                 return .{ .array = @intCast(i) };
             }
         }
@@ -478,6 +531,7 @@ pub const TypeRegistry = struct {
             .element_type = element_type,
             .length = length,
             .is_mutable = is_mutable,
+            .sentinel = sentinel,
         });
         return .{ .array = idx };
     }
@@ -490,10 +544,60 @@ pub const TypeRegistry = struct {
         };
     }
 
+    /// Register a slice type and return a TypeId for it.
+    /// Deduplicates: returns existing TypeId if an identical slice type exists.
+    pub fn addSliceType(self: *TypeRegistry, element_type: TypeId, is_mutable: bool) !TypeId {
+        return self.addSliceTypeWithSentinel(element_type, is_mutable, null);
+    }
+
+    pub fn addSliceTypeWithSentinel(self: *TypeRegistry, element_type: TypeId, is_mutable: bool, sentinel: ?u8) !TypeId {
+        for (self.slice_types.items, 0..) |existing, i| {
+            if (existing.element_type.eql(element_type) and existing.is_mutable == is_mutable and existing.sentinel == sentinel) {
+                return .{ .slice = @intCast(i) };
+            }
+        }
+        const idx: SliceTypeIndex = @intCast(self.slice_types.items.len);
+        try self.slice_types.append(self.allocator, .{
+            .element_type = element_type,
+            .is_mutable = is_mutable,
+            .sentinel = sentinel,
+        });
+        return .{ .slice = idx };
+    }
+
+    /// Get the slice type info for a given TypeId.
+    pub fn getSliceType(self: *const TypeRegistry, type_id: TypeId) ?SliceTypeInfo {
+        return switch (type_id) {
+            .slice => |idx| self.slice_types.items[idx],
+            else => null,
+        };
+    }
+
     /// Get the namespace type for a given TypeId.
     pub fn getNamespaceType(self: *const TypeRegistry, type_id: TypeId) ?NamespaceType {
         return switch (type_id) {
             .namespace => |idx| self.namespace_types.items[idx],
+            else => null,
+        };
+    }
+
+    /// Register an opaque type and return a TypeId for it.
+    pub fn addOpaqueType(self: *TypeRegistry, name: []const u8) !TypeId {
+        // Deduplicate by name
+        for (self.opaque_types.items, 0..) |existing, i| {
+            if (mem.eql(u8, existing.name, name)) {
+                return .{ .@"opaque" = @intCast(i) };
+            }
+        }
+        const idx: OpaqueTypeIndex = @intCast(self.opaque_types.items.len);
+        try self.opaque_types.append(self.allocator, .{ .name = name });
+        return .{ .@"opaque" = idx };
+    }
+
+    /// Get the opaque type info for a given TypeId.
+    pub fn getOpaqueType(self: *const TypeRegistry, type_id: TypeId) ?OpaqueTypeInfo {
+        return switch (type_id) {
+            .@"opaque" => |idx| self.opaque_types.items[idx],
             else => null,
         };
     }
@@ -508,16 +612,20 @@ pub fn sizeOf(type_id: TypeId, types: *const TypeRegistry) u32 {
             .u16, .i16, .f16 => 2,
             .u32, .i32, .f32 => 4,
             .u64, .i64, .f64 => 8,
+            .usize => types.ptr_size,
         },
         .unresolved => 4, // fallback
-        .function => 8, // pointer-sized
+        .function => types.ptr_size,
         .struct_type => |idx| types.struct_types.items[idx].size,
-        .pointer => 8, // pointer-sized
+        .pointer => types.ptr_size,
         .namespace => 0,
         .array => |idx| {
             const info = types.array_types.items[idx];
-            return info.length * sizeOf(info.element_type, types);
+            const extra: u32 = if (info.sentinel != null) 1 else 0;
+            return (info.length + extra) * sizeOf(info.element_type, types);
         },
+        .slice => 2 * types.ptr_size, // fat pointer: ptr + usize len
+        .@"opaque" => 0, // opaque types have unknown size, can only be used through pointers
     };
 }
 
@@ -530,16 +638,19 @@ pub fn alignmentOf(type_id: TypeId, types: *const TypeRegistry) u32 {
             .u16, .i16, .f16 => 2,
             .u32, .i32, .f32 => 4,
             .u64, .i64, .f64 => 8,
+            .usize => types.ptr_size,
         },
         .unresolved => 4,
-        .function => 8,
+        .function => types.ptr_size,
         .struct_type => |idx| types.struct_types.items[idx].alignment,
-        .pointer => 8,
+        .pointer => types.ptr_size,
         .namespace => 1,
         .array => |idx| {
             const info = types.array_types.items[idx];
             return alignmentOf(info.element_type, types);
         },
+        .slice => types.ptr_size,
+        .@"opaque" => 1, // opaque types: alignment unknown, use 1 as fallback
     };
 }
 

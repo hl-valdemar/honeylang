@@ -6,6 +6,8 @@ const NodeIndex = @import("../parser/ast.zig").NodeIndex;
 const BinaryOp = @import("../parser/ast.zig").BinaryOp;
 const TokenList = @import("../lexer/token.zig").TokenList;
 const SourceCode = @import("../source/source.zig").SourceCode;
+const SourceIndex = @import("../source/source.zig").SourceIndex;
+const tupleFieldName = @import("../utils/tuple.zig").fieldName;
 
 const SymbolTable = @import("symbols.zig").SymbolTable;
 const SymbolIndex = @import("symbols.zig").SymbolIndex;
@@ -27,8 +29,9 @@ pub fn analyze(
     tokens: *const TokenList,
     src: *const SourceCode,
     resolved_imports: ?*const ResolvedImports,
+    ptr_size: u32,
 ) !SemanticResult {
-    var ctx = try SemanticContext.init(allocator, ast, tokens, src, resolved_imports);
+    var ctx = try SemanticContext.init(allocator, ast, tokens, src, resolved_imports, ptr_size);
     return ctx.analyze();
 }
 
@@ -65,6 +68,7 @@ pub const SemanticContext = struct {
 
     current_ret_type: TypeId = TypeId.void,
     current_namespace_prefix: []const u8 = "",
+    loop_depth: u32 = 0,
 
     // Tracks which import we're currently collecting structs from (null = main file)
     current_collecting_import: ?ImportContext = null,
@@ -79,6 +83,7 @@ pub const SemanticContext = struct {
         tokens: *const TokenList,
         src: *const SourceCode,
         resolved_imports: ?*const ResolvedImports,
+        ptr_size: u32,
     ) !SemanticContext {
         return .{
             .allocator = allocator,
@@ -86,7 +91,7 @@ pub const SemanticContext = struct {
             .tokens = tokens,
             .src = src,
             .symbols = try SymbolTable.init(allocator),
-            .types = try TypeRegistry.init(allocator),
+            .types = try TypeRegistry.init(allocator, ptr_size),
             .node_types = .{},
             .import_node_types = .{},
             .skip_nodes = .{},
@@ -95,6 +100,20 @@ pub const SemanticContext = struct {
             .resolved_imports = resolved_imports,
             .current_import_map = if (resolved_imports) |ri| &ri.map else null,
         };
+    }
+
+    /// Add a semantic error with the current source file ID.
+    fn addError(self: *SemanticContext, err: struct {
+        kind: @import("error.zig").SemanticErrorKind,
+        start: SourceIndex,
+        end: SourceIndex,
+    }) !void {
+        try self.errors.add(.{
+            .kind = err.kind,
+            .start = err.start,
+            .end = err.end,
+            .src_id = self.src.id,
+        });
     }
 
     pub fn analyze(self: *SemanticContext) !SemanticResult {
@@ -159,7 +178,7 @@ pub const SemanticContext = struct {
                     .@"type" => .unused_type,
                     .namespace => .unused_namespace,
                 };
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = err_kind,
                     .start = start,
                     .end = start + len,
@@ -174,7 +193,7 @@ pub const SemanticContext = struct {
                 if (type_id == .unresolved and kind != .function and kind != .@"type" and kind != .namespace) {
                     const start = self.symbols.name_starts.items[idx];
                     const len = self.symbols.name_lengths.items[idx];
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .unresolved_type,
                         .start = start,
                         .end = start + len,
@@ -188,10 +207,12 @@ pub const SemanticContext = struct {
         const program = self.ast.getProgram(self.ast.root);
         const decls = self.ast.getExtra(program.declarations);
 
-        // Phase 1: Forward-declare all struct types (including those inside namespaces and imports)
+        // Phase 1: Forward-declare all struct and opaque types (including those inside namespaces and imports)
         for (decls) |decl_idx| {
             if (self.ast.getKind(decl_idx) == .struct_decl) {
                 try self.forwardDeclareStruct(decl_idx);
+            } else if (self.ast.getKind(decl_idx) == .opaque_decl) {
+                try self.collectOpaqueDecl(decl_idx, "");
             } else if (self.ast.getKind(decl_idx) == .namespace_decl) {
                 try self.forwardDeclareStructsInNamespace(decl_idx, "");
             } else if (self.ast.getKind(decl_idx) == .import_decl or self.ast.getKind(decl_idx) == .c_include_decl or self.ast.getKind(decl_idx) == .c_import_block) {
@@ -209,7 +230,7 @@ pub const SemanticContext = struct {
                 try self.collectNamespaceDecl(decl_idx, "");
             } else if (kind == .import_decl or kind == .c_include_decl or kind == .c_import_block) {
                 try self.processImportDecl(decl_idx);
-            } else if (kind != .struct_decl) {
+            } else if (kind != .struct_decl and kind != .opaque_decl) {
                 try self.collectDeclaration(decl_idx);
             }
         }
@@ -236,7 +257,42 @@ pub const SemanticContext = struct {
         );
 
         if (result == null) {
-            try self.errors.add(.{
+            try self.addError(.{
+                .kind = .duplicate_symbol,
+                .start = name_token.start,
+                .end = name_token.start + name_token.len,
+            });
+        }
+    }
+
+    fn collectOpaqueDecl(self: *SemanticContext, node_idx: NodeIndex, prefix: []const u8) !void {
+        const decl = self.ast.getOpaqueDecl(node_idx);
+        const name_ident = self.ast.getIdentifier(decl.name);
+        const name_token = self.tokens.items[name_ident.token_idx];
+        const raw_name = self.src.getSlice(name_token.start, name_token.start + name_token.len);
+
+        // build qualified name with namespace prefix
+        const name = if (prefix.len > 0)
+            try std.fmt.allocPrint(self.types.arena.allocator(), "{s}.{s}", .{ prefix, raw_name })
+        else
+            raw_name;
+
+        // register opaque type
+        const type_id = try self.types.addOpaqueType(name);
+
+        // register symbol
+        const result = try self.symbols.register(
+            name,
+            name_token.start,
+            .@"type",
+            .resolved,
+            type_id,
+            node_idx,
+            false,
+        );
+
+        if (result == null) {
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = name_token.start,
                 .end = name_token.start + name_token.len,
@@ -293,7 +349,7 @@ pub const SemanticContext = struct {
         );
 
         if (result == null) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = name_token.start,
                 .end = name_token.start + name_token.len,
@@ -334,6 +390,8 @@ pub const SemanticContext = struct {
             const inner_kind = self.ast.getKind(inner_idx);
             if (inner_kind == .struct_decl) {
                 try self.forwardDeclareStructWithPrefix(inner_idx, ns_name);
+            } else if (inner_kind == .opaque_decl) {
+                try self.collectOpaqueDecl(inner_idx, ns_name);
             } else if (inner_kind == .namespace_decl) {
                 try self.forwardDeclareStructsInNamespace(inner_idx, ns_name);
             } else if (inner_kind == .import_decl or inner_kind == .c_include_decl or inner_kind == .c_import_block) {
@@ -477,7 +535,7 @@ pub const SemanticContext = struct {
         }
 
         if (register_result == null) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = main_loc.start,
                 .end = main_loc.end,
@@ -576,7 +634,7 @@ pub const SemanticContext = struct {
         );
 
         if (result == null) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = ns_name_token.start,
                 .end = ns_name_token.start + ns_name_token.len,
@@ -624,14 +682,20 @@ pub const SemanticContext = struct {
                 type_id = tid;
                 type_state = .resolved;
             } else {
-                const loc = self.ast.getLocation(type_idx);
-                try self.errors.add(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
+                const inferred = self.resolveInferredArrayType(type_idx, decl.value);
+                if (!inferred.isUnresolved()) {
+                    type_id = inferred;
+                    type_state = .resolved;
+                } else {
+                    const loc = self.ast.getLocation(type_idx);
+                    try self.addError(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
+                }
             }
         }
 
         const result = try self.symbols.register(name, name_token.start, .constant, type_state, type_id, decl.value, false);
         if (result == null) {
-            try self.errors.add(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
+            try self.addError(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
             return null;
         }
         return result;
@@ -655,11 +719,11 @@ pub const SemanticContext = struct {
             try param_types.append(self.allocator, param_type);
         }
 
-        const func_type = try self.types.addFunctionType(param_types.items, return_type, decl.call_conv);
+        const func_type = try self.types.addFunctionTypeEx(param_types.items, return_type, decl.call_conv, decl.is_variadic);
 
         const result = try self.symbols.register(name, name_token.start, .function, .resolved, func_type, node_idx, false);
         if (result == null) {
-            try self.errors.add(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
+            try self.addError(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
             return null;
         }
         return result;
@@ -678,14 +742,20 @@ pub const SemanticContext = struct {
                 type_id = tid;
                 type_state = .resolved;
             } else {
-                const loc = self.ast.getLocation(type_idx);
-                try self.errors.add(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
+                const inferred = self.resolveInferredArrayType(type_idx, decl.value);
+                if (!inferred.isUnresolved()) {
+                    type_id = inferred;
+                    type_state = .resolved;
+                } else {
+                    const loc = self.ast.getLocation(type_idx);
+                    try self.addError(.{ .kind = .unknown_type, .start = loc.start, .end = loc.end });
+                }
             }
         }
 
         const result = try self.symbols.register(name, name_token.start, .variable, type_state, type_id, decl.value, decl.is_mutable);
         if (result == null) {
-            try self.errors.add(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
+            try self.addError(.{ .kind = .duplicate_symbol, .start = name_token.start, .end = name_token.start + name_token.len });
             return null;
         }
         return result;
@@ -889,28 +959,41 @@ pub const SemanticContext = struct {
         var seen_fields = std.StringHashMap(void).init(self.allocator);
         defer seen_fields.deinit();
 
+        var positional_idx: usize = 0;
+
         var i: usize = 0;
         while (i < field_data.len) : (i += 2) {
             const field_name_idx = field_data[i];
             const field_type_idx = field_data[i + 1];
 
-            const field_ident = self.ast.getIdentifier(field_name_idx);
-            const field_token = self.tokens.items[field_ident.token_idx];
-            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+            // Tuple fields use sentinel (maxInt) for name — use synthetic "0", "1", etc.
+            const field_name = if (field_name_idx == std.math.maxInt(NodeIndex)) blk: {
+                const name = tupleFieldName(self.allocator, positional_idx) catch "?";
+                positional_idx += 1;
+                break :blk name;
+            } else blk: {
+                const field_ident = self.ast.getIdentifier(field_name_idx);
+                const field_token = self.tokens.items[field_ident.token_idx];
+                break :blk self.src.getSlice(field_token.start, field_token.start + field_token.len);
+            };
 
-            if (seen_fields.contains(field_name)) {
-                try self.errors.add(.{
-                    .kind = .duplicate_field,
-                    .start = field_token.start,
-                    .end = field_token.start + field_token.len,
-                });
-            } else {
-                try seen_fields.put(field_name, {});
+            if (field_name_idx != std.math.maxInt(NodeIndex)) {
+                // only check duplicates for named fields (tuple fields are unique by construction)
+                if (seen_fields.contains(field_name)) {
+                    const loc = self.ast.getLocation(field_name_idx);
+                    try self.addError(.{
+                        .kind = .duplicate_field,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                } else {
+                    try seen_fields.put(field_name, {});
+                }
             }
 
             const field_type = self.resolveTypeNode(field_type_idx) orelse blk: {
                 const field_loc = self.ast.getLocation(field_type_idx);
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .unknown_type,
                     .start = field_loc.start,
                     .end = field_loc.end,
@@ -959,12 +1042,18 @@ pub const SemanticContext = struct {
                 type_id = tid;
                 type_state = .resolved;
             } else {
-                const loc = self.ast.getLocation(type_idx);
-                try self.errors.add(.{
-                    .kind = .unknown_type,
-                    .start = loc.start,
-                    .end = loc.end,
-                });
+                const inferred = self.resolveInferredArrayType(type_idx, decl.value);
+                if (!inferred.isUnresolved()) {
+                    type_id = inferred;
+                    type_state = .resolved;
+                } else {
+                    const loc = self.ast.getLocation(type_idx);
+                    try self.addError(.{
+                        .kind = .unknown_type,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
             }
         }
 
@@ -981,7 +1070,7 @@ pub const SemanticContext = struct {
 
         if (result == null) {
             // duplicate symbol
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = name_token.start,
                 .end = name_token.start + name_token.len,
@@ -1006,12 +1095,18 @@ pub const SemanticContext = struct {
                 type_id = tid;
                 type_state = .resolved;
             } else {
-                const loc = self.ast.getLocation(type_idx);
-                try self.errors.add(.{
-                    .kind = .unknown_type,
-                    .start = loc.start,
-                    .end = loc.end,
-                });
+                const inferred = self.resolveInferredArrayType(type_idx, decl.value);
+                if (!inferred.isUnresolved()) {
+                    type_id = inferred;
+                    type_state = .resolved;
+                } else {
+                    const loc = self.ast.getLocation(type_idx);
+                    try self.addError(.{
+                        .kind = .unknown_type,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
             }
         }
 
@@ -1028,7 +1123,7 @@ pub const SemanticContext = struct {
 
         if (result == null) {
             // duplicate symbol
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = name_token.start,
                 .end = name_token.start + name_token.len,
@@ -1062,10 +1157,11 @@ pub const SemanticContext = struct {
         }
 
         // register function type
-        const func_type = try self.types.addFunctionType(
+        const func_type = try self.types.addFunctionTypeEx(
             param_types.items,
             return_type,
             decl.call_conv,
+            decl.is_variadic,
         );
 
         // register symbol
@@ -1080,7 +1176,7 @@ pub const SemanticContext = struct {
         );
 
         if (result == null) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .duplicate_symbol,
                 .start = name_token.start,
                 .end = name_token.start + name_token.len,
@@ -1107,10 +1203,29 @@ pub const SemanticContext = struct {
                 const arr = self.ast.getArrayType(node_idx);
                 const element_type = self.resolveTypeNode(arr.element_type) orelse return null;
                 const length = arr.length orelse return null; // [_]T needs context to resolve
-                return self.types.addArrayType(element_type, length, arr.is_mutable) catch return null;
+                return self.types.addArrayTypeWithSentinel(element_type, length, arr.is_mutable, arr.sentinel) catch return null;
+            },
+            .slice_type => {
+                const slc = self.ast.getSliceType(node_idx);
+                const element_type = self.resolveTypeNode(slc.element_type) orelse return null;
+                return self.types.addSliceTypeWithSentinel(element_type, slc.is_mutable, slc.sentinel) catch return null;
             },
             else => null,
         };
+    }
+
+    /// Resolve [_]T array type by inferring length from a value expression.
+    /// Returns .unresolved if the type node is not an inferred array type.
+    fn resolveInferredArrayType(self: *SemanticContext, type_idx: NodeIndex, value_idx: NodeIndex) TypeId {
+        if (self.ast.getKind(type_idx) != .array_type) return .unresolved;
+        const arr = self.ast.getArrayType(type_idx);
+        if (arr.length != null) return .unresolved;
+        const elem_tid = self.resolveTypeNode(arr.element_type) orelse return .unresolved;
+        if (self.ast.getKind(value_idx) != .array_literal) return .unresolved;
+        const lit = self.ast.getArrayLiteral(value_idx);
+        const elements = self.ast.getExtra(lit.elements);
+        const inferred_len: u32 = @intCast(elements.len);
+        return self.types.addArrayType(elem_tid, inferred_len, arr.is_mutable) catch .unresolved;
     }
 
     fn resolveTypeName(self: *const SemanticContext, name: []const u8) ?TypeId {
@@ -1153,6 +1268,7 @@ pub const SemanticContext = struct {
             .{ "f16", TypeId.f16 },
             .{ "f32", TypeId.f32 },
             .{ "f64", TypeId.f64 },
+            .{ "usize", TypeId.usize },
         });
         return type_map.get(name);
     }
@@ -1276,6 +1392,22 @@ pub const SemanticContext = struct {
                 }
                 return null;
             },
+            .array_slice => {
+                const slice_node = self.ast.getArraySlice(node_idx);
+                const obj_type = self.tryInferType(slice_node.object) orelse return null;
+                if (obj_type.isArray()) {
+                    if (self.types.getArrayType(obj_type)) |arr_info| {
+                        return self.types.addSliceType(arr_info.element_type, arr_info.is_mutable) catch return null;
+                    }
+                } else if (obj_type.isSlice()) {
+                    // slicing drops sentinel
+                    if (self.types.getSliceType(obj_type)) |slice_info| {
+                        return self.types.addSliceType(slice_info.element_type, slice_info.is_mutable) catch return null;
+                    }
+                    return obj_type;
+                }
+                return null;
+            },
             else => null,
         };
     }
@@ -1287,6 +1419,11 @@ pub const SemanticContext = struct {
         // boolean literals always have type bool
         if (token.kind == .bool) {
             return TypeId.bool;
+        }
+
+        // string literals are always [:0]u8 (null-terminated immutable slice)
+        if (token.kind == .string_literal) {
+            return self.types.addSliceTypeWithSentinel(.{ .primitive = .u8 }, false, 0) catch return null;
         }
 
         // numeric literals cannot be inferred without context
@@ -1555,7 +1692,7 @@ pub const SemanticContext = struct {
         if (!declared_type.isUnresolved()) {
             if (expr_type) |et| {
                 if (!self.typesCompatible(declared_type, et)) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
                         .end = loc.end,
@@ -1565,7 +1702,7 @@ pub const SemanticContext = struct {
                 // expression type is unresolved (e.g., literals without anchors)
                 // check if the expression structure is compatible with declared type
                 if (!self.isExprCompatibleWithType(decl.value, declared_type)) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
                         .end = loc.end,
@@ -1627,10 +1764,19 @@ pub const SemanticContext = struct {
 
         const expr_type = try self.checkExpression(decl.value, declared_type);
 
+        // Update symbol type if it was unresolved and the expression resolved it
+        if (declared_type.isUnresolved()) {
+            if (expr_type) |et| {
+                if (!et.isUnresolved()) {
+                    self.symbols.resolve(sym_idx, et);
+                }
+            }
+        }
+
         if (!declared_type.isUnresolved()) {
             if (expr_type) |et| {
                 if (!self.typesCompatible(declared_type, et)) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
                         .end = loc.end,
@@ -1638,7 +1784,7 @@ pub const SemanticContext = struct {
                 }
             } else {
                 if (!self.isExprCompatibleWithType(decl.value, declared_type)) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
                         .end = loc.end,
@@ -1686,7 +1832,7 @@ pub const SemanticContext = struct {
         if (decl.body == null) {
             if (decl.call_conv == .honey) {
                 const loc = self.ast.getLocation(node_idx);
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .missing_function_body,
                     .start = loc.start,
                     .end = loc.end,
@@ -1734,7 +1880,7 @@ pub const SemanticContext = struct {
         if (!expected_return_type.isVoid() and !expected_return_type.isUnresolved()) {
             if (!self.blockAlwaysReturns(decl.body.?)) {
                 const loc = self.ast.getLocation(node_idx);
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .missing_return,
                     .start = loc.start,
                     .end = loc.end,
@@ -1752,19 +1898,8 @@ pub const SemanticContext = struct {
         if (decl.type_id) |type_idx| {
             if (self.resolveTypeNode(type_idx)) |tid| {
                 expected_type = tid;
-            } else if (self.ast.getKind(type_idx) == .array_type) {
-                // [_]T — infer length from the value expression (must be an array literal)
-                const arr = self.ast.getArrayType(type_idx);
-                if (arr.length == null) {
-                    if (self.resolveTypeNode(arr.element_type)) |elem_tid| {
-                        if (self.ast.getKind(decl.value) == .array_literal) {
-                            const lit = self.ast.getArrayLiteral(decl.value);
-                            const elements = self.ast.getExtra(lit.elements);
-                            const inferred_len: u32 = @intCast(elements.len);
-                            expected_type = self.types.addArrayType(elem_tid, inferred_len, arr.is_mutable) catch .unresolved;
-                        }
-                    }
-                }
+            } else {
+                expected_type = self.resolveInferredArrayType(type_idx, decl.value);
             }
         }
 
@@ -1781,7 +1916,7 @@ pub const SemanticContext = struct {
                         break :blk if (lp.is_mutable and !rp.is_mutable) .mutability_mismatch else .type_mismatch;
                     } else .type_mismatch;
                     const val_loc = self.ast.getLocation(decl.value);
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = err_kind,
                         .start = val_loc.start,
                         .end = val_loc.end,
@@ -1791,7 +1926,7 @@ pub const SemanticContext = struct {
                 // expression type is unresolved (e.g., literals without anchors)
                 if (!self.isExprCompatibleWithType(decl.value, expected_type)) {
                     const loc = self.ast.getLocation(node_idx);
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
                         .end = loc.end,
@@ -1892,7 +2027,7 @@ pub const SemanticContext = struct {
         return self.blockAlwaysReturns(else_blk);
     }
 
-    fn checkStatement(self: *SemanticContext, node_idx: NodeIndex) !void {
+    fn checkStatement(self: *SemanticContext, node_idx: NodeIndex) TypeError!void {
         const kind = self.ast.getKind(node_idx);
         switch (kind) {
             .var_decl => {
@@ -1901,6 +2036,19 @@ pub const SemanticContext = struct {
             .assignment => try self.checkAssignment(node_idx),
             .return_stmt => try self.checkReturn(node_idx),
             .if_stmt => try self.checkIfStmt(node_idx),
+            .while_stmt => try self.checkWhileStmt(node_idx),
+            .break_stmt => {
+                if (self.loop_depth == 0) {
+                    const loc = self.ast.getLocation(node_idx);
+                    try self.addError(.{ .kind = .break_outside_loop, .start = loc.start, .end = loc.end });
+                }
+            },
+            .continue_stmt => {
+                if (self.loop_depth == 0) {
+                    const loc = self.ast.getLocation(node_idx);
+                    try self.addError(.{ .kind = .continue_outside_loop, .start = loc.start, .end = loc.end });
+                }
+            },
             .call_expr => {
                 // expression statement, just check the expression
                 _ = try self.checkExpression(node_idx, .unresolved);
@@ -1955,7 +2103,7 @@ pub const SemanticContext = struct {
                     if (self.types.getPointerType(pt)) |ptr_info| {
                         is_mutable = ptr_info.is_mutable;
                         if (!ptr_info.is_mutable) {
-                            try self.errors.add(.{
+                            try self.addError(.{
                                 .kind = .assign_through_immutable_ptr,
                                 .start = loc.start,
                                 .end = loc.end,
@@ -1974,19 +2122,49 @@ pub const SemanticContext = struct {
             // walk to root identifier to check mutability
             var current = assign.target;
             while (self.ast.getKind(current) == .field_access) {
-                const access = self.ast.getFieldAccess(current);
-                current = access.object;
+                const fa = self.ast.getFieldAccess(current);
+                current = fa.object;
             }
             if (self.ast.getKind(current) == .identifier) {
                 const ident = self.ast.getIdentifier(current);
                 const token = self.tokens.items[ident.token_idx];
                 const name = self.src.getSlice(token.start, token.start + token.len);
                 if (self.lookupLocalPtr(name)) |local| {
-                    is_mutable = local.is_mutable;
                     local.referenced = true;
+                    // if root is a pointer, check pointer mutability (auto-deref)
+                    if (local.type_id.isPointer()) {
+                        if (self.types.getPointerType(local.type_id)) |ptr_info| {
+                            is_mutable = ptr_info.is_mutable;
+                            if (!is_mutable) {
+                                try self.addError(.{
+                                    .kind = .assign_through_immutable_ptr,
+                                    .start = loc.start,
+                                    .end = loc.end,
+                                });
+                                return;
+                            }
+                        }
+                    } else {
+                        is_mutable = local.is_mutable;
+                    }
                 } else if (self.symbols.lookup(name)) |sym_idx| {
-                    is_mutable = self.symbols.isMutable(sym_idx);
                     self.symbols.markReferenced(sym_idx);
+                    const sym_type = self.symbols.getTypeId(sym_idx);
+                    if (sym_type.isPointer()) {
+                        if (self.types.getPointerType(sym_type)) |ptr_info| {
+                            is_mutable = ptr_info.is_mutable;
+                            if (!is_mutable) {
+                                try self.addError(.{
+                                    .kind = .assign_through_immutable_ptr,
+                                    .start = loc.start,
+                                    .end = loc.end,
+                                });
+                                return;
+                            }
+                        }
+                    } else {
+                        is_mutable = self.symbols.isMutable(sym_idx);
+                    }
                 }
             }
         } else if (target_kind == .array_index) {
@@ -2020,13 +2198,25 @@ pub const SemanticContext = struct {
                 }
             }
 
-            // check array element mutability
+            // check array/slice element mutability
             const idx_node = self.ast.getArrayIndex(assign.target);
             if (self.node_types.get(idx_node.object)) |obj_type| {
                 if (obj_type.isArray()) {
                     if (self.types.getArrayType(obj_type)) |arr_info| {
                         if (!arr_info.is_mutable) {
-                            try self.errors.add(.{
+                            try self.addError(.{
+                                .kind = .assign_to_immutable_element,
+                                .start = loc.start,
+                                .end = loc.end,
+                            });
+                            try self.node_types.put(self.allocator, node_idx, .unresolved);
+                            return;
+                        }
+                    }
+                } else if (obj_type.isSlice()) {
+                    if (self.types.getSliceType(obj_type)) |slice_info| {
+                        if (!slice_info.is_mutable) {
+                            try self.addError(.{
                                 .kind = .assign_to_immutable_element,
                                 .start = loc.start,
                                 .end = loc.end,
@@ -2055,7 +2245,7 @@ pub const SemanticContext = struct {
                 is_mutable = self.symbols.isMutable(sym_idx);
                 self.symbols.markReferenced(sym_idx);
             } else {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .undefined_symbol,
                     .start = loc.start,
                     .end = loc.end,
@@ -2071,7 +2261,7 @@ pub const SemanticContext = struct {
         // for deref assignments with unresolved pointer type, skip — can't verify yet
         const skip_mutability_check = target_kind == .deref and target_type.isUnresolved();
         if (!is_mutable and !skip_mutability_check) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .assignment_to_immutable,
                 .start = loc.start,
                 .end = loc.end,
@@ -2084,7 +2274,7 @@ pub const SemanticContext = struct {
         const value_type = try self.checkExpression(assign.value, target_type);
         if (value_type) |vt| {
             if (!self.typesCompatible(target_type, vt)) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .type_mismatch,
                     .start = loc.start,
                     .end = loc.end,
@@ -2101,7 +2291,7 @@ pub const SemanticContext = struct {
 
         if (expr_type) |et| {
             if (!self.typesCompatible(self.current_ret_type, et)) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .return_type_mismatch,
                     .start = loc.start,
                     .end = loc.end,
@@ -2140,13 +2330,32 @@ pub const SemanticContext = struct {
         }
     }
 
+    fn checkWhileStmt(self: *SemanticContext, node_idx: NodeIndex) !void {
+        const while_stmt = self.ast.getWhile(node_idx);
+
+        // check condition is boolean
+        try self.checkGuardIsBool(while_stmt.condition);
+
+        // check body in new scope, with loop context
+        self.loop_depth += 1;
+        try self.pushScope();
+        try self.checkBlock(while_stmt.body);
+        self.popScope();
+        self.loop_depth -= 1;
+
+        // check continue expression if present
+        if (while_stmt.cont_expr) |cont| {
+            try self.checkStatement(cont);
+        }
+    }
+
     fn checkGuardIsBool(self: *SemanticContext, guard_idx: NodeIndex) !void {
         const guard_type = try self.checkExpression(guard_idx, TypeId.bool);
         const loc = self.ast.getLocation(guard_idx);
 
         if (guard_type) |gt| {
             if (!gt.isBool() and !gt.isUnresolved()) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .condition_not_bool,
                     .start = loc.start,
                     .end = loc.end,
@@ -2173,6 +2382,7 @@ pub const SemanticContext = struct {
             .deref => try self.checkDeref(node_idx, context_type),
             .array_literal => try self.checkArrayLiteral(node_idx, context_type),
             .array_index => try self.checkArrayIndex(node_idx),
+            .array_slice => try self.checkArraySlice(node_idx),
             else => null,
         };
 
@@ -2190,6 +2400,11 @@ pub const SemanticContext = struct {
 
         if (token.kind == .bool) {
             return .bool;
+        }
+
+        // string literals are always [:0]u8 (null-terminated immutable slice)
+        if (token.kind == .string_literal) {
+            return try self.types.addSliceTypeWithSentinel(.{ .primitive = .u8 }, false, 0);
         }
 
         // for numeric literals, use context type if available
@@ -2232,7 +2447,7 @@ pub const SemanticContext = struct {
         }
 
         // undefined symbol
-        try self.errors.add(.{
+        try self.addError(.{
             .kind = .undefined_symbol,
             .start = token.start,
             .end = token.start + token.len,
@@ -2252,7 +2467,7 @@ pub const SemanticContext = struct {
 
                 if (operand_type) |t| {
                     if (!t.isBool() and !t.isUnresolved()) {
-                        try self.errors.add(.{
+                        try self.addError(.{
                             .kind = .logical_op_requires_bool,
                             .start = loc.start,
                             .end = loc.end,
@@ -2275,7 +2490,7 @@ pub const SemanticContext = struct {
                     }
 
                     if (!t.isNumeric()) {
-                        try self.errors.add(.{
+                        try self.addError(.{
                             .kind = .arithmetic_op_requires_numeric,
                             .start = loc.start,
                             .end = loc.end,
@@ -2285,7 +2500,7 @@ pub const SemanticContext = struct {
 
                     // can only negate signed types and floats
                     if (t.isInteger() and !t.isSignedInteger()) {
-                        try self.errors.add(.{
+                        try self.addError(.{
                             .kind = .cannot_negate_unsigned,
                             .start = loc.start,
                             .end = loc.end,
@@ -2309,7 +2524,7 @@ pub const SemanticContext = struct {
 
         // only variables and field accesses are addressable
         if (operand_kind != .identifier and operand_kind != .field_access) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .cannot_take_address,
                 .start = loc.start,
                 .end = loc.end,
@@ -2380,7 +2595,7 @@ pub const SemanticContext = struct {
 
         // verify it's a pointer
         if (!operand_type.isPointer()) {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .deref_non_pointer,
                 .start = loc.start,
                 .end = loc.end,
@@ -2412,15 +2627,17 @@ pub const SemanticContext = struct {
                 const right_is_many = if (right_type) |t| self.types.isManyItemPointer(t) else false;
 
                 if (left_is_many and (binary_op.op == .add or binary_op.op == .sub)) {
-                    // many-item pointer +/- integer: result is the pointer type
+                    // many-item pointer +/- integer: re-check offset as usize
+                    _ = try self.checkExpression(binary_op.right, TypeId.usize);
                     return left_type;
                 } else if (right_is_many and binary_op.op == .add) {
-                    // integer + many-item pointer: result is the pointer type
+                    // integer + many-item pointer: re-check offset as usize
+                    _ = try self.checkExpression(binary_op.left, TypeId.usize);
                     return right_type;
                 }
 
                 // single-item pointer arithmetic is not allowed
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .pointer_arithmetic,
                     .start = loc.start,
                     .end = loc.end,
@@ -2430,7 +2647,7 @@ pub const SemanticContext = struct {
 
             if (operand_type) |t| {
                 if (!t.isNumeric() and !t.isUnresolved()) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .arithmetic_op_requires_numeric,
                         .start = loc.start,
                         .end = loc.end,
@@ -2438,7 +2655,7 @@ pub const SemanticContext = struct {
                 }
                 if (left_type != null and right_type != null) {
                     if (!self.typesCompatible(left_type.?, right_type.?)) {
-                        try self.errors.add(.{
+                        try self.addError(.{
                             .kind = .type_mismatch,
                             .start = loc.start,
                             .end = loc.end,
@@ -2465,7 +2682,7 @@ pub const SemanticContext = struct {
             // if both sides have resolved types, they must match
             if (left_type != null and right_type != null) {
                 if (!self.typesCompatible(left_type.?, right_type.?)) {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .type_mismatch,
                         .start = loc.start,
                         .end = loc.end,
@@ -2488,7 +2705,7 @@ pub const SemanticContext = struct {
                 self.isExprCompatibleWithType(binary_op.left, TypeId.bool);
 
             if (!left_ok) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .logical_op_requires_bool,
                     .start = loc.start,
                     .end = loc.end,
@@ -2502,7 +2719,7 @@ pub const SemanticContext = struct {
                 self.isExprCompatibleWithType(binary_op.right, TypeId.bool);
 
             if (!right_ok) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .logical_op_requires_bool,
                     .start = loc.start,
                     .end = loc.end,
@@ -2530,7 +2747,7 @@ pub const SemanticContext = struct {
             const func_name = self.src.getSlice(func_token.start, func_token.start + func_token.len);
 
             const sym_idx = self.symbols.lookup(func_name) orelse {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .undefined_symbol,
                     .start = loc.start,
                     .end = loc.end,
@@ -2541,7 +2758,7 @@ pub const SemanticContext = struct {
             self.symbols.markReferenced(sym_idx);
 
             if (self.symbols.getKind(sym_idx) != .function) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .not_callable,
                     .start = loc.start,
                     .end = loc.end,
@@ -2556,7 +2773,7 @@ pub const SemanticContext = struct {
             const ft = try self.checkFieldAccess(call.func) orelse return null;
 
             if (!ft.isFunction()) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .not_callable,
                     .start = loc.start,
                     .end = loc.end,
@@ -2566,7 +2783,7 @@ pub const SemanticContext = struct {
 
             func_type_id = ft;
         } else {
-            try self.errors.add(.{
+            try self.addError(.{
                 .kind = .not_callable,
                 .start = loc.start,
                 .end = loc.end,
@@ -2575,28 +2792,41 @@ pub const SemanticContext = struct {
         }
 
         // get function type from registry
+        const func_type_info = self.types.getFunctionType(func_type_id);
         const param_types = self.types.getParamTypes(func_type_id) orelse &[_]TypeId{};
         const return_type = self.types.getReturnType(func_type_id) orelse TypeId.void;
+        const is_variadic = if (func_type_info) |ft| ft.is_variadic else false;
 
         // get args
         const args = self.ast.getExtra(call.args);
 
-        // check args count
-        if (args.len != param_types.len) {
-            try self.errors.add(.{
-                .kind = .argument_count_mismatch,
-                .start = loc.start,
-                .end = loc.end,
-            });
+        // check args count — variadic functions allow extra args
+        if (is_variadic) {
+            if (args.len < param_types.len) {
+                try self.addError(.{
+                    .kind = .argument_count_mismatch,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+        } else {
+            if (args.len != param_types.len) {
+                try self.addError(.{
+                    .kind = .argument_count_mismatch,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
         }
 
-        // check each arg type
-        const check_count = @min(args.len, param_types.len);
-        for (0..check_count) |i| {
+        // check each arg type (fixed params get matched, variadic extras just get type-checked)
+        for (0..args.len) |i| {
             const arg_idx = args[i];
-            const expected_type = param_types[i];
+            const expected_type: TypeId = if (i < param_types.len) param_types[i] else .unresolved;
 
             const arg_type = try self.checkExpression(arg_idx, expected_type);
+            // skip compatibility check for variadic extra args (no expected type)
+            if (i >= param_types.len) continue;
             if (arg_type) |at| {
                 if (!self.typesCompatible(expected_type, at)) {
                     const arg_loc = self.ast.getLocation(arg_idx);
@@ -2605,7 +2835,7 @@ pub const SemanticContext = struct {
                         const rp = self.types.getPointerType(at) orelse break :blk .argument_type_mismatch;
                         break :blk if (lp.is_mutable and !rp.is_mutable) .mutability_mismatch else .argument_type_mismatch;
                     } else .argument_type_mismatch;
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = err_kind,
                         .start = arg_loc.start,
                         .end = arg_loc.end,
@@ -2619,6 +2849,19 @@ pub const SemanticContext = struct {
         return return_type;
     }
 
+    /// Get field name from a field access node — handles both identifier (.name) and literal (.0) fields.
+    fn getFieldName(self: *SemanticContext, field_node: NodeIndex) []const u8 {
+        const kind = self.ast.getKind(field_node);
+        if (kind == .literal) {
+            const lit = self.ast.getLiteral(field_node);
+            const token = self.tokens.items[lit.token_idx];
+            return self.src.getSlice(token.start, token.start + token.len);
+        }
+        const ident = self.ast.getIdentifier(field_node);
+        const token = self.tokens.items[ident.token_idx];
+        return self.src.getSlice(token.start, token.start + token.len);
+    }
+
     fn checkFieldAccess(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
         const access = self.ast.getFieldAccess(node_idx);
         const loc = self.ast.getLocation(node_idx);
@@ -2626,14 +2869,19 @@ pub const SemanticContext = struct {
         // type-check the object expression
         const object_type = try self.checkExpression(access.object, .unresolved);
 
-        if (object_type) |ot| {
+        if (object_type) |raw_ot| {
+            // auto-deref: unwrap pointer layers to reach the underlying type
+            var ot = raw_ot;
+            while (ot.isPointer()) {
+                const ptr_info = self.types.getPointerType(ot) orelse break;
+                ot = ptr_info.pointee;
+            }
+
             if (ot.isStruct()) {
                 const struct_type = self.types.getStructType(ot) orelse return null;
 
-                // get field name
-                const field_ident = self.ast.getIdentifier(access.field);
-                const field_token = self.tokens.items[field_ident.token_idx];
-                const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+                // get field name — identifier for named fields, literal for tuple .0 .1
+                const field_name = self.getFieldName(access.field);
 
                 // look up field
                 for (struct_type.fields) |field| {
@@ -2643,10 +2891,10 @@ pub const SemanticContext = struct {
                 }
 
                 // field not found
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .no_such_field,
-                    .start = field_token.start,
-                    .end = field_token.start + field_token.len,
+                    .start = loc.start,
+                    .end = loc.end,
                 });
                 return null;
             } else if (ot.isNamespace()) {
@@ -2662,7 +2910,7 @@ pub const SemanticContext = struct {
                     if (mem.eql(u8, member.name, field_name)) {
                         // check pub visibility
                         if (!member.is_pub) {
-                            try self.errors.add(.{
+                            try self.addError(.{
                                 .kind = .access_private_member,
                                 .start = field_token.start,
                                 .end = field_token.start + field_token.len,
@@ -2675,7 +2923,39 @@ pub const SemanticContext = struct {
                 }
 
                 // member not found
-                try self.errors.add(.{
+                try self.addError(.{
+                    .kind = .no_such_field,
+                    .start = field_token.start,
+                    .end = field_token.start + field_token.len,
+                });
+                return null;
+            } else if (ot.isSlice()) {
+                // slice built-in properties: .len
+                const field_ident = self.ast.getIdentifier(access.field);
+                const field_token = self.tokens.items[field_ident.token_idx];
+                const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+                if (mem.eql(u8, field_name, "len")) {
+                    return TypeId.usize;
+                }
+
+                try self.addError(.{
+                    .kind = .no_such_field,
+                    .start = field_token.start,
+                    .end = field_token.start + field_token.len,
+                });
+                return null;
+            } else if (ot.isArray()) {
+                // array built-in properties: .len
+                const field_ident = self.ast.getIdentifier(access.field);
+                const field_token = self.tokens.items[field_ident.token_idx];
+                const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+
+                if (mem.eql(u8, field_name, "len")) {
+                    return TypeId.usize;
+                }
+
+                try self.addError(.{
                     .kind = .no_such_field,
                     .start = field_token.start,
                     .end = field_token.start + field_token.len,
@@ -2683,7 +2963,7 @@ pub const SemanticContext = struct {
                 return null;
             } else if (!ot.isUnresolved()) {
                 // dot access on non-struct/non-namespace
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .field_access_on_non_struct,
                     .start = loc.start,
                     .end = loc.end,
@@ -2699,6 +2979,11 @@ pub const SemanticContext = struct {
         const lit = self.ast.getStructLiteral(node_idx);
         const loc = self.ast.getLocation(node_idx);
 
+        // anonymous tuple literal: { expr, expr, ... }
+        if (lit.type_name == std.math.maxInt(NodeIndex)) {
+            return try self.checkAnonymousTupleLiteral(node_idx);
+        }
+
         // resolve type name to struct type — handle both identifier and field_access
         const type_id: TypeId = blk: {
             if (self.ast.getKind(lit.type_name) == .field_access) {
@@ -2711,8 +2996,16 @@ pub const SemanticContext = struct {
                 const type_token = self.tokens.items[type_ident.token_idx];
                 const type_name = self.src.getSlice(type_token.start, type_token.start + type_token.len);
 
-                const sym_idx = self.symbols.lookup(type_name) orelse {
-                    try self.errors.add(.{
+                const sym_idx = self.symbols.lookup(type_name) orelse ns_blk: {
+                    // Try with namespace prefix for imports (e.g. Color → rl.Color)
+                    if (self.current_namespace_prefix.len > 0) {
+                        var buf: [512]u8 = undefined;
+                        const qualified = std.fmt.bufPrint(&buf, "{s}.{s}", .{ self.current_namespace_prefix, type_name }) catch break :ns_blk null;
+                        break :ns_blk self.symbols.lookup(qualified);
+                    }
+                    break :ns_blk null;
+                } orelse {
+                    try self.addError(.{
                         .kind = .undefined_symbol,
                         .start = type_token.start,
                         .end = type_token.start + type_token.len,
@@ -2723,7 +3016,7 @@ pub const SemanticContext = struct {
                 self.symbols.markReferenced(sym_idx);
 
                 if (self.symbols.getKind(sym_idx) != .@"type") {
-                    try self.errors.add(.{
+                    try self.addError(.{
                         .kind = .unknown_type,
                         .start = type_token.start,
                         .end = type_token.start + type_token.len,
@@ -2743,23 +3036,36 @@ pub const SemanticContext = struct {
         var seen_fields = std.StringHashMap(void).init(self.allocator);
         defer seen_fields.deinit();
 
+        var positional_idx: usize = 0;
+
         var fi: usize = 0;
         while (fi < field_data.len) : (fi += 2) {
             const field_name_idx = field_data[fi];
             const field_value_idx = field_data[fi + 1];
 
-            // get field name
-            const field_ident = self.ast.getIdentifier(field_name_idx);
-            const field_token = self.tokens.items[field_ident.token_idx];
-            const field_name = self.src.getSlice(field_token.start, field_token.start + field_token.len);
+            // get field name — sentinel means positional (tuple literal)
+            const field_name = if (field_name_idx == std.math.maxInt(NodeIndex)) blk: {
+                const name = tupleFieldName(self.allocator, positional_idx) catch "?";
+                positional_idx += 1;
+                break :blk name;
+            } else blk: {
+                const field_ident = self.ast.getIdentifier(field_name_idx);
+                const field_token = self.tokens.items[field_ident.token_idx];
+                break :blk self.src.getSlice(field_token.start, field_token.start + field_token.len);
+            };
 
-            // check for duplicate fields
-            if (seen_fields.contains(field_name)) {
-                try self.errors.add(.{
-                    .kind = .duplicate_literal_field,
-                    .start = field_token.start,
-                    .end = field_token.start + field_token.len,
-                });
+            // check for duplicate fields (skip duplicate check for positional, but still record)
+            if (field_name_idx != std.math.maxInt(NodeIndex)) {
+                if (seen_fields.contains(field_name)) {
+                    const dup_loc = self.ast.getLocation(field_name_idx);
+                    try self.addError(.{
+                        .kind = .duplicate_literal_field,
+                        .start = dup_loc.start,
+                        .end = dup_loc.end,
+                    });
+                } else {
+                    try seen_fields.put(field_name, {});
+                }
             } else {
                 try seen_fields.put(field_name, {});
             }
@@ -2774,7 +3080,7 @@ pub const SemanticContext = struct {
                     if (value_type) |vt| {
                         if (!self.typesCompatible(field.type_id, vt)) {
                             const val_loc = self.ast.getLocation(field_value_idx);
-                            try self.errors.add(.{
+                            try self.addError(.{
                                 .kind = .type_mismatch,
                                 .start = val_loc.start,
                                 .end = val_loc.end,
@@ -2786,10 +3092,11 @@ pub const SemanticContext = struct {
             }
 
             if (!found) {
-                try self.errors.add(.{
+                const val_loc = self.ast.getLocation(field_value_idx);
+                try self.addError(.{
                     .kind = .no_such_field,
-                    .start = field_token.start,
-                    .end = field_token.start + field_token.len,
+                    .start = val_loc.start,
+                    .end = val_loc.end,
                 });
             }
         }
@@ -2797,7 +3104,7 @@ pub const SemanticContext = struct {
         // check all struct fields are initialized
         for (struct_type.fields) |field| {
             if (!seen_fields.contains(field.name)) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .missing_field,
                     .start = loc.start,
                     .end = loc.end,
@@ -2805,6 +3112,37 @@ pub const SemanticContext = struct {
                 break; // one error is enough
             }
         }
+
+        return type_id;
+    }
+
+    fn checkAnonymousTupleLiteral(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
+        const lit = self.ast.getStructLiteral(node_idx);
+        const field_data = self.ast.getExtra(lit.fields);
+        const field_count = field_data.len / 2;
+
+        // collect element types by type-checking each value
+        var field_names = try std.ArrayList([]const u8).initCapacity(self.allocator, field_count);
+        defer field_names.deinit(self.allocator);
+        var field_types = try std.ArrayList(TypeId).initCapacity(self.allocator, field_count);
+        defer field_types.deinit(self.allocator);
+
+        var fi: usize = 0;
+        var idx: usize = 0;
+        while (fi < field_data.len) : (fi += 2) {
+            const field_value_idx = field_data[fi + 1];
+            // Let numeric literals stay unresolved — backward inference resolves them
+            // from usage context (e.g. return type, variable type annotation)
+            const value_type = try self.checkExpression(field_value_idx, .unresolved) orelse TypeId.unresolved;
+            try field_names.append(self.allocator, tupleFieldName(self.allocator, idx) catch "?");
+            try field_types.append(self.allocator, value_type);
+            idx += 1;
+        }
+
+        // create anonymous struct type
+        const anon_name = std.fmt.allocPrint(self.types.arena.allocator(), "__anon_tuple_{d}", .{self.types.struct_types.items.len}) catch return null;
+        const type_id = try self.types.reserveStructType(anon_name);
+        try self.types.finalizeStructType(type_id, field_names.items, field_types.items, .honey);
 
         return type_id;
     }
@@ -2828,7 +3166,7 @@ pub const SemanticContext = struct {
         // check length matches if context provides one
         if (expected_length) |exp_len| {
             if (elements.len != exp_len) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .array_length_mismatch,
                     .start = loc.start,
                     .end = loc.end,
@@ -2866,11 +3204,11 @@ pub const SemanticContext = struct {
         // check the object being indexed
         const obj_type = try self.checkExpression(idx_node.object, .unresolved);
 
-        // check the index expression — must be integer
-        const index_type = try self.checkExpression(idx_node.index, TypeId.u64);
+        // check the index expression — must be integer (context: usize)
+        const index_type = try self.checkExpression(idx_node.index, TypeId.usize);
         if (index_type) |it| {
             if (!it.isInteger() and !it.isUnresolved()) {
-                try self.errors.add(.{
+                try self.addError(.{
                     .kind = .index_not_integer,
                     .start = loc.start,
                     .end = loc.end,
@@ -2878,14 +3216,76 @@ pub const SemanticContext = struct {
             }
         }
 
-        // object must be an array type
+        // object must be an array or slice type
         if (obj_type) |ot| {
             if (ot.isArray()) {
                 if (self.types.getArrayType(ot)) |arr_info| {
                     return arr_info.element_type;
                 }
+            } else if (ot.isSlice()) {
+                if (self.types.getSliceType(ot)) |slice_info| {
+                    return slice_info.element_type;
+                }
             } else if (!ot.isUnresolved()) {
-                try self.errors.add(.{
+                try self.addError(.{
+                    .kind = .index_non_array,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+            }
+        }
+
+        return null;
+    }
+
+    fn checkArraySlice(self: *SemanticContext, node_idx: NodeIndex) !?TypeId {
+        const slice_node = self.ast.getArraySlice(node_idx);
+        const loc = self.ast.getLocation(node_idx);
+
+        // check the object being sliced
+        const obj_type = try self.checkExpression(slice_node.object, .unresolved);
+
+        // check start and end expressions (if present) — must be integers (context: usize)
+        if (slice_node.range_start) |start_idx| {
+            const start_type = try self.checkExpression(start_idx, TypeId.usize);
+            if (start_type) |st| {
+                if (!st.isInteger() and !st.isUnresolved()) {
+                    try self.addError(.{
+                        .kind = .index_not_integer,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
+            }
+        }
+
+        if (slice_node.range_end) |end_idx| {
+            const end_type = try self.checkExpression(end_idx, TypeId.usize);
+            if (end_type) |et| {
+                if (!et.isInteger() and !et.isUnresolved()) {
+                    try self.addError(.{
+                        .kind = .index_not_integer,
+                        .start = loc.start,
+                        .end = loc.end,
+                    });
+                }
+            }
+        }
+
+        // object must be an array or slice type — slicing produces a slice
+        if (obj_type) |ot| {
+            if (ot.isArray()) {
+                if (self.types.getArrayType(ot)) |arr_info| {
+                    return try self.types.addSliceType(arr_info.element_type, arr_info.is_mutable);
+                }
+            } else if (ot.isSlice()) {
+                // slicing a slice drops any sentinel guarantee
+                if (self.types.getSliceType(ot)) |slice_info| {
+                    return try self.types.addSliceType(slice_info.element_type, slice_info.is_mutable);
+                }
+                return ot;
+            } else if (!ot.isUnresolved()) {
+                try self.addError(.{
                     .kind = .index_non_array,
                     .start = loc.start,
                     .end = loc.end,
@@ -2935,7 +3335,21 @@ pub const SemanticContext = struct {
             if (la.length != ra.length) return false;
             // expected mutable, got immutable — not OK
             if (la.is_mutable and !ra.is_mutable) return false;
+            // sentinel must match (no implicit sentinel coercion for arrays)
+            if (la.sentinel != ra.sentinel) return false;
             return self.typesCompatible(la.element_type, ra.element_type);
+        }
+
+        // slice types: structural comparison with mutability and sentinel coercion
+        if (left.isSlice() and right.isSlice()) {
+            const ls = self.types.getSliceType(left) orelse return false;
+            const rs = self.types.getSliceType(right) orelse return false;
+            // expected mutable, got immutable — not OK
+            if (ls.is_mutable and !rs.is_mutable) return false;
+            // sentinel coercion: [:0]T → []T is OK (dropping sentinel guarantee)
+            // []T → [:0]T is NOT OK (can't guarantee sentinel exists)
+            if (ls.sentinel != null and rs.sentinel == null) return false;
+            return self.typesCompatible(ls.element_type, rs.element_type);
         }
 
         // use structural equality
@@ -3011,6 +3425,20 @@ pub const SemanticContext = struct {
 
     fn declareLocal(self: *SemanticContext, name: []const u8, type_id: TypeId, is_mutable: bool, node_idx: NodeIndex) !void {
         if (self.scopes.items.len == 0) return; // no scope active
+
+        // check all scopes for shadowing (current scope catches param/local conflicts)
+        for (self.scopes.items) |scope| {
+            if (scope.locals.contains(name)) {
+                const loc = self.ast.getLocation(node_idx);
+                try self.addError(.{
+                    .kind = .variable_shadowing,
+                    .start = loc.start,
+                    .end = loc.end,
+                });
+                break;
+            }
+        }
+
         var current = &self.scopes.items[self.scopes.items.len - 1];
         try current.locals.put(name, .{
             .type_id = type_id,

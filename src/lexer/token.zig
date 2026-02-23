@@ -28,6 +28,7 @@ pub const Kind = enum {
     namespace,
     @"pub",
     import,
+    @"opaque",
 
     // string literals
     string_literal,
@@ -55,9 +56,12 @@ pub const Kind = enum {
     less_equal,
     greater_equal,
 
-    // logical
+    // control flow
     @"if",
     @"else",
+    @"while",
+    @"break",
+    @"continue",
     not,
     @"and",
     @"or",
@@ -74,6 +78,8 @@ pub const Kind = enum {
     // other
     comma,
     dot,
+    dot_dot,
+    ellipsis,
     at,
     ampersand,
     caret,

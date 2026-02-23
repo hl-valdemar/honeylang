@@ -7,7 +7,13 @@ test {
     _ = @import("integration_tests/structs.zig");
     _ = @import("integration_tests/pointers.zig");
     _ = @import("integration_tests/arrays.zig");
+    _ = @import("integration_tests/slices.zig");
     _ = @import("integration_tests/namespaces.zig");
     _ = @import("integration_tests/errors.zig");
     _ = @import("integration_tests/codegen.zig");
+    _ = @import("integration_tests/bounds_checking.zig");
+    _ = @import("integration_tests/strings.zig");
+    _ = @import("integration_tests/tuples.zig");
+    _ = @import("integration_tests/scopes.zig");
+    _ = @import("integration_tests/while_loops.zig");
 }

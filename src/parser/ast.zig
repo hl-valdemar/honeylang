@@ -14,6 +14,7 @@ pub const NodeKind = enum {
     func_decl,
     var_decl,
     struct_decl,
+    opaque_decl,
     namespace_decl,
     pub_decl,
     import_decl,
@@ -35,16 +36,21 @@ pub const NodeKind = enum {
     // type expressions
     pointer_type,
     array_type,
+    slice_type,
 
     // array expressions
     array_literal,
     array_index,
+    array_slice,
 
     // statements
     block,
     return_stmt,
     defer_stmt,
     if_stmt,
+    while_stmt,
+    break_stmt,
+    continue_stmt,
     assignment,
 
     // parse error
@@ -90,6 +96,7 @@ pub const FuncDecl = struct {
     return_type: NodeIndex,
     body: ?NodeIndex, // null for external functions
     call_conv: CallingConvention,
+    is_variadic: bool = false,
 };
 
 pub const VarDecl = struct {
@@ -103,6 +110,11 @@ pub const StructDecl = struct {
     name: NodeIndex,
     fields: Range, // pairs of (name_ident, type_ident) in extra_data
     call_conv: CallingConvention,
+    is_tuple: bool = false, // true for positional fields (Name :: struct {T1, T2})
+};
+
+pub const OpaqueDecl = struct {
+    name: NodeIndex,
 };
 
 pub const NamespaceDecl = struct {
@@ -247,6 +259,12 @@ pub const If = struct {
     }
 };
 
+pub const While = struct {
+    condition: NodeIndex,
+    cont_expr: ?NodeIndex, // optional continue expression (while cond : expr { })
+    body: NodeIndex,
+};
+
 pub const Assignment = struct {
     target: NodeIndex,
     value: NodeIndex,
@@ -270,6 +288,13 @@ pub const ArrayType = struct {
     element_type: NodeIndex,
     length: ?u32,
     is_mutable: bool,
+    sentinel: ?u8 = null,
+};
+
+pub const SliceType = struct {
+    element_type: NodeIndex,
+    is_mutable: bool,
+    sentinel: ?u8 = null,
 };
 
 pub const ArrayLiteral = struct {
@@ -279,6 +304,12 @@ pub const ArrayLiteral = struct {
 pub const ArrayIndex = struct {
     object: NodeIndex,
     index: NodeIndex,
+};
+
+pub const ArraySlice = struct {
+    object: NodeIndex,
+    range_start: ?NodeIndex, // null for arr[..end] and arr[..]
+    range_end: ?NodeIndex, // null for arr[start..] and arr[..]
 };
 
 pub const Error = struct {
@@ -300,6 +331,7 @@ pub const Ast = struct {
     func_decls: std.ArrayList(FuncDecl),
     var_decls: std.ArrayList(VarDecl),
     struct_decls: std.ArrayList(StructDecl),
+    opaque_decls: std.ArrayList(OpaqueDecl),
     namespace_decls: std.ArrayList(NamespaceDecl),
     pub_decls: std.ArrayList(PubDecl),
     import_decls: std.ArrayList(ImportDecl),
@@ -315,13 +347,16 @@ pub const Ast = struct {
     returns: std.ArrayList(Return),
     defers: std.ArrayList(Defer),
     ifs: std.ArrayList(If),
+    whiles: std.ArrayList(While),
     assignments: std.ArrayList(Assignment),
     address_ofs: std.ArrayList(AddressOf),
     derefs: std.ArrayList(Deref),
     pointer_types: std.ArrayList(PointerType),
     array_types: std.ArrayList(ArrayType),
+    slice_types: std.ArrayList(SliceType),
     array_literals: std.ArrayList(ArrayLiteral),
     array_indices: std.ArrayList(ArrayIndex),
+    array_slices: std.ArrayList(ArraySlice),
     errors: std.ArrayList(Error),
 
     // auxiliary storage for variable-length children
@@ -344,6 +379,7 @@ pub const Ast = struct {
             .func_decls = try std.ArrayList(FuncDecl).initCapacity(allocator, capacity),
             .var_decls = try std.ArrayList(VarDecl).initCapacity(allocator, capacity),
             .struct_decls = try std.ArrayList(StructDecl).initCapacity(allocator, capacity),
+            .opaque_decls = try std.ArrayList(OpaqueDecl).initCapacity(allocator, capacity),
             .namespace_decls = try std.ArrayList(NamespaceDecl).initCapacity(allocator, capacity),
             .pub_decls = try std.ArrayList(PubDecl).initCapacity(allocator, capacity),
             .import_decls = try std.ArrayList(ImportDecl).initCapacity(allocator, capacity),
@@ -359,13 +395,16 @@ pub const Ast = struct {
             .returns = try std.ArrayList(Return).initCapacity(allocator, capacity),
             .defers = try std.ArrayList(Defer).initCapacity(allocator, capacity),
             .ifs = try std.ArrayList(If).initCapacity(allocator, capacity),
+            .whiles = try std.ArrayList(While).initCapacity(allocator, capacity),
             .assignments = try std.ArrayList(Assignment).initCapacity(allocator, capacity),
             .address_ofs = try std.ArrayList(AddressOf).initCapacity(allocator, capacity),
             .derefs = try std.ArrayList(Deref).initCapacity(allocator, capacity),
             .pointer_types = try std.ArrayList(PointerType).initCapacity(allocator, capacity),
             .array_types = try std.ArrayList(ArrayType).initCapacity(allocator, capacity),
+            .slice_types = try std.ArrayList(SliceType).initCapacity(allocator, capacity),
             .array_literals = try std.ArrayList(ArrayLiteral).initCapacity(allocator, capacity),
             .array_indices = try std.ArrayList(ArrayIndex).initCapacity(allocator, capacity),
+            .array_slices = try std.ArrayList(ArraySlice).initCapacity(allocator, capacity),
             .errors = try std.ArrayList(Error).initCapacity(allocator, capacity),
 
             .extra_data = try std.ArrayList(NodeIndex).initCapacity(allocator, capacity),
@@ -383,6 +422,7 @@ pub const Ast = struct {
         self.func_decls.deinit(self.allocator);
         self.var_decls.deinit(self.allocator);
         self.struct_decls.deinit(self.allocator);
+        self.opaque_decls.deinit(self.allocator);
         self.namespace_decls.deinit(self.allocator);
         self.pub_decls.deinit(self.allocator);
         self.import_decls.deinit(self.allocator);
@@ -403,8 +443,10 @@ pub const Ast = struct {
         self.derefs.deinit(self.allocator);
         self.pointer_types.deinit(self.allocator);
         self.array_types.deinit(self.allocator);
+        self.slice_types.deinit(self.allocator);
         self.array_literals.deinit(self.allocator);
         self.array_indices.deinit(self.allocator);
+        self.array_slices.deinit(self.allocator);
         self.errors.deinit(self.allocator);
 
         self.extra_data.deinit(self.allocator);
@@ -459,6 +501,7 @@ pub const Ast = struct {
         return_type: NodeIndex,
         body: ?NodeIndex,
         calling_conv: CallingConvention,
+        is_variadic: bool,
         start: SourceIndex,
         end: SourceIndex,
     ) !NodeIndex {
@@ -475,6 +518,7 @@ pub const Ast = struct {
             .return_type = return_type,
             .body = body,
             .call_conv = calling_conv,
+            .is_variadic = is_variadic,
         });
 
         return node_idx;
@@ -511,6 +555,7 @@ pub const Ast = struct {
         name: NodeIndex,
         fields: Range,
         calling_conv: CallingConvention,
+        is_tuple: bool,
         start: SourceIndex,
         end: SourceIndex,
     ) !NodeIndex {
@@ -525,7 +570,26 @@ pub const Ast = struct {
             .name = name,
             .fields = fields,
             .call_conv = calling_conv,
+            .is_tuple = is_tuple,
         });
+
+        return node_idx;
+    }
+
+    pub fn addOpaqueDecl(
+        self: *Ast,
+        name: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.opaque_decls.items.len);
+
+        try self.kinds.append(self.allocator, .opaque_decl);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.opaque_decls.append(self.allocator, .{ .name = name });
 
         return node_idx;
     }
@@ -879,6 +943,48 @@ pub const Ast = struct {
         return node_idx;
     }
 
+    pub fn addWhile(
+        self: *Ast,
+        condition: NodeIndex,
+        cont_expr: ?NodeIndex,
+        body: NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.whiles.items.len);
+
+        try self.kinds.append(self.allocator, .while_stmt);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.whiles.append(self.allocator, .{
+            .condition = condition,
+            .cont_expr = cont_expr,
+            .body = body,
+        });
+
+        return node_idx;
+    }
+
+    pub fn addBreak(self: *Ast, start: SourceIndex, end: SourceIndex) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        try self.kinds.append(self.allocator, .break_stmt);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, 0);
+        return node_idx;
+    }
+
+    pub fn addContinue(self: *Ast, start: SourceIndex, end: SourceIndex) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        try self.kinds.append(self.allocator, .continue_stmt);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, 0);
+        return node_idx;
+    }
+
     pub fn addAssignment(
         self: *Ast,
         target: NodeIndex,
@@ -966,6 +1072,7 @@ pub const Ast = struct {
         element_type: NodeIndex,
         length: ?u32,
         is_mutable: bool,
+        sentinel: ?u8,
         start: SourceIndex,
         end: SourceIndex,
     ) !NodeIndex {
@@ -980,6 +1087,31 @@ pub const Ast = struct {
             .element_type = element_type,
             .length = length,
             .is_mutable = is_mutable,
+            .sentinel = sentinel,
+        });
+
+        return node_idx;
+    }
+
+    pub fn addSliceType(
+        self: *Ast,
+        element_type: NodeIndex,
+        is_mutable: bool,
+        sentinel: ?u8,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.slice_types.items.len);
+
+        try self.kinds.append(self.allocator, .slice_type);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.slice_types.append(self.allocator, .{
+            .element_type = element_type,
+            .is_mutable = is_mutable,
+            .sentinel = sentinel,
         });
 
         return node_idx;
@@ -1020,6 +1152,30 @@ pub const Ast = struct {
         try self.array_indices.append(self.allocator, .{
             .object = object,
             .index = index,
+        });
+
+        return node_idx;
+    }
+
+    pub fn addArraySlice(
+        self: *Ast,
+        object: NodeIndex,
+        range_start: ?NodeIndex,
+        range_end: ?NodeIndex,
+        start: SourceIndex,
+        end: SourceIndex,
+    ) !NodeIndex {
+        const node_idx: NodeIndex = @intCast(self.kinds.items.len);
+        const data_idx: NodeIndex = @intCast(self.array_slices.items.len);
+
+        try self.kinds.append(self.allocator, .array_slice);
+        try self.starts.append(self.allocator, start);
+        try self.ends.append(self.allocator, end);
+        try self.data_indices.append(self.allocator, data_idx);
+        try self.array_slices.append(self.allocator, .{
+            .object = object,
+            .range_start = range_start,
+            .range_end = range_end,
         });
 
         return node_idx;
@@ -1119,6 +1275,12 @@ pub const Ast = struct {
         return self.struct_decls.items[data_idx];
     }
 
+    pub fn getOpaqueDecl(self: *const Ast, idx: NodeIndex) OpaqueDecl {
+        std.debug.assert(self.kinds.items[idx] == .opaque_decl);
+        const data_idx = self.data_indices.items[idx];
+        return self.opaque_decls.items[data_idx];
+    }
+
     pub fn getNamespaceDecl(self: *const Ast, idx: NodeIndex) NamespaceDecl {
         std.debug.assert(self.kinds.items[idx] == .namespace_decl);
         const data_idx = self.data_indices.items[idx];
@@ -1209,6 +1371,12 @@ pub const Ast = struct {
         return self.ifs.items[data_idx];
     }
 
+    pub fn getWhile(self: *const Ast, idx: NodeIndex) While {
+        std.debug.assert(self.kinds.items[idx] == .while_stmt);
+        const data_idx = self.data_indices.items[idx];
+        return self.whiles.items[data_idx];
+    }
+
     pub fn getAssignment(self: *const Ast, idx: NodeIndex) Assignment {
         std.debug.assert(self.kinds.items[idx] == .assignment);
         const data_idx = self.data_indices.items[idx];
@@ -1239,6 +1407,12 @@ pub const Ast = struct {
         return self.array_types.items[data_idx];
     }
 
+    pub fn getSliceType(self: *const Ast, idx: NodeIndex) SliceType {
+        std.debug.assert(self.kinds.items[idx] == .slice_type);
+        const data_idx = self.data_indices.items[idx];
+        return self.slice_types.items[data_idx];
+    }
+
     pub fn getArrayLiteral(self: *const Ast, idx: NodeIndex) ArrayLiteral {
         std.debug.assert(self.kinds.items[idx] == .array_literal);
         const data_idx = self.data_indices.items[idx];
@@ -1249,6 +1423,12 @@ pub const Ast = struct {
         std.debug.assert(self.kinds.items[idx] == .array_index);
         const data_idx = self.data_indices.items[idx];
         return self.array_indices.items[data_idx];
+    }
+
+    pub fn getArraySlice(self: *const Ast, idx: NodeIndex) ArraySlice {
+        std.debug.assert(self.kinds.items[idx] == .array_slice);
+        const data_idx = self.data_indices.items[idx];
+        return self.array_slices.items[data_idx];
     }
 
     pub fn getError(self: *const Ast, idx: NodeIndex) Error {

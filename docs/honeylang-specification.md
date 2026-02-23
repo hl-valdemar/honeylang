@@ -99,7 +99,7 @@ PersonInfo :: struct {
 
 ## Logical Operators and Comparators
 
-Logical operators in the Honey language include `not`, `and`, and `or`, while `<`, `>`, `<=`, `>=`, `==`, and `!=` comprise the comparison operators.
+Logical operators in the Honey language include `!`, `and`, and `or`, while `<`, `>`, `<=`, `>=`, `==`, and `!=` comprise the comparison operators.
 
 ## Comptime vs Runtime
 
@@ -361,6 +361,78 @@ if (complex_expr and another_expr) {
 ```
 
 For optional unwrapping with `if`, see Optional Types.
+
+### Blocks and Scoping
+
+A bare block `{ ... }` can appear anywhere a statement is expected. It introduces a new scope: variables declared inside are local to the block and are dropped when the block exits.
+
+```honey
+main :: func() void {
+    a := 1
+    {
+        b := 2          # b is only visible inside this block
+        use(a + b)      # a is visible from the outer scope
+    }
+    # b is no longer in scope here
+    b := 3              # this is fine — it's a new declaration, not a redeclaration
+}
+```
+
+**Shadowing is not allowed.** Redeclaring a variable that already exists in an enclosing scope (or as a function parameter) is an error:
+
+```honey
+main :: func(x: i32) void {
+    x := 5              # ERROR: variable shadows outer declaration (parameter)
+}
+
+main :: func() void {
+    a := 1
+    {
+        a := 2          # ERROR: variable shadows outer declaration
+    }
+}
+```
+
+Sibling blocks do not conflict — once a block exits, its names are available for reuse:
+
+```honey
+main :: func() void {
+    {
+        temp := compute_a()
+    }
+    {
+        temp := compute_b()     # fine — previous temp was dropped
+    }
+}
+```
+
+### Defer
+
+The `defer` keyword schedules a statement to execute when the enclosing block exits, regardless of how the block is exited (fall-through or return). Multiple defers in the same block execute in reverse order (LIFO):
+
+```honey
+main :: func() void {
+    {
+        defer printf("second\n")
+        defer printf("first\n")
+        printf("inside\n")
+    }
+    # output: inside, first, second
+    printf("after\n")
+}
+```
+
+Defers execute before `return` when a return appears inside the block:
+
+```honey
+open_and_read :: func() i32 {
+    handle := open("file.txt")
+    defer close(handle)             # runs before the function returns
+
+    data := read(handle)
+    return process(data)            # close(handle) runs here, before returning
+}
+```
 
 ### Match Statements and Expressions
 
@@ -640,6 +712,63 @@ data := read(path) catch |e| {
 }
 ```
 
+### Labeled Blocks
+
+Blocks can be labeled with `name:` to enable yielding from a specific scope in nested contexts. An unlabeled `yield` always exits the innermost block. A labeled `yield :name value` exits the block with that label, even from within nested blocks or conditions:
+
+```honey
+result := outer: {
+    mut status := 500
+
+    if some_condition {
+        yield :outer 404        # exits the outer block with 404
+    }
+
+    {
+        yield :outer status     # can target outer from a nested block too
+    }
+}
+```
+
+Unlabeled `yield` without a label exits the immediately enclosing block — this is the common case and keeps simple code concise:
+
+```honey
+value := {
+    yield 42                    # no label needed for the simple case
+}
+```
+
+Labels are useful when:
+- An `if` or `match` inside a block needs to produce the block's value
+- Nested blocks need to exit an outer block
+- You want to make the target scope explicit for clarity
+
+```honey
+# labeled yield from within a match arm
+config := setup: {
+    mut cfg := default_config()
+
+    match mode {
+        .fast: yield :setup fast_config(),
+        .safe: {
+            validate()
+            yield :setup safe_config()
+        },
+    }
+
+    yield cfg
+}
+```
+
+A labeled `yield` that targets the immediately enclosing block is equivalent to an unlabeled one — the label is optional in that case:
+
+```honey
+x := blk: {
+    yield :blk 42       # labeled — explicit
+    # yield 42          # unlabeled — equivalent, less verbose
+}
+```
+
 ## Pointers
 
 Honey has two kinds of pointers, both **non-nullable by default**:
@@ -772,19 +901,35 @@ main :: func() void {
 
 ### Struct Field Access Through Pointers
 
+Pointers to structs are automatically dereferenced on field access — no explicit `^` is needed:
+
 ```honey
 Buffer :: struct {
-    data: *mut u8,      # many-item pointer to buffer data
+    data: *mut u8,
     len: u64,
 }
 
 main :: func() void {
     mut buf: Buffer = ...
-    ptr: @mut Buffer = &buf   # single-item pointer to one Buffer
-    data := ptr^.data         # dereference then access field
-    ptr^.len = 100            # modify field through pointer
+    ptr: @mut Buffer = &buf
+
+    data := ptr.data          # auto-deref: same as ptr^.data
+    ptr.len = 100             # auto-deref: same as ptr^.len = 100
 }
 ```
+
+This works through multiple layers of pointers and nested structs:
+
+```honey
+Inner :: struct { value: i32 }
+Outer :: struct { inner: Inner }
+
+get_value :: func(p: @Outer) i32 {
+    return p.inner.value      # auto-derefs p, then accesses inner.value
+}
+```
+
+Explicit dereference (`ptr^.field`) still works and is equivalent. Mutability is checked against the pointer type — writing through an immutable pointer (`@T`) is an error regardless of whether you write `p.x = 1` or `p^.x = 1`.
 
 ### Pointer Arithmetic
 
@@ -2150,28 +2295,121 @@ main :: func() void {
 
 ## Tuples
 
-### Declaration and instantiation
+Tuples are anonymous structs with positional (unnamed) fields. They use `{}` syntax — the same braces as named structs — because conceptually they are the same thing, just with fields accessed by position instead of name.
+
+### Tuple Types
+
+A tuple type is a struct with positional field types:
 
 ```honey
-point: (f32, f32) = (1.0, 2.0)
-single: (i32,) = (42,)  # trailing comma for 1-tuple
+Pair :: struct {i32, [:0]u8}
+Point :: struct {f32, f32}
 ```
 
-### Access by index
+This is equivalent to a struct with fields named `0`, `1`, etc. internally.
+
+### Literals and Access
 
 ```honey
-x := point[0]
-y := point[1]
+p := Point{1.0, 2.0}
+x := p.0                  # f32: 1.0
+y := p.1                  # f32: 2.0
 ```
 
-### In structs
+```honey
+info: Pair = {42, "hello"}
+id := info.0               # i32: 42
+name := info.1             # [:0]u8: "hello"
+```
+
+### Anonymous Tuples
+
+Tuples can be used without a named type declaration:
+
+```honey
+t := {1, "hello", 3.14}
+first := t.0
+```
+
+The type is inferred from context, the same way numeric literals resolve through type anchoring.
+
+### In Named Structs
+
+Tuple types can be used as struct field types:
 
 ```honey
 Line :: struct {
-    start: (f32, f32),
-    end: (f32, f32),
+    start: struct {f32, f32},
+    end: struct {f32, f32},
 }
 ```
+
+### Tuple vs Named Struct
+
+The distinction is purely syntactic — whether fields have names or not:
+
+```honey
+# Named struct: fields accessed by name
+Point :: struct { x: f32, y: f32 }
+p := Point{ .x = 1.0, .y = 2.0 }
+p.x  # by name
+
+# Tuple struct: fields accessed by position
+Point2 :: struct { f32, f32 }
+q := Point2{1.0, 2.0}
+q.0  # by position
+```
+
+Both are structs under the hood. There is no separate `tuple` keyword.
+
+## Variadic Arguments
+
+Honey supports type-safe variadic arguments through comptime tuple collection. Variadic calls are fully type-checked at compile time — no runtime type erasure, no `va_list`.
+
+### Syntax
+
+A function declares a variadic parameter with `...` as the type of its last parameter:
+
+```honey
+print :: func(comptime fmt: [:0]u8, args: ...) void {
+    # 'args' is a comptime tuple — access via args.0, args.1, etc.
+    # fmt is validated against the argument types at compile time
+}
+```
+
+At each call site, the compiler knows the exact types and count of the variadic arguments:
+
+```honey
+print("x={} y={}", x, y)          # args = {x, y} — two args
+print("name: {}", name)           # args = {name} — one arg
+print("no args")                   # args = {} — zero args
+```
+
+The `...` parameter must be the last parameter in the function signature. The compiler packages the extra arguments into a comptime tuple internally and generates specialized code for each call site.
+
+### C Variadic Interop
+
+For calling C variadic functions (`printf`, `snprintf`, etc.), the `...` parameter is unnamed — there's no function body to access them from:
+
+```honey
+printf :: c func(fmt: [:0]u8, ...) i32
+
+main :: func() void {
+    printf("Hello %s, you are %d\n", "world", 42)
+}
+```
+
+The compiler passes each extra argument according to the C calling convention.
+
+**Note:** C variadic calls are inherently type-unsafe (the compiler trusts the format string). Honey's own `print` function would use comptime format string validation to catch mismatches at compile time.
+
+### Design Rationale
+
+- **No macros:** Unlike Rust's `println!`, Honey's print is a regular function
+- **No runtime overhead:** Unlike Go's `...any`, there's no boxing or runtime type dispatch — the compiler monomorphizes each call
+- **Compile-time safety:** Format string mismatches in Honey functions are compile errors, not runtime crashes
+- **C compatible:** Variadic arguments unpack naturally to C variadic arguments
+- **Separation of concerns:** Tuples are a data structure (positional structs); variadics are a calling convention (`...`). They are independent features that compose naturally
 
 ## Type Aliasing
 
@@ -2946,7 +3184,8 @@ data := read_file(path) catch |e| match e {
 | `try expr` | Unwrap success or propagate error |
 | `expr catch fallback` | Provide fallback value on error |
 | `expr catch |e| { ... }` | Handle error with block |
-| `yield value` | Provide value from block (catch, match arm, scoped block) |
+| `yield value` | Provide value from innermost block |
+| `yield :label value` | Provide value from labeled block |
 | `return` / `return value` | Exit function from within catch block |
 
 ## Summary of Syntax
@@ -2974,7 +3213,9 @@ data := read_file(path) catch |e| match e {
 | `if cond { }` | Conditional execution |
 | `if cond { } else { }` | Conditional with else branch |
 | `match val { pat: expr, ... }` | Pattern matching (statement or expression) |
-| `yield value` | Produce a value from a block (match arm, catch, scoped block) |
+| `yield value` | Produce a value from the innermost block |
+| `yield :label value` | Produce a value from the labeled block |
+| `name: { ... }` | Labeled block (target for `yield :name`) |
 | `for collection \|val\| { }` | Iterate over elements |
 | `for collection \|val, idx\| { }` | Iterate with index |
 | `for 0..n \|i\| { }` | Iterate over exclusive range |
@@ -3094,7 +3335,8 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 | `try expr` | Unwrap success or propagate error |
 | `expr catch fallback` | Provide fallback value on error |
 | `expr catch |e| { ... }` | Handle error with block |
-| `yield value` | Provide value from block (catch, match arm, scoped block) |
+| `yield value` | Provide value from innermost block |
+| `yield :label value` | Provide value from labeled block |
 
 ### Interfaces
 
@@ -3107,6 +3349,22 @@ Applies to both `@T` (single-item) and `*T` (many-item) pointers:
 | `comptime I: Interface` | Generic parameter requiring a satisfying namespace |
 | `I.TypeName` | Access associated type from implementation |
 | `I.func_name(...)` | Call function from implementation |
+
+### Tuples
+
+| Syntax | Meaning |
+| -- | -- |
+| `struct {T1, T2}` | Tuple type (positional struct) |
+| `Name :: struct {T1, T2}` | Named tuple type |
+| `{val1, val2}` | Tuple literal |
+| `t.0`, `t.1` | Access tuple fields by position |
+
+### Variadic Arguments
+
+| Syntax | Meaning |
+| -- | -- |
+| `func(args: ...) T` | Variadic parameter (must be last) |
+| `func(...) T` | C variadic (unnamed, extern only) |
 
 ### C Interop
 

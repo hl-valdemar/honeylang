@@ -163,9 +163,12 @@ pub const MInst = union(enum) {
         args: []const VReg, // argument registers (in order)
         arg_widths: []const Width, // argument types (parallel to args)
         arg_struct_indices: []const ?u32 = &.{}, // parallel to args; non-null for struct params (byval)
+        arg_slice_flags: []const bool = &.{}, // parallel to args; true for slice params (byval %slice)
         call_conv: CallingConvention,
         width: Width, // return value width
         sret_struct_idx: ?u32 = null, // non-null => first arg is sret pointer
+        is_variadic: bool = false, // true for C variadic calls
+        fixed_param_count: u32 = 0, // number of fixed (non-variadic) params
     },
 
     /// Label (branch target).
@@ -262,9 +265,15 @@ pub const MInst = union(enum) {
         is_sub: bool, // true for subtraction
     },
 
-    /// Allocate an array on the stack.
+    /// Allocate an array on the stack (standalone, returns pointer).
     alloca_array: struct {
         dst: VReg, // pointer to allocated array
+        array_idx: u32, // index into TypeRegistry.array_types
+    },
+
+    /// Declare a local variable as an array: alloca [N x T] as the local slot.
+    alloca_array_local: struct {
+        offset: i16, // local fp-relative offset
         array_idx: u32, // index into TypeRegistry.array_types
     },
 
@@ -285,6 +294,47 @@ pub const MInst = union(enum) {
         array_idx: u32, // index into TypeRegistry.array_types
         width: Width, // width of the element
     },
+
+    /// Get a pointer to an array element via GEP (no load).
+    /// Used for struct elements where the pointer IS the value.
+    addr_of_element: struct {
+        dst: VReg,
+        base: VReg, // pointer to array
+        index: VReg, // element index
+        array_idx: u32, // index into TypeRegistry.array_types
+    },
+
+    /// Declare a local variable as a slice: alloca { ptr, i64 }.
+    alloca_slice_local: struct {
+        offset: i16, // local fp-relative offset
+    },
+
+    /// Extract the data pointer from a slice fat pointer.
+    slice_get_ptr: struct {
+        dst: VReg, // loaded ptr value
+        base: VReg, // pointer to { ptr, i64 } struct
+    },
+
+    /// Extract the length from a slice fat pointer.
+    slice_get_len: struct {
+        dst: VReg, // loaded i64 length
+        base: VReg, // pointer to { ptr, i64 } struct
+    },
+
+    /// Store ptr + len into a slice fat pointer.
+    make_slice: struct {
+        dst: VReg, // pointer to { ptr, i64 } (already alloca'd)
+        ptr_val: VReg, // data pointer to store
+        len_val: VReg, // length to store
+    },
+
+    /// GEP into slice data: getelementptr elem_type, ptr %data, i64 %index
+    slice_elem_ptr: struct {
+        dst: VReg,
+        data_ptr: VReg,
+        index: VReg,
+        elem_llvm_type: []const u8, // LLVM type string for the element
+    },
 };
 
 /// Function parameter metadata.
@@ -292,6 +342,7 @@ pub const ParamInfo = struct {
     name: []const u8,
     width: Width,
     struct_idx: ?u32 = null, // non-null for struct params (index into TypeRegistry.struct_types)
+    is_slice: bool = false, // true for slice params (passed as byval %slice)
 };
 
 /// External function declaration (no body).
@@ -301,6 +352,8 @@ pub const ExternFunc = struct {
     return_width: ?Width, // null means void
     param_widths: []const Width,
     param_struct_indices: []const ?u32 = &.{}, // parallel to param_widths; non-null for struct params
+    param_slice_flags: []const bool = &.{}, // parallel to param_widths; true for slice params
+    is_variadic: bool = false,
 };
 
 /// A function in MIR form.
@@ -525,6 +578,14 @@ pub const MIRFunction = struct {
         return dst;
     }
 
+    /// Emit an alloca_array_local: declare a local slot as [N x T].
+    pub fn emitAllocaArrayLocal(self: *MIRFunction, offset: i16, array_idx: u32) !void {
+        try self.emit(.{ .alloca_array_local = .{
+            .offset = offset,
+            .array_idx = array_idx,
+        } });
+    }
+
     /// Emit a load_element instruction (GEP + load from array).
     pub fn emitLoadElement(self: *MIRFunction, base: VReg, index: VReg, array_idx: u32, width: Width) !VReg {
         const dst = self.allocVReg();
@@ -549,6 +610,49 @@ pub const MIRFunction = struct {
         } });
     }
 
+    /// Emit an addr_of_element instruction (GEP-only, no load).
+    pub fn emitAddrOfElement(self: *MIRFunction, base: VReg, index: VReg, array_idx: u32) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .addr_of_element = .{
+            .dst = dst,
+            .base = base,
+            .index = index,
+            .array_idx = array_idx,
+        } });
+        return dst;
+    }
+
+    /// Emit an alloca_slice_local: declare a local slot as { ptr, i64 }.
+    pub fn emitAllocaSliceLocal(self: *MIRFunction, offset: i16) !void {
+        try self.emit(.{ .alloca_slice_local = .{ .offset = offset } });
+    }
+
+    /// Emit slice_get_ptr: extract data pointer from slice fat pointer.
+    pub fn emitSliceGetPtr(self: *MIRFunction, base: VReg) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .slice_get_ptr = .{ .dst = dst, .base = base } });
+        return dst;
+    }
+
+    /// Emit slice_get_len: extract length from slice fat pointer.
+    pub fn emitSliceGetLen(self: *MIRFunction, base: VReg) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .slice_get_len = .{ .dst = dst, .base = base } });
+        return dst;
+    }
+
+    /// Emit make_slice: store ptr + len into a slice alloca.
+    pub fn emitMakeSlice(self: *MIRFunction, dst: VReg, ptr_val: VReg, len_val: VReg) !void {
+        try self.emit(.{ .make_slice = .{ .dst = dst, .ptr_val = ptr_val, .len_val = len_val } });
+    }
+
+    /// Emit slice_elem_ptr: GEP into slice data by element type and index.
+    pub fn emitSliceElemPtr(self: *MIRFunction, data_ptr: VReg, index: VReg, elem_llvm_type: []const u8) !VReg {
+        const dst = self.allocVReg();
+        try self.emit(.{ .slice_elem_ptr = .{ .dst = dst, .data_ptr = data_ptr, .index = index, .elem_llvm_type = elem_llvm_type } });
+        return dst;
+    }
+
     /// Emit a copy_struct instruction (memcpy for struct data).
     pub fn emitCopyStruct(self: *MIRFunction, dst: VReg, src: VReg, struct_idx: u32) !void {
         try self.emit(.{ .copy_struct = .{
@@ -565,23 +669,30 @@ pub const MIRFunction = struct {
         args: []const VReg,
         arg_widths: []const Width,
         arg_struct_indices: []const ?u32,
+        arg_slice_flags: []const bool,
         call_conv: CallingConvention,
         return_width: ?Width,
         sret_struct_idx: ?u32,
+        is_variadic_val: bool,
+        fixed_param_count: u32,
     ) !?VReg {
         const dst: ?VReg = if (return_width != null) self.allocVReg() else null;
         const args_copy = try self.allocator.dupe(VReg, args);
         const widths_copy = try self.allocator.dupe(Width, arg_widths);
         const struct_indices_copy = try self.allocator.dupe(?u32, arg_struct_indices);
+        const slice_flags_copy = try self.allocator.dupe(bool, arg_slice_flags);
         try self.emit(.{ .call = .{
             .dst = dst,
             .func_name = func_name,
             .args = args_copy,
             .arg_widths = widths_copy,
             .arg_struct_indices = struct_indices_copy,
+            .arg_slice_flags = slice_flags_copy,
             .call_conv = call_conv,
             .width = return_width orelse .w32,
             .sret_struct_idx = sret_struct_idx,
+            .is_variadic = is_variadic_val,
+            .fixed_param_count = fixed_param_count,
         } });
         return dst;
     }
@@ -595,6 +706,8 @@ pub const GlobalVars = struct {
     is_const: std.ArrayListUnmanaged(bool),
     init_values: std.ArrayListUnmanaged(?i64), // null if needs runtime init
     struct_inits: std.AutoHashMapUnmanaged(GlobalIndex, []const i64), // compile-time struct field values
+    array_inits: std.AutoHashMapUnmanaged(GlobalIndex, []const i64), // compile-time array element values
+    string_inits: std.AutoHashMapUnmanaged(GlobalIndex, []const u8), // compile-time string byte values
     sym_indices: std.ArrayListUnmanaged(SymbolIndex),
     name_map: std.StringHashMapUnmanaged(GlobalIndex),
 
@@ -606,6 +719,8 @@ pub const GlobalVars = struct {
             .is_const = .{},
             .init_values = .{},
             .struct_inits = .{},
+            .array_inits = .{},
+            .string_inits = .{},
             .sym_indices = .{},
             .name_map = .{},
         };
@@ -618,6 +733,8 @@ pub const GlobalVars = struct {
         self.is_const.deinit(allocator);
         self.init_values.deinit(allocator);
         self.struct_inits.deinit(allocator);
+        self.array_inits.deinit(allocator);
+        self.string_inits.deinit(allocator);
         self.sym_indices.deinit(allocator);
         self.name_map.deinit(allocator);
     }
@@ -675,8 +792,18 @@ pub const GlobalVars = struct {
         return self.struct_inits.get(idx);
     }
 
+    pub fn getArrayInit(self: *const GlobalVars, idx: GlobalIndex) ?[]const i64 {
+        return self.array_inits.get(idx);
+    }
+
+    pub fn getStringInit(self: *const GlobalVars, idx: GlobalIndex) ?[]const u8 {
+        return self.string_inits.get(idx);
+    }
+
     pub fn needsRuntimeInit(self: *const GlobalVars, idx: GlobalIndex) bool {
         if (self.struct_inits.contains(idx)) return false;
+        if (self.array_inits.contains(idx)) return false;
+        if (self.string_inits.contains(idx)) return false;
         return self.init_values.items[idx] == null;
     }
 };
@@ -724,6 +851,8 @@ pub const MIRModule = struct {
         return_width: ?Width,
         param_widths: []const Width,
         param_struct_indices: []const ?u32,
+        param_slice_flags: []const bool,
+        is_variadic: bool,
     ) !void {
         try self.extern_functions.append(self.allocator, .{
             .name = name,
@@ -731,6 +860,8 @@ pub const MIRModule = struct {
             .return_width = return_width,
             .param_widths = param_widths,
             .param_struct_indices = param_struct_indices,
+            .param_slice_flags = param_slice_flags,
+            .is_variadic = is_variadic,
         });
     }
 };

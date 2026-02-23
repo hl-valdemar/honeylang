@@ -115,3 +115,46 @@ test "global mutable variable" {
     defer r.deinit();
     try r.expectNoErrors();
 }
+
+// ============================================================
+// usize type
+// ============================================================
+
+test "usize type annotation" {
+    var r = try compileTo(.semantic,
+        \\main :: func() usize {
+        \\    x: usize = 42
+        \\    return x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}
+
+test "usize codegen emits i64" {
+    var r = try compileTo(.codegen,
+        \\main :: func() usize {
+        \\    x: usize = 10
+        \\    return x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("i64");
+}
+
+test "usize as function parameter" {
+    var r = try compileTo(.semantic,
+        \\identity :: func(n: usize) usize {
+        \\    return n
+        \\}
+        \\main :: func() usize {
+        \\    return identity(42)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+}

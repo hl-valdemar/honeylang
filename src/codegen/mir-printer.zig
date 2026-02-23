@@ -255,6 +255,9 @@ fn printInstruction(inst: *const MInst) void {
         .alloca_array => |a| {
             std.debug.print("alloca_array v{d}, array#{d}", .{ a.dst, a.array_idx });
         },
+        .alloca_array_local => |a| {
+            std.debug.print("alloca_array_local [fp{d}], array#{d}", .{ a.offset, a.array_idx });
+        },
         .load_element => |l| {
             std.debug.print("load_element.{s} v{d}, v{d}[v{d}], array#{d}", .{
                 widthStr(l.width), l.dst, l.base, l.index, l.array_idx,
@@ -264,6 +267,26 @@ fn printInstruction(inst: *const MInst) void {
             std.debug.print("store_element.{s} v{d}[v{d}], v{d}, array#{d}", .{
                 widthStr(s.width), s.base, s.index, s.value, s.array_idx,
             });
+        },
+        .addr_of_element => |a| {
+            std.debug.print("addr_of_element v{d}, v{d}[v{d}], array#{d}", .{
+                a.dst, a.base, a.index, a.array_idx,
+            });
+        },
+        .alloca_slice_local => |a| {
+            std.debug.print("alloca_slice_local [fp{d}]", .{a.offset});
+        },
+        .slice_get_ptr => |s| {
+            std.debug.print("slice_get_ptr v{d}, v{d}", .{ s.dst, s.base });
+        },
+        .slice_get_len => |s| {
+            std.debug.print("slice_get_len v{d}, v{d}", .{ s.dst, s.base });
+        },
+        .make_slice => |s| {
+            std.debug.print("make_slice v{d}, ptr=v{d}, len=v{d}", .{ s.dst, s.ptr_val, s.len_val });
+        },
+        .slice_elem_ptr => |s| {
+            std.debug.print("slice_elem_ptr v{d}, v{d}[v{d}] ({s})", .{ s.dst, s.data_ptr, s.index, s.elem_llvm_type });
         },
     }
 }

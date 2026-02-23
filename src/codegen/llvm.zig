@@ -15,8 +15,9 @@ const codegen = @import("codegen.zig");
 const Target = codegen.Target;
 
 const CallingConvention = @import("../parser/ast.zig").CallingConvention;
-const TypeRegistry = @import("../semantic/types.zig").TypeRegistry;
-const TypeId = @import("../semantic/types.zig").TypeId;
+const types_mod = @import("../semantic/types.zig");
+const TypeRegistry = types_mod.TypeRegistry;
+const TypeId = types_mod.TypeId;
 
 /// Lower MIR module to LLVM IR text format.
 pub fn lower(allocator: mem.Allocator, module: *const MIRModule, types: *const TypeRegistry, target: Target) ![]const u8 {
@@ -32,9 +33,16 @@ pub fn lower(allocator: mem.Allocator, module: *const MIRModule, types: *const T
     // emit struct type definitions
     try emitStructTypes(&emitter, types);
 
+    // emit slice type definition if any slice types are registered
+    if (types.slice_types.items.len > 0 or hasSliceParams(module)) {
+        try emitter.appendFmt("%slice = type {{ ptr, {s} }}", .{emitter.target.ptrLLVMType()});
+        try emitter.newline();
+    }
+
     // emit memcpy intrinsic if any struct types have struct fields
     if (needsMemcpy(types)) {
-        try emitter.raw("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)");
+        const ptr_t = emitter.target.ptrLLVMType();
+        try emitter.appendFmt("declare void @llvm.memcpy.p0.p0.{s}(ptr, ptr, {s}, i1)", .{ ptr_t, ptr_t });
         try emitter.newline();
     }
 
@@ -87,7 +95,7 @@ fn emitStructTypes(emitter: *Emitter, types: *const TypeRegistry) !void {
                 const inner = types.struct_types.items[field.type_id.struct_type];
                 try emitter.appendFmt("%{s}", .{inner.name});
             } else {
-                try emitter.appendSlice(typeIdToLLVMType(field.type_id));
+                try emitter.appendSlice(typeIdToLLVMType(field.type_id, emitter.target));
             }
         }
         try emitter.appendSlice(" }\n");
@@ -99,6 +107,20 @@ fn emitStructTypes(emitter: *Emitter, types: *const TypeRegistry) !void {
 
 fn needsMemcpy(types: *const TypeRegistry) bool {
     return types.struct_types.items.len > 0;
+}
+
+fn hasSliceParams(module: *const MIRModule) bool {
+    for (module.functions.items) |*func| {
+        for (func.params) |param| {
+            if (param.is_slice) return true;
+        }
+    }
+    for (module.extern_functions.items) |ext| {
+        for (ext.param_slice_flags) |is_slice| {
+            if (is_slice) return true;
+        }
+    }
+    return false;
 }
 
 fn needsTrap(module: *const MIRModule) bool {
@@ -132,7 +154,7 @@ fn emitGlobals(emitter: *Emitter, globals: *const GlobalVars, types: *const Type
                 try emitter.appendFmt("@{s} = {s} %{s} {{ ", .{ name, linkage, struct_type.name });
                 for (struct_type.fields, 0..) |field, fi| {
                     if (fi > 0) try emitter.appendSlice(", ");
-                    const field_llvm = typeIdToLLVMType(field.type_id);
+                    const field_llvm = typeIdToLLVMType(field.type_id, emitter.target);
                     if (isFloatType(field.type_id)) {
                         // Emit IEEE 754 double-precision hex (LLVM format for float constants)
                         const bits: u64 = @bitCast(field_values[fi]);
@@ -146,6 +168,38 @@ fn emitGlobals(emitter: *Emitter, globals: *const GlobalVars, types: *const Type
                 // Runtime-initialized struct
                 try emitter.appendFmt("@{s} = {s} %{s} zeroinitializer\n", .{ name, linkage, struct_type.name });
             }
+        } else if (type_id.isArray()) {
+            var buf: [64]u8 = undefined;
+            const arr_info = types.array_types.items[type_id.array];
+            const elem_llvm = arrayElemLLVMType(&buf, arr_info.element_type, types, emitter.target);
+            if (globals.getArrayInit(idx)) |elem_values| {
+                // Static initializer: @arr = global [3 x i32] [i32 1, i32 2, i32 3]
+                try emitter.appendFmt("@{s} = {s} [{d} x {s}] [", .{ name, linkage, arr_info.length, elem_llvm });
+                for (0..arr_info.length) |ei| {
+                    if (ei > 0) try emitter.appendSlice(", ");
+                    if (isFloatType(arr_info.element_type)) {
+                        const bits: u64 = @bitCast(elem_values[ei]);
+                        try emitter.appendFmt("{s} 0x{X:0>16}", .{ elem_llvm, bits });
+                    } else {
+                        try emitter.appendFmt("{s} {d}", .{ elem_llvm, elem_values[ei] });
+                    }
+                }
+                try emitter.appendSlice("]\n");
+            } else {
+                // Runtime-initialized array
+                try emitter.appendFmt("@{s} = {s} [{d} x {s}] zeroinitializer\n", .{ name, linkage, arr_info.length, elem_llvm });
+            }
+        } else if (type_id.isSlice()) {
+            const usize_t = emitter.target.ptrLLVMType();
+            try emitter.appendFmt("@{s} = {s} {{ ptr, {s} }} zeroinitializer\n", .{ name, linkage, usize_t });
+        } else if (globals.getStringInit(idx)) |bytes| {
+            // String constant: @str.0 = private constant [5 x i8] [i8 104, i8 101, ...]
+            try emitter.appendFmt("@{s} = private constant [{d} x i8] [", .{ name, bytes.len });
+            for (bytes, 0..) |byte, bi| {
+                if (bi > 0) try emitter.appendSlice(", ");
+                try emitter.appendFmt("i8 {d}", .{byte});
+            }
+            try emitter.appendSlice("]\n");
         } else {
             const width = globals.getWidth(idx);
             const type_str = widthToLLVMType(width);
@@ -183,11 +237,24 @@ fn emitExternDecl(emitter: *Emitter, ext: *const mir.ExternFunc, types: *const T
         if (j < ext.param_struct_indices.len) {
             if (ext.param_struct_indices[j]) |si| {
                 const struct_type = types.struct_types.items[si];
-                try emitter.appendFmt("ptr byval(%{s})", .{struct_type.name});
+                switch (structParamABI(struct_type.size, emitter.target.arch)) {
+                    .register => try emitter.appendSlice(structCoercionType(struct_type.size, emitter.target.arch)),
+                    .two_registers => try emitter.appendSlice("[2 x i64]"),
+                    .indirect => try emitter.appendFmt("ptr byval(%{s})", .{struct_type.name}),
+                }
                 continue;
             }
         }
+        if (j < ext.param_slice_flags.len and ext.param_slice_flags[j]) {
+            try emitter.appendSlice("ptr byval(%slice)");
+            continue;
+        }
         try emitter.appendSlice(widthToLLVMType(pw));
+    }
+
+    if (ext.is_variadic) {
+        if (ext.param_widths.len > 0) try emitter.appendSlice(", ");
+        try emitter.appendSlice("...");
     }
 
     try emitter.appendSlice(")\n");
@@ -207,13 +274,17 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
             if (param.struct_idx) |si| {
                 const param_struct = types.struct_types.items[si];
                 try emitter.appendFmt(", ptr byval(%{s}) %arg{d}", .{ param_struct.name, i + 1 });
+            } else if (param.is_slice) {
+                try emitter.appendFmt(", ptr byval(%slice) %arg{d}", .{i + 1});
             } else {
                 try emitter.appendFmt(", {s} %arg{d}", .{ widthToLLVMType(param.width), i + 1 });
             }
         }
         try emitter.appendSlice(") {\n");
     } else {
-        const ret_str = if (func.return_width) |w| widthToLLVMType(w) else "void";
+        const is_main = std.mem.eql(u8, func.name, "main");
+        // main always returns i32 for the OS, even if declared void
+        const ret_str = if (is_main and func.return_width == null) "i32" else if (func.return_width) |w| widthToLLVMType(w) else "void";
 
         // function signature with parameters
         try emitter.appendFmt("define {s}{s} @{s}(", .{ cc_attr, ret_str, func.name });
@@ -223,6 +294,8 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
             if (param.struct_idx) |si| {
                 const struct_type = types.struct_types.items[si];
                 try emitter.appendFmt("ptr byval(%{s}) %arg{d}", .{ struct_type.name, i });
+            } else if (param.is_slice) {
+                try emitter.appendFmt("ptr byval(%slice) %arg{d}", .{i});
             } else {
                 try emitter.appendFmt("{s} %arg{d}", .{ widthToLLVMType(param.width), i });
             }
@@ -240,20 +313,21 @@ fn lowerFunction(emitter: *Emitter, func: *const MIRFunction, globals: *const Gl
 
     for (func.instructions.items) |inst| {
         try lowerInst(emitter, inst, &ssa_map, &alloca_map, func, globals, types);
-        // After a trap (which emits `unreachable`), no more instructions
-        // can appear in the same basic block.
-        if (inst == .trap) break;
     }
 
     // If the last instruction is not a terminator, add an implicit return
     // to keep LLVM happy (e.g. a label at the end with no further code).
     const last = func.instructions.items[func.instructions.items.len - 1];
     const needs_ret = switch (last) {
-        .ret, .br, .br_cond => false,
+        .ret, .br, .br_cond, .trap => false,
         else => true,
     };
     if (needs_ret) {
-        if (func.return_width) |w| {
+        const is_main = std.mem.eql(u8, func.name, "main");
+        if (is_main and func.return_width == null) {
+            // void main returns i32 0 to the OS
+            try emitter.appendSlice("  ret i32 0\n");
+        } else if (func.return_width) |w| {
             const zero_str: []const u8 = if (w.isFloat()) "0.0" else "0";
             try emitter.appendFmt("  ret {s} {s}\n", .{ widthToLLVMType(w), zero_str });
         } else {
@@ -345,12 +419,16 @@ fn lowerInst(
         },
 
         .ret => |op| {
+            const is_main = std.mem.eql(u8, func.name, "main");
             if (op.value) |vreg| {
                 const src_ssa = ssa_map.get(vreg);
                 const ret_type = if (func.return_width) |w| widthToLLVMType(w) else "i32";
                 try emitter.appendFmt("  ret {s} %{d}\n", .{ ret_type, src_ssa });
             } else {
-                if (func.return_width) |w| {
+                if (is_main and func.return_width == null) {
+                    // void main returns i32 0 to the OS
+                    try emitter.appendSlice("  ret i32 0\n");
+                } else if (func.return_width) |w| {
                     // non-void function with no explicit value — return 0
                     const zero_str: []const u8 = if (w.isFloat()) "0.0" else "0";
                     try emitter.appendFmt("  ret {s} {s}\n", .{ widthToLLVMType(w), zero_str });
@@ -367,6 +445,11 @@ fn lowerInst(
         .trap => {
             try emitter.appendSlice("  call void @llvm.trap()\n");
             try emitter.appendSlice("  unreachable\n");
+            // Start a new basic block after unreachable — LLVM implicitly creates one
+            // which consumes an SSA number, so we must account for it.
+            const dead_label = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("dead.{d}:\n", .{dead_label});
         },
 
         .store_arg => |op| {
@@ -459,10 +542,36 @@ fn lowerInst(
                     const arg_ssa = ssa_map.get(arg_vreg);
 
                     const struct_idx_val: ?u32 = if (i < op.arg_struct_indices.len) op.arg_struct_indices[i] else null;
+                    const is_slice_arg = if (i < op.arg_slice_flags.len) op.arg_slice_flags[i] else false;
                     if (struct_idx_val) |si| {
                         const arg_struct = types.struct_types.items[si];
+                        switch (structParamABI(arg_struct.size, emitter.target.arch)) {
+                            .register => {
+                                const coerce_type = structCoercionType(arg_struct.size, emitter.target.arch);
+                                const load_ssa = ssa_map.next_ssa;
+                                ssa_map.next_ssa += 1;
+                                try emitter.appendFmt("  %{d} = load {s}, ptr %{d}\n", .{ load_ssa, coerce_type, arg_ssa });
+                                var abuf: [64]u8 = undefined;
+                                const arg_fmt = std.fmt.bufPrint(&abuf, "{s} %{d}", .{ coerce_type, load_ssa }) catch unreachable;
+                                try args_str.appendSlice(emitter.allocator, arg_fmt);
+                            },
+                            .two_registers => {
+                                const load_ssa = ssa_map.next_ssa;
+                                ssa_map.next_ssa += 1;
+                                try emitter.appendFmt("  %{d} = load [2 x i64], ptr %{d}\n", .{ load_ssa, arg_ssa });
+                                var abuf: [64]u8 = undefined;
+                                const arg_fmt = std.fmt.bufPrint(&abuf, "[2 x i64] %{d}", .{load_ssa}) catch unreachable;
+                                try args_str.appendSlice(emitter.allocator, arg_fmt);
+                            },
+                            .indirect => {
+                                var abuf: [64]u8 = undefined;
+                                const arg_fmt = std.fmt.bufPrint(&abuf, "ptr byval(%{s}) %{d}", .{ arg_struct.name, arg_ssa }) catch unreachable;
+                                try args_str.appendSlice(emitter.allocator, arg_fmt);
+                            },
+                        }
+                    } else if (is_slice_arg) {
                         var abuf: [64]u8 = undefined;
-                        const arg_fmt = std.fmt.bufPrint(&abuf, "ptr byval(%{s}) %{d}", .{ arg_struct.name, arg_ssa }) catch unreachable;
+                        const arg_fmt = std.fmt.bufPrint(&abuf, "ptr byval(%slice) %{d}", .{arg_ssa}) catch unreachable;
                         try args_str.appendSlice(emitter.allocator, arg_fmt);
                     } else {
                         const arg_type = widthToLLVMType(arg_width);
@@ -484,12 +593,38 @@ fn lowerInst(
                     if (i > 0) try args_str.appendSlice(emitter.allocator, ", ");
                     const arg_ssa = ssa_map.get(arg_vreg);
 
-                    // check if this arg is a byval struct
+                    // check if this arg is a byval struct or slice
                     const struct_idx: ?u32 = if (i < op.arg_struct_indices.len) op.arg_struct_indices[i] else null;
+                    const is_slice_arg = if (i < op.arg_slice_flags.len) op.arg_slice_flags[i] else false;
                     if (struct_idx) |si| {
-                        const struct_type = types.struct_types.items[si];
+                        const arg_struct = types.struct_types.items[si];
+                        switch (structParamABI(arg_struct.size, emitter.target.arch)) {
+                            .register => {
+                                const coerce_type = structCoercionType(arg_struct.size, emitter.target.arch);
+                                const load_ssa = ssa_map.next_ssa;
+                                ssa_map.next_ssa += 1;
+                                try emitter.appendFmt("  %{d} = load {s}, ptr %{d}\n", .{ load_ssa, coerce_type, arg_ssa });
+                                var buf: [64]u8 = undefined;
+                                const arg_fmt = std.fmt.bufPrint(&buf, "{s} %{d}", .{ coerce_type, load_ssa }) catch unreachable;
+                                try args_str.appendSlice(emitter.allocator, arg_fmt);
+                            },
+                            .two_registers => {
+                                const load_ssa = ssa_map.next_ssa;
+                                ssa_map.next_ssa += 1;
+                                try emitter.appendFmt("  %{d} = load [2 x i64], ptr %{d}\n", .{ load_ssa, arg_ssa });
+                                var buf: [64]u8 = undefined;
+                                const arg_fmt = std.fmt.bufPrint(&buf, "[2 x i64] %{d}", .{load_ssa}) catch unreachable;
+                                try args_str.appendSlice(emitter.allocator, arg_fmt);
+                            },
+                            .indirect => {
+                                var buf: [64]u8 = undefined;
+                                const arg_fmt = std.fmt.bufPrint(&buf, "ptr byval(%{s}) %{d}", .{ arg_struct.name, arg_ssa }) catch unreachable;
+                                try args_str.appendSlice(emitter.allocator, arg_fmt);
+                            },
+                        }
+                    } else if (is_slice_arg) {
                         var buf: [64]u8 = undefined;
-                        const arg_fmt = std.fmt.bufPrint(&buf, "ptr byval(%{s}) %{d}", .{ struct_type.name, arg_ssa }) catch unreachable;
+                        const arg_fmt = std.fmt.bufPrint(&buf, "ptr byval(%slice) %{d}", .{arg_ssa}) catch unreachable;
                         try args_str.appendSlice(emitter.allocator, arg_fmt);
                     } else {
                         const arg_type = widthToLLVMType(arg_width);
@@ -502,13 +637,45 @@ fn lowerInst(
                 if (op.dst) |dst_vreg| {
                     const dst_ssa = ssa_map.allocFor(dst_vreg);
                     const ret_type = widthToLLVMType(op.width);
-                    try emitter.appendFmt("  %{d} = call {s}{s} @{s}({s})\n", .{
-                        dst_ssa, call_cc, ret_type, op.func_name, args_str.items,
-                    });
+                    if (op.is_variadic) {
+                        // Variadic calls need explicit function type: call i32 (ptr, ...) @name(args)
+                        var type_str = try std.ArrayList(u8).initCapacity(emitter.allocator, 64);
+                        defer type_str.deinit(emitter.allocator);
+                        try type_str.appendSlice(emitter.allocator, ret_type);
+                        try type_str.appendSlice(emitter.allocator, " (");
+                        for (0..op.fixed_param_count) |pi| {
+                            if (pi > 0) try type_str.appendSlice(emitter.allocator, ", ");
+                            try type_str.appendSlice(emitter.allocator, widthToLLVMType(op.arg_widths[pi]));
+                        }
+                        if (op.fixed_param_count > 0) try type_str.appendSlice(emitter.allocator, ", ");
+                        try type_str.appendSlice(emitter.allocator, "...)");
+                        try emitter.appendFmt("  %{d} = call {s}{s} @{s}({s})\n", .{
+                            dst_ssa, call_cc, type_str.items, op.func_name, args_str.items,
+                        });
+                    } else {
+                        try emitter.appendFmt("  %{d} = call {s}{s} @{s}({s})\n", .{
+                            dst_ssa, call_cc, ret_type, op.func_name, args_str.items,
+                        });
+                    }
                 } else {
-                    try emitter.appendFmt("  call {s}void @{s}({s})\n", .{
-                        call_cc, op.func_name, args_str.items,
-                    });
+                    if (op.is_variadic) {
+                        var type_str = try std.ArrayList(u8).initCapacity(emitter.allocator, 64);
+                        defer type_str.deinit(emitter.allocator);
+                        try type_str.appendSlice(emitter.allocator, "void (");
+                        for (0..op.fixed_param_count) |pi| {
+                            if (pi > 0) try type_str.appendSlice(emitter.allocator, ", ");
+                            try type_str.appendSlice(emitter.allocator, widthToLLVMType(op.arg_widths[pi]));
+                        }
+                        if (op.fixed_param_count > 0) try type_str.appendSlice(emitter.allocator, ", ");
+                        try type_str.appendSlice(emitter.allocator, "...)");
+                        try emitter.appendFmt("  call {s}{s} @{s}({s})\n", .{
+                            call_cc, type_str.items, op.func_name, args_str.items,
+                        });
+                    } else {
+                        try emitter.appendFmt("  call {s}void @{s}({s})\n", .{
+                            call_cc, op.func_name, args_str.items,
+                        });
+                    }
                 }
             }
         },
@@ -561,8 +728,9 @@ fn lowerInst(
             if (field_type_id.isStruct()) {
                 // struct field: memcpy the inline data
                 const inner = types.struct_types.items[field_type_id.struct_type];
-                try emitter.appendFmt("  call void @llvm.memcpy.p0.p0.i64(ptr %gep.{d}, ptr %{d}, i64 {d}, i1 false)\n", .{
-                    gep_ssa, value_ssa, inner.size,
+                const mcpy_t = emitter.target.ptrLLVMType();
+                try emitter.appendFmt("  call void @llvm.memcpy.p0.p0.{s}(ptr %gep.{d}, ptr %{d}, {s} {d}, i1 false)\n", .{
+                    mcpy_t, gep_ssa, value_ssa, mcpy_t, inner.size,
                 });
             } else {
                 // primitive field: direct store
@@ -575,8 +743,9 @@ fn lowerInst(
             const dst_ssa = ssa_map.get(op.dst);
             const src_ssa = ssa_map.get(op.src);
             const struct_type = types.struct_types.items[op.struct_idx];
-            try emitter.appendFmt("  call void @llvm.memcpy.p0.p0.i64(ptr %{d}, ptr %{d}, i64 {d}, i1 false)\n", .{
-                dst_ssa, src_ssa, struct_type.size,
+            const mcpy_t = emitter.target.ptrLLVMType();
+            try emitter.appendFmt("  call void @llvm.memcpy.p0.p0.{s}(ptr %{d}, ptr %{d}, {s} {d}, i1 false)\n", .{
+                mcpy_t, dst_ssa, src_ssa, mcpy_t, struct_type.size,
             });
         },
 
@@ -616,23 +785,35 @@ fn lowerInst(
         },
 
         .alloca_array => |op| {
+            var buf: [64]u8 = undefined;
             const arr_info = types.array_types.items[op.array_idx];
-            const elem_llvm = typeIdToLLVMType(arr_info.element_type);
+            const elem_llvm = arrayElemLLVMType(&buf, arr_info.element_type, types, emitter.target);
             const dst_ssa = ssa_map.allocFor(op.dst);
             try emitter.appendFmt("  %{d} = alloca [{d} x {s}]\n", .{ dst_ssa, arr_info.length, elem_llvm });
         },
 
-        .load_element => |op| {
+        .alloca_array_local => |op| {
+            var buf: [64]u8 = undefined;
             const arr_info = types.array_types.items[op.array_idx];
-            const elem_llvm = typeIdToLLVMType(arr_info.element_type);
+            const elem_llvm = arrayElemLLVMType(&buf, arr_info.element_type, types, emitter.target);
+            const alloca_id = alloca_map.getOrCreate(op.offset);
+            try emitter.appendFmt("  %local.{d} = alloca [{d} x {s}]\n", .{ alloca_id, arr_info.length, elem_llvm });
+            alloca_map.markEmitted(op.offset);
+        },
+
+        .load_element => |op| {
+            var buf: [64]u8 = undefined;
+            const arr_info = types.array_types.items[op.array_idx];
+            const elem_llvm = arrayElemLLVMType(&buf, arr_info.element_type, types, emitter.target);
+            const usize_t = emitter.target.ptrLLVMType();
             const base_ssa = ssa_map.get(op.base);
             const index_ssa = ssa_map.get(op.index);
 
             // GEP to element
             const gep_ssa = ssa_map.next_ssa;
             ssa_map.next_ssa += 1;
-            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds [{d} x {s}], ptr %{d}, i64 0, i64 %{d}\n", .{
-                gep_ssa, arr_info.length, elem_llvm, base_ssa, index_ssa,
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds [{d} x {s}], ptr %{d}, {s} 0, {s} %{d}\n", .{
+                gep_ssa, arr_info.length, elem_llvm, base_ssa, usize_t, usize_t, index_ssa,
             });
 
             // load element
@@ -643,8 +824,10 @@ fn lowerInst(
         },
 
         .store_element => |op| {
+            var buf: [64]u8 = undefined;
             const arr_info = types.array_types.items[op.array_idx];
-            const elem_llvm = typeIdToLLVMType(arr_info.element_type);
+            const elem_llvm = arrayElemLLVMType(&buf, arr_info.element_type, types, emitter.target);
+            const usize_t = emitter.target.ptrLLVMType();
             const base_ssa = ssa_map.get(op.base);
             const index_ssa = ssa_map.get(op.index);
             const value_ssa = ssa_map.get(op.value);
@@ -652,8 +835,8 @@ fn lowerInst(
             // GEP to element
             const gep_ssa = ssa_map.next_ssa;
             ssa_map.next_ssa += 1;
-            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds [{d} x {s}], ptr %{d}, i64 0, i64 %{d}\n", .{
-                gep_ssa, arr_info.length, elem_llvm, base_ssa, index_ssa,
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds [{d} x {s}], ptr %{d}, {s} 0, {s} %{d}\n", .{
+                gep_ssa, arr_info.length, elem_llvm, base_ssa, usize_t, usize_t, index_ssa,
             });
 
             // store element
@@ -662,37 +845,118 @@ fn lowerInst(
             });
         },
 
+        .addr_of_element => |op| {
+            var buf: [64]u8 = undefined;
+            const arr_info = types.array_types.items[op.array_idx];
+            const elem_llvm = arrayElemLLVMType(&buf, arr_info.element_type, types, emitter.target);
+            const usize_t = emitter.target.ptrLLVMType();
+            const base_ssa = ssa_map.get(op.base);
+            const index_ssa = ssa_map.get(op.index);
+
+            // GEP to element — the pointer IS the value for struct elements
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            try emitter.appendFmt("  %{d} = getelementptr inbounds [{d} x {s}], ptr %{d}, {s} 0, {s} %{d}\n", .{
+                dst_ssa, arr_info.length, elem_llvm, base_ssa, usize_t, usize_t, index_ssa,
+            });
+        },
+
+        .alloca_slice_local => |op| {
+            const usize_t = emitter.target.ptrLLVMType();
+            const alloca_id = alloca_map.getOrCreate(op.offset);
+            try emitter.appendFmt("  %local.{d} = alloca {{ ptr, {s} }}\n", .{ alloca_id, usize_t });
+            alloca_map.markEmitted(op.offset);
+        },
+
+        .slice_get_ptr => |op| {
+            const usize_t = emitter.target.ptrLLVMType();
+            const base_ssa = ssa_map.get(op.base);
+            const gep_ssa = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, {s} }}, ptr %{d}, i32 0, i32 0\n", .{ gep_ssa, usize_t, base_ssa });
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            try emitter.appendFmt("  %{d} = load ptr, ptr %gep.{d}\n", .{ dst_ssa, gep_ssa });
+        },
+
+        .slice_get_len => |op| {
+            const usize_t = emitter.target.ptrLLVMType();
+            const base_ssa = ssa_map.get(op.base);
+            const gep_ssa = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, {s} }}, ptr %{d}, i32 0, i32 1\n", .{ gep_ssa, usize_t, base_ssa });
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            try emitter.appendFmt("  %{d} = load {s}, ptr %gep.{d}\n", .{ dst_ssa, usize_t, gep_ssa });
+        },
+
+        .make_slice => |op| {
+            const usize_t = emitter.target.ptrLLVMType();
+            const dst_ssa = ssa_map.get(op.dst);
+            const ptr_ssa = ssa_map.get(op.ptr_val);
+            const len_ssa = ssa_map.get(op.len_val);
+            // store ptr field
+            const ptr_gep = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, {s} }}, ptr %{d}, i32 0, i32 0\n", .{ ptr_gep, usize_t, dst_ssa });
+            try emitter.appendFmt("  store ptr %{d}, ptr %gep.{d}\n", .{ ptr_ssa, ptr_gep });
+            // store len field
+            const len_gep = ssa_map.next_ssa;
+            ssa_map.next_ssa += 1;
+            try emitter.appendFmt("  %gep.{d} = getelementptr inbounds {{ ptr, {s} }}, ptr %{d}, i32 0, i32 1\n", .{ len_gep, usize_t, dst_ssa });
+            try emitter.appendFmt("  store {s} %{d}, ptr %gep.{d}\n", .{ usize_t, len_ssa, len_gep });
+        },
+
+        .slice_elem_ptr => |op| {
+            const usize_t = emitter.target.ptrLLVMType();
+            const data_ssa = ssa_map.get(op.data_ptr);
+            const index_ssa = ssa_map.get(op.index);
+            const dst_ssa = ssa_map.allocFor(op.dst);
+            try emitter.appendFmt("  %{d} = getelementptr inbounds {s}, ptr %{d}, {s} %{d}\n", .{ dst_ssa, op.elem_llvm_type, data_ssa, usize_t, index_ssa });
+        },
+
         .ptr_offset => |op| {
             const base_ssa = ssa_map.get(op.base);
             const count_ssa = ssa_map.get(op.count);
+            const pt = emitter.target.ptrLLVMType();
             if (op.stride == 1) {
                 if (op.is_sub) {
                     const neg_ssa = ssa_map.next_ssa;
                     ssa_map.next_ssa += 1;
-                    try emitter.appendFmt("  %{d} = sub i64 0, %{d}\n", .{ neg_ssa, count_ssa });
+                    try emitter.appendFmt("  %{d} = sub {s} 0, %{d}\n", .{ neg_ssa, pt, count_ssa });
                     const dst_ssa = ssa_map.allocFor(op.dst);
-                    try emitter.appendFmt("  %{d} = getelementptr i8, ptr %{d}, i64 %{d}\n", .{ dst_ssa, base_ssa, neg_ssa });
+                    try emitter.appendFmt("  %{d} = getelementptr i8, ptr %{d}, {s} %{d}\n", .{ dst_ssa, base_ssa, pt, neg_ssa });
                 } else {
                     const dst_ssa = ssa_map.allocFor(op.dst);
-                    try emitter.appendFmt("  %{d} = getelementptr i8, ptr %{d}, i64 %{d}\n", .{ dst_ssa, base_ssa, count_ssa });
+                    try emitter.appendFmt("  %{d} = getelementptr i8, ptr %{d}, {s} %{d}\n", .{ dst_ssa, base_ssa, pt, count_ssa });
                 }
             } else {
-                // sign-extend count to i64, multiply by stride, then GEP
-                const ext_ssa = ssa_map.next_ssa;
-                ssa_map.next_ssa += 1;
-                try emitter.appendFmt("  %{d} = sext i32 %{d} to i64\n", .{ ext_ssa, count_ssa });
+                // extend count to ptr width (if needed), multiply by stride, then GEP
+                const count_at_ptr_width = blk: {
+                    // If count vreg was produced by a ptr-width operation, it's already i64 on 64-bit.
+                    // Use the ptr type width for the multiply; bitcast/trunc/ext as needed.
+                    // For safety, always emit a sext from the count type. However, sext from
+                    // iN to iN is a no-op that LLVM rejects. So just use the count directly
+                    // when we're already at ptr width.
+                    const ext_ssa = ssa_map.next_ssa;
+                    ssa_map.next_ssa += 1;
+                    if (std.mem.eql(u8, pt, "i64")) {
+                        // count is already ptr-width; use identity add
+                        try emitter.appendFmt("  %{d} = add {s} %{d}, 0\n", .{ ext_ssa, pt, count_ssa });
+                    } else {
+                        try emitter.appendFmt("  %{d} = sext i32 %{d} to {s}\n", .{ ext_ssa, count_ssa, pt });
+                    }
+                    break :blk ext_ssa;
+                };
                 const scaled_ssa = ssa_map.next_ssa;
                 ssa_map.next_ssa += 1;
-                try emitter.appendFmt("  %{d} = mul i64 %{d}, {d}\n", .{ scaled_ssa, ext_ssa, op.stride });
+                try emitter.appendFmt("  %{d} = mul {s} %{d}, {d}\n", .{ scaled_ssa, pt, count_at_ptr_width, op.stride });
                 if (op.is_sub) {
                     const neg_ssa = ssa_map.next_ssa;
                     ssa_map.next_ssa += 1;
-                    try emitter.appendFmt("  %{d} = sub i64 0, %{d}\n", .{ neg_ssa, scaled_ssa });
+                    try emitter.appendFmt("  %{d} = sub {s} 0, %{d}\n", .{ neg_ssa, pt, scaled_ssa });
                     const dst_ssa = ssa_map.allocFor(op.dst);
-                    try emitter.appendFmt("  %{d} = getelementptr i8, ptr %{d}, i64 %{d}\n", .{ dst_ssa, base_ssa, neg_ssa });
+                    try emitter.appendFmt("  %{d} = getelementptr i8, ptr %{d}, {s} %{d}\n", .{ dst_ssa, base_ssa, pt, neg_ssa });
                 } else {
                     const dst_ssa = ssa_map.allocFor(op.dst);
-                    try emitter.appendFmt("  %{d} = getelementptr i8, ptr %{d}, i64 %{d}\n", .{ dst_ssa, base_ssa, scaled_ssa });
+                    try emitter.appendFmt("  %{d} = getelementptr i8, ptr %{d}, {s} %{d}\n", .{ dst_ssa, base_ssa, pt, scaled_ssa });
                 }
             }
         },
@@ -721,7 +985,7 @@ fn widthToLLVMType(width: Width) []const u8 {
 }
 
 /// Map a TypeId to an LLVM type string (for struct field types in type definitions).
-fn typeIdToLLVMType(type_id: TypeId) []const u8 {
+fn typeIdToLLVMType(type_id: TypeId, target: Target) []const u8 {
     return switch (type_id) {
         .primitive => |p| switch (p) {
             .void => "void",
@@ -732,6 +996,7 @@ fn typeIdToLLVMType(type_id: TypeId) []const u8 {
             .u32, .i32 => "i32",
             .f32 => "float",
             .u64, .i64 => "i64",
+            .usize => target.ptrLLVMType(),
             .f64 => "double",
         },
         .struct_type => "ptr", // nested struct fields are pointers
@@ -740,7 +1005,20 @@ fn typeIdToLLVMType(type_id: TypeId) []const u8 {
         .function => "ptr",
         .namespace => "void", // namespaces have no runtime representation
         .array => "ptr", // arrays are stack-allocated, passed as pointers
+        .slice => "ptr", // slices are fat pointers { ptr, i64 }, passed as pointers
+        .@"opaque" => "ptr", // opaque types only used through pointers
     };
+}
+
+/// Resolve the LLVM type string for an array element.
+/// Structs are stored inline (e.g. %Point), not as pointers.
+fn arrayElemLLVMType(buf: *[64]u8, element_type: TypeId, types: *const TypeRegistry, target: Target) []const u8 {
+    if (element_type == .struct_type) {
+        const st = types.struct_types.items[element_type.struct_type];
+        const len = std.fmt.bufPrint(buf, "%{s}", .{st.name}) catch return "ptr";
+        return len;
+    }
+    return typeIdToLLVMType(element_type, target);
 }
 
 fn isFloatType(type_id: TypeId) bool {
@@ -803,6 +1081,45 @@ fn floatCmpOpToLLVM(op: CmpOp) []const u8 {
         .le_s, .le_u => "ole",
         .gt_s, .gt_u => "ogt",
         .ge_s, .ge_u => "oge",
+    };
+}
+
+/// Determine how a C ABI struct parameter should be passed based on size and target.
+const StructPassing = enum {
+    /// Coerce to a single integer register
+    register,
+    /// Split across two i64 registers (9-16 byte structs)
+    two_registers,
+    /// Pass by pointer (byval) for large structs
+    indirect,
+};
+
+fn structParamABI(size: u32, arch: codegen.Arch) StructPassing {
+    return switch (arch) {
+        .aarch64 => {
+            if (size <= 8) return .register;
+            if (size <= 16) return .two_registers;
+            return .indirect;
+        },
+        .x86_64 => {
+            if (size <= 8) return .register;
+            if (size <= 16) return .two_registers;
+            return .indirect;
+        },
+        .arm, .x86 => .indirect,
+    };
+}
+
+fn structCoercionType(size: u32, arch: codegen.Arch) []const u8 {
+    return switch (arch) {
+        .aarch64 => "i64",
+        .x86_64 => switch (size) {
+            1 => "i8",
+            2 => "i16",
+            3, 4 => "i32",
+            else => "i64",
+        },
+        else => "i32",
     };
 }
 

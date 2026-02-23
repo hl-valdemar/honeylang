@@ -286,3 +286,118 @@ test "single-item to many-item pointer coercion is rejected (loosening)" {
     defer r.deinit();
     try r.expectSemanticError(.type_mismatch);
 }
+
+// ============================================================
+// auto-deref: pointer field access without explicit ^
+// ============================================================
+
+test "auto-deref read field through pointer" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\get_x :: func(p: @Point) i32 { return p.x }
+        \\
+        \\main :: func() i32 {
+        \\    pt := Point{ .x = 7, .y = 3 }
+        \\    return get_x(&pt)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("getelementptr inbounds %Point");
+}
+
+test "auto-deref write field through mutable pointer" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\set_x :: func(p: @mut Point, val: i32) void {
+        \\    p.x = val
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    mut pt := Point{ .x = 0, .y = 0 }
+        \\    set_x(&pt, 42)
+        \\    return pt.x
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("getelementptr inbounds %Point");
+    try r.expectLLVMContains("store i32 %");
+}
+
+test "auto-deref chained nested struct access" {
+    var r = try compileTo(.codegen,
+        \\Inner :: c struct { value: i32 }
+        \\Outer :: c struct { inner: Inner }
+        \\
+        \\get_value :: func(p: @Outer) i32 {
+        \\    return p.inner.value
+        \\}
+        \\
+        \\main :: func() i32 {
+        \\    o := Outer{ .inner = Inner{ .value = 99 } }
+        \\    return get_value(&o)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("getelementptr inbounds %Outer");
+    try r.expectLLVMContains("getelementptr inbounds %Inner");
+}
+
+test "auto-deref write through immutable pointer is an error" {
+    var r = try compileTo(.semantic,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\bad :: func(p: @Point) void {
+        \\    p.x = 99
+        \\}
+        \\
+        \\main :: func() void {
+        \\    pt := Point{ .x = 1, .y = 2 }
+        \\    bad(&pt)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectSemanticError(.assign_through_immutable_ptr);
+}
+
+test "auto-deref address-of field through pointer" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\main :: func() i32 {
+        \\    mut pt := Point{ .x = 42, .y = 0 }
+        \\    p: @mut Point = &pt
+        \\    field_ptr: @i32 = &p.x
+        \\    return field_ptr^
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("getelementptr inbounds %Point");
+}
+
+test "explicit deref p^.x still works" {
+    var r = try compileTo(.codegen,
+        \\Point :: c struct { x: i32, y: i32 }
+        \\
+        \\get_x :: func(p: @Point) i32 { return p^.x }
+        \\
+        \\main :: func() i32 {
+        \\    pt := Point{ .x = 7, .y = 3 }
+        \\    return get_x(&pt)
+        \\}
+        \\
+    );
+    defer r.deinit();
+    try r.expectNoErrors();
+    try r.expectLLVMContains("getelementptr inbounds %Point");
+}

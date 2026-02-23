@@ -26,6 +26,7 @@ X :: 42  # inline comment
 | `i8`, `i16`, `i32`, `i64` | Signed integers |
 | `u8`, `u16`, `u32`, `u64` | Unsigned integers |
 | `f16`, `f32`, `f64` | Floating-point numbers |
+| `usize` | Pointer-sized unsigned integer (u64 on 64-bit, u32 on 32-bit) |
 | `bool` | Boolean (`true` / `false`) |
 | `void` | No value |
 
@@ -192,7 +193,7 @@ x / y    # division
 
 ```honey
 X :: -42       # negation
-not flag       # logical not (bool only)
+!flag          # logical not (bool only)
 ```
 
 ### Comparison
@@ -215,7 +216,7 @@ Operands must be `bool` — no implicit truthiness:
 ```honey
 a and b
 a or b
-not a
+!a
 ```
 
 ### Compound Assignment
@@ -279,14 +280,95 @@ main :: func() i32 {
 }
 ```
 
+### Bare Blocks
+
+A bare block `{ ... }` introduces a new scope. Variables declared inside are local to the block:
+
+```honey
+main :: func() i32 {
+    a := 1
+    {
+        b := 2
+        return a + b    # a visible from outer scope
+    }
+}
+```
+
+Variables do not leak out of a block. Once a block exits, names used inside it are available for reuse:
+
+```honey
+main :: func() i32 {
+    {
+        b := 1
+    }
+    # b is no longer in scope
+    b := 2          # fine — new declaration
+    return b
+}
+```
+
+Bare blocks can be nested arbitrarily:
+
+```honey
+main :: func() i32 {
+    a := 1
+    {
+        b := 2
+        {
+            c := 3
+            return a + b + c
+        }
+    }
+}
+```
+
+### Shadowing
+
+Shadowing is not allowed. Redeclaring a variable that exists in any enclosing scope — including function parameters — is an error (`S042`):
+
+```honey
+main :: func(x: i32) void {
+    x := 5                  # ERROR: variable shadows outer declaration
+}
+
+main :: func() void {
+    a := 1
+    {
+        a := 2              # ERROR: variable shadows outer declaration
+    }
+}
+```
+
+Sibling blocks do not conflict:
+
+```honey
+main :: func() void {
+    { a := 1 }
+    { a := 2 }             # fine — previous a was dropped
+}
+```
+
 ### Defer
 
-Deferred statements execute before the function returns:
+Deferred statements execute when the enclosing block exits, in reverse order (LIFO). This works in function bodies and bare blocks:
 
 ```honey
 main :: func() i32 {
     defer y := 10
     return 42
+}
+```
+
+Defer in a bare block runs on block exit:
+
+```honey
+main :: func() void {
+    {
+        defer printf("leaving block\n")
+        printf("inside block\n")
+    }
+    # output: inside block, leaving block
+    printf("after block\n")
 }
 ```
 
@@ -315,6 +397,13 @@ All fields must be provided with named initialization:
 
 ```honey
 p := Point{ .x = 3, .y = 4 }
+```
+
+Compile-time constant struct literals use `::` and are emitted as global constants:
+
+```honey
+BLACK :: Color { .r = 0, .g = 0, .b = 0, .a = 255 }
+ORIGIN :: Vec2 { .x = 0, .y = 0 }
 ```
 
 ### Field Access
@@ -414,6 +503,97 @@ Packet :: c struct { tag: u8, len: u16, data: i32 }
 Entity :: struct { id: i32, x: f32, y: f32 }
 ```
 
+## Tuples
+
+Tuples are structs with positional (unnamed) fields. They use `{}` syntax and fields are accessed by position with `.0`, `.1`, etc.
+
+### Named Tuple Types
+
+A tuple type is declared as a struct with positional field types:
+
+```honey
+Pair :: struct {i32, i32}
+Info :: struct {[:0]u8, i32}
+```
+
+### Tuple Literals
+
+```honey
+p := Pair{10, 20}
+x := p.0              # 10
+y := p.1              # 20
+```
+
+### Anonymous Tuples
+
+Tuples can be created without a named type — the type is inferred from the element values:
+
+```honey
+t := {42, "hello"}
+n := t.0              # 42
+s := t.1              # "hello"
+```
+
+Numeric literals in anonymous tuples resolve their type from usage context, just like regular variables.
+
+### Tuples vs Named Structs
+
+Both are structs under the hood. The difference is whether fields are named or positional:
+
+```honey
+# Named struct: fields by name
+Point :: struct { x: i32, y: i32 }
+p := Point{ .x = 1, .y = 2 }
+p.x
+
+# Tuple struct: fields by position
+Pair :: struct { i32, i32 }
+q := Pair{1, 2}
+q.0
+```
+
+## Variadic Arguments
+
+Functions can accept a variable number of arguments using `...` as the last parameter type.
+
+### C Variadic Functions
+
+For calling C variadic functions like `printf`:
+
+```honey
+printf :: c func(fmt: [:0]u8, ...) i32
+
+main :: func() void {
+    printf("hello %s, age %d\n", "world", 42)
+}
+```
+
+The `...` must be the last parameter. Extra arguments are passed according to the C calling convention. String literals (`[:0]u8`) are automatically passed as raw pointers to C functions.
+
+### Imported C Variadics
+
+C variadic functions from imported headers work automatically:
+
+```honey
+import c "stdio.h"
+
+main :: func() void {
+    stdio.printf("x = %d\n", 42)
+}
+```
+
+### Argument Checking
+
+The compiler validates that at least the fixed (non-variadic) parameters are provided:
+
+```honey
+printf :: c func(fmt: [:0]u8, ...) i32
+
+printf("ok")              # OK: 0 extra args
+printf("x=%d", 42)        # OK: 1 extra arg
+# printf()                # ERROR: missing fixed param 'fmt'
+```
+
 ## Arrays
 
 Fixed-size arrays with a length known at compile time.
@@ -423,7 +603,8 @@ Fixed-size arrays with a length known at compile time.
 Array type syntax is `[N]T` where `N` is the length and `T` is the element type. Array literals use `[elem1, elem2, ...]`:
 
 ```honey
-arr: [3]i32 = [10, 20, 30]
+arr: [3]i32 :: [10, 20, 30]  # comptime
+arr: [3]i32 = [10, 20, 30]   # runtime
 ```
 
 Works with any element type:
@@ -451,9 +632,27 @@ arr[0] = 5
 
 Size inference only applies to declarations with an immediate array literal assignment.
 
+### `.len` Property
+
+Every array has a `.len` property that returns the number of elements as `usize`. This is a compile-time constant — no runtime overhead:
+
+```honey
+main :: func() usize {
+    arr: [3]i32 = [1, 2, 3]
+    return arr.len        # 3
+}
+```
+
+Works with inferred-size arrays:
+
+```honey
+arr: [_]i32 = [10, 20, 30]
+n := arr.len              # 3
+```
+
 ### Indexing
 
-Access elements with `arr[index]`. The index must be an integer type:
+Access elements with `arr[index]`. The index must be an integer type (resolved as `usize`). Runtime bounds checking ensures out-of-bounds access traps immediately:
 
 ```honey
 main :: func() i32 {
@@ -518,6 +717,264 @@ The compiler checks:
 - **Non-integer index:** `arr[flag]` where `flag` is `bool` — index must be an integer
 - **Immutable element assignment:** `arr[0] = 10` on `[N]T` — use `[N]mut T` for mutable elements
 
+## Strings
+
+String literals are `[:0]u8` — null-terminated immutable slices of bytes. The null terminator is stored after the data but is not included in `.len`. Strings support all slice operations: indexing, `.len`, slicing, and passing to functions.
+
+### String Literals
+
+```honey
+s := "hello"          # type is [:0]u8
+c := s[0]             # u8 value 104 (ASCII 'h')
+n := s.len            # usize value 5 (excludes null terminator)
+```
+
+### Escape Sequences
+
+| Escape | Value |
+| ------ | ----- |
+| `\n` | Newline (0x0A) |
+| `\t` | Tab (0x09) |
+| `\r` | Carriage return (0x0D) |
+| `\0` | Null byte (0x00) |
+| `\\` | Backslash |
+| `\"` | Double quote |
+
+```honey
+s := "line1\nline2"   # 11 bytes, contains newline
+```
+
+### Strings as Function Parameters
+
+```honey
+get_first :: func(data: []u8) u8 {
+    return data[0]
+}
+
+main :: func() u8 {
+    return get_first("hello")   # returns 104 ('h')
+}
+```
+
+### String Slicing
+
+```honey
+s := "hello"
+sub := s[1..4]        # []u8 containing "ell"
+```
+
+### Immutability
+
+String literals are immutable (`[:0]u8`, not `[:0]mut u8`). Attempting to write through a string is a compile-time error:
+
+```honey
+s := "hello"
+# s[0] = 65           # ERROR: cannot assign to immutable element
+```
+
+### Sentinel Coercion
+
+Since `[:0]u8` is a sentinel-terminated slice, it can be passed where `[]u8` is expected (the sentinel guarantee is simply dropped):
+
+```honey
+process :: func(data: []u8) u8 { return data[0] }
+
+main :: func() u8 {
+    return process("hello")   # [:0]u8 coerces to []u8
+}
+```
+
+The reverse (passing `[]u8` where `[:0]u8` is expected) is rejected — there's no guarantee a non-sentinel slice has a null terminator.
+
+## Sentinel-Terminated Types
+
+For C interoperability, Honey supports sentinel-terminated slices and arrays. These guarantee a sentinel value (typically null) follows the data:
+
+```honey
+c_string: [:0]u8 = "hello"    # null-terminated, .len is 5
+buffer: [256:0]u8 = ...        # 256 bytes + null terminator
+```
+
+| Type | Meaning |
+| ---- | ------- |
+| `[:0]T` | Sentinel-terminated slice (sentinel = 0), immutable elements |
+| `[:0]mut T` | Sentinel-terminated slice, mutable elements |
+| `[N:0]T` | Sentinel-terminated array (N elements + sentinel) |
+| `[:S]T` | Slice terminated by arbitrary sentinel value S |
+
+Sentinel-terminated types coerce to their non-sentinel equivalents:
+
+```honey
+process :: func(data: []u8) void { ... }
+
+c_str: [:0]u8 = "hello"
+process(c_str)                 # [:0]u8 → []u8 is safe
+```
+
+### C Interop
+
+In C-convention functions, sentinel-terminated slice parameters are passed as raw pointers (not fat pointers). This makes string literals directly passable to C functions:
+
+```honey
+puts :: c func(s: [:0]u8) i32
+
+main :: func() i32 {
+    return puts("Hello from Honey!")
+}
+```
+
+## Slices
+
+A slice `[]T` is a fat pointer — a pair of (data pointer, length) — that references a contiguous sequence of `T` elements without owning them. Slices enable writing functions that operate on arrays of any length.
+
+### Creating Slices
+
+Slices are created with range syntax. There is no implicit array-to-slice coercion — you must use `[..]` explicitly:
+
+```honey
+arr: [5]i32 = [10, 20, 30, 40, 50]
+
+s1: []i32 = arr[..]      # full array → slice (all elements)
+s2: []i32 = arr[1..4]    # range → slice (elements 1, 2, 3)
+s3: []i32 = arr[2..]     # open end → slice (elements 2, 3, 4)
+s4: []i32 = arr[..3]     # open start → slice (elements 0, 1, 2)
+```
+
+All four range variants are supported:
+
+| Syntax | Meaning |
+| ------ | ------- |
+| `arr[start..end]` | Elements from `start` to `end` (exclusive) |
+| `arr[start..]` | Elements from `start` to the end |
+| `arr[..end]` | Elements from the beginning to `end` (exclusive) |
+| `arr[..]` | All elements (full slice) |
+
+Slicing also works on existing slices:
+
+```honey
+outer :: func(data: []i32) i32 {
+    inner: []i32 = data[1..3]
+    return inner[0]
+}
+```
+
+### Slice Variables
+
+Slices can be stored in local and global variables:
+
+```honey
+# Local slice variable
+main :: func() i32 {
+    arr: [5]i32 = [10, 20, 30, 40, 50]
+    s: []i32 = arr[1..4]
+    return s[0]    # 20
+}
+```
+
+```honey
+# Global slice variable (runtime-initialized)
+arr: [3]i32 = [10, 20, 30]
+mut s: []i32 = arr[..]
+```
+
+### Slice as Function Parameter
+
+Use `[]T` as a parameter type. Pass a slice using `[..]` syntax:
+
+```honey
+sum :: func(data: []i32) i32 {
+    return data[0] + data[1]
+}
+
+main :: func() i32 {
+    arr: [3]i32 = [10, 20, 30]
+    return sum(arr[..])
+}
+```
+
+### Slice Indexing
+
+Access elements with `s[index]`, same syntax as arrays. The index must be an integer type (resolved as `usize`):
+
+```honey
+get :: func(data: []i32) i32 {
+    return data[2]
+}
+```
+
+### `.len` Property
+
+Every slice has a `.len` property that returns the number of elements as `usize`. Unlike arrays (where `.len` is a compile-time constant), slice `.len` is a runtime value:
+
+```honey
+length :: func(data: []i32) usize {
+    return data.len
+}
+```
+
+### Runtime Bounds Checking
+
+Both array indexing and slice indexing include runtime bounds checks. Out-of-bounds access traps immediately rather than producing silent corruption:
+
+- **Array indexing:** `arr[i]` checks `i < arr.len`
+- **Slice indexing:** `s[i]` checks `i < s.len`
+- **Slice range:** `arr[start..end]` checks `end <= len` and `start <= end`
+
+### Element Mutability
+
+By default, slice elements are immutable — `[]T` does not allow element assignment. Use `[]mut T` to create a slice with mutable elements:
+
+| Type | Element write | Meaning |
+| ---- | ------------- | ------- |
+| `[]T` | Not allowed | Read-only view of elements |
+| `[]mut T` | Allowed | Read-write view of elements |
+
+Slicing a mutable array produces a mutable slice, and slicing an immutable array produces an immutable slice:
+
+```honey
+arr: [3]mut i32 = [10, 20, 30]
+s: []mut i32 = arr[..]    # mutable elements → mutable slice
+s[0] = 42                  # OK
+```
+
+```honey
+arr: [3]i32 = [10, 20, 30]
+s: []i32 = arr[..]         # immutable elements → immutable slice
+# s[0] = 42               # ERROR: cannot assign to immutable element
+```
+
+Compound assignment works the same way:
+
+```honey
+s: []mut i32 = arr[..]
+s[0] += 10                 # OK on []mut T
+```
+
+**Mutability coercion:** A `[]mut T` can be passed where `[]T` is expected (tightening — giving up write permission is safe). The reverse is rejected:
+
+```honey
+read_only :: func(data: []i32) i32 { return data[0] }
+
+s: []mut i32 = arr[..]
+read_only(s)               # OK: []mut i32 → []i32
+
+# ERROR: []i32 cannot widen to []mut i32
+write_func :: func(data: []mut i32) void { data[0] = 1 }
+write_func(immutable_slice)
+```
+
+### No Implicit Coercion
+
+Arrays (`[N]T`) and slices (`[]T`) are distinct types. Passing a bare array where a slice is expected is a type mismatch error — use `arr[..]` to explicitly create a slice:
+
+```honey
+# ERROR: argument type mismatch
+sum(arr)
+
+# OK: explicit slice
+sum(arr[..])
+```
+
 ## Pointers
 
 ### Single-Item Pointers
@@ -562,18 +1019,48 @@ p := &x
 p^ += 100
 ```
 
-### Pointer to Struct
+### Pointer to Struct (Auto-Deref)
+
+Pointers to structs are automatically dereferenced on field access — no explicit `^` needed:
 
 ```honey
-get_x :: func(p: @Point) i32 { return p^.x }
+get_x :: func(p: @Point) i32 { return p.x }
+
+set_x :: func(p: @mut Point, val: i32) void {
+    p.x = val
+}
 
 main :: func() i32 {
-    pt := Point{ .x = 7, .y = 3 }
+    mut pt := Point{ .x = 7, .y = 3 }
+    set_x(&pt, 42)
     return get_x(&pt)
 }
 ```
 
+Auto-deref works through nested structs:
+
+```honey
+Inner :: c struct { value: i32 }
+Outer :: c struct { inner: Inner }
+
+get_value :: func(p: @Outer) i32 {
+    return p.inner.value
+}
+```
+
+Writing through an immutable pointer (`@T`) is an error:
+
+```honey
+bad :: func(p: @Point) void {
+    p.x = 99    # ERROR: cannot assign through immutable pointer
+}
+```
+
+Explicit dereference (`p^.x`) still works and is equivalent.
+
 ### Address-of Struct Field
+
+Works with both direct structs and auto-deref through pointers:
 
 ```honey
 mut buf := Buf{ .a = 10, .b = 20 }
@@ -728,7 +1215,13 @@ The compiler detects errors at each phase and continues processing.
 | Error | Example |
 | ----- | ------- |
 | `arithmetic_op_requires_numeric` | `true + false` |
-| `logical_op_requires_bool` | `1 and 2`, `not 1` |
+| `logical_op_requires_bool` | `1 and 2`, `!1` |
+
+**Scoping:**
+
+| Error | Example |
+| ----- | ------- |
+| `variable_shadowing` | `a := 1; { a := 2 }` (inner `a` shadows outer) |
 
 **Mutability & Control Flow:**
 
@@ -779,10 +1272,14 @@ main :: func() i32 {
 ## Code Generation
 
 - **Backend:** LLVM IR (text format)
-- **Target:** aarch64-darwin (ARM 64-bit, macOS)
+- **Targets:** aarch64-darwin, aarch64-linux, x86_64-darwin, x86_64-linux, arm-linux (32-bit), x86-linux (32-bit)
 - **Honey calling convention:** `fastcc` with honey-specific name mangling
 - **C calling convention:** Standard C ABI
 - **Struct passing:** by-value uses `byval`, returns use `sret`
+- **Slice representation:** `{ ptr, usize }` fat pointer, passed with `byval(%slice)`
+- **`usize` mapping:** `i64` on 64-bit targets, `i32` on 32-bit — used for array/slice indices and pointer offsets
+- **Bounds checking:** Runtime checks on all array/slice indexing and slicing operations
+- **Cross-compilation:** `--target=<arch>-<os>` flag, `--list-targets` to see all supported targets
 - **Bool representation:** `i8` (0 or 1)
 - **Float operations:** Native LLVM float instructions (`fadd`, `fsub`, `fmul`, `fdiv`)
 - **Comparison:** Correct signed (`sgt`, `slt`, ...) vs unsigned (`ugt`, `ult`, ...) predicates
