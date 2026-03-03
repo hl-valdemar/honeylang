@@ -1334,10 +1334,10 @@ This is important for avoiding unnecessary computation or side effects.
 | `none` | Absent value |
 | `x orelse default` | Unwrap with fallback value |
 | `x?` | Force unwrap (traps if `none`) |
-| `if x |v| { }` | Conditional unwrap |
-| `if x |v : guard| { }` | Conditional unwrap with guard |
-| `if x and y |a, b| { }` | Multi-unwrap (short-circuits) |
-| `if (x and y) |a, b : guard| { }` | Multi-unwrap with guard |
+| `if x \|v\| { }` | Conditional unwrap |
+| `if x \|v : guard\| { }` | Conditional unwrap with guard |
+| `if x and y \|a, b\| { }` | Multi-unwrap (short-circuits) |
+| `if (x and y) \|a, b : guard\| { }` | Multi-unwrap with guard |
 
 ## Functions
 
