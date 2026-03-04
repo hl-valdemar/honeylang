@@ -1,0 +1,8 @@
+pi :: 3.14
+x = 32
+y = 0b1010
+z = 0xbeaf
+
+main :: func() int {
+    return 0xff
+}

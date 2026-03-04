@@ -1,0 +1,88 @@
+const std = @import("std");
+
+const source = @import("../source/source.zig");
+
+pub const Token = struct {
+    kind: Kind,
+    src_id: source.Id,
+    start: source.SourceIndex,
+    len: u8, // allows for tokens of 255 characters
+};
+
+pub const TokenList = std.ArrayList(Token);
+
+pub const TokenIndex = u32;
+
+pub const Kind = enum {
+    // literals
+    identifier,
+    number,
+    bool,
+    char_literal,
+
+    // keywords
+    func,
+    @"struct",
+    @"defer",
+    @"return",
+    mut,
+    namespace,
+    @"pub",
+    import,
+    @"opaque",
+
+    // string literals
+    string_literal,
+
+    // assignment
+    colon,
+    double_colon,
+    equal,
+    plus_equal,
+    minus_equal,
+    star_equal,
+    slash_equal,
+
+    // arithmetic
+    plus,
+    minus,
+    star,
+    slash,
+
+    // comparative
+    double_equal,
+    not_equal,
+    less,
+    greater,
+    less_equal,
+    greater_equal,
+
+    // control flow
+    @"if",
+    @"else",
+    @"while",
+    @"break",
+    @"continue",
+    not,
+    @"and",
+    @"or",
+    xor,
+
+    // enclosing
+    left_paren,
+    right_paren,
+    left_curly,
+    right_curly,
+    left_bracket,
+    right_bracket,
+
+    // other
+    comma,
+    dot,
+    dot_dot,
+    ellipsis,
+    at,
+    ampersand,
+    caret,
+    eof,
+};

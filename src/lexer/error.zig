@@ -1,88 +1,116 @@
 const std = @import("std");
-const mem = @import("std").mem;
+const mem = std.mem;
 
-const SourceIndex = @import("../source/source.zig").SourceIndex;
+const scan_error_kind_names = std.EnumArray(
+    ScanErrorKind,
+    @import("../root.zig").ErrorInfo,
+).init(.{
+    .unrecognized_character = .{
+        .code = "L001",
+        .message = "unrecognized character",
+        .help = "character doesn't fit any tokens in honeylang",
+        .severity = .err,
+    },
+    .multiple_decimal_points = .{
+        .code = "L002",
+        .message = "multiple decimal points",
+        .help = "remove the last decimal point",
+        .severity = .err,
+    },
+    .empty_hex_literal = .{
+        .code = "L003",
+        .message = "empty hexadecimal literal",
+        .help = "hex notation should be followed by a hexadecimal value",
+        .severity = .err,
+    },
+    .empty_bin_literal = .{
+        .code = "L004",
+        .message = "empty binary literal",
+        .help = "binary notation should be followed by a binary value",
+        .severity = .err,
+    },
+});
 
-pub const LexerErrorKind = enum {
-    // character errors
-    unexpected_character,
-    invalid_character,
-
-    // number literal errors
-    invalid_number_literal,
+pub const ScanErrorKind = enum {
+    unrecognized_character,
     multiple_decimal_points,
-
-    // string literal errors
-    unterminated_string,
-    invalid_escape_sequence,
-
-    // general errors
-    unexpected_eof,
-
-    // operator suggestions
-    use_and_instead,
-    use_or_instead,
+    empty_hex_literal,
+    empty_bin_literal,
 };
 
-pub const LexerError = struct {
-    kind: LexerErrorKind,
-    start: SourceIndex,
-    end: SourceIndex,
-    character: ?u8 = null, // the problematic character, if applicable
+pub const ScanErrorDesc = struct {
+    kind: ScanErrorKind,
+    start: @import("Lexer.zig").Index,
+    end: @import("Lexer.zig").Index,
 };
 
-pub const ErrorList = struct {
-    allocator: mem.Allocator,
-    errors: std.ArrayList(LexerError),
+pub const ScanErrors = struct {
+    kinds: std.ArrayListUnmanaged(ScanErrorKind),
+    starts: std.ArrayListUnmanaged(@import("Lexer.zig").Index),
+    ends: std.ArrayListUnmanaged(@import("Lexer.zig").Index),
 
-    pub fn init(allocator: mem.Allocator) !ErrorList {
+    pub fn init(gpa: mem.Allocator) !ScanErrors {
+        const init_err_cap = 10;
         return .{
-            .allocator = allocator,
-            .errors = try std.ArrayList(LexerError).initCapacity(allocator, 4),
+            .kinds = try std.ArrayListUnmanaged(ScanErrorKind).initCapacity(gpa, init_err_cap),
+            .starts = try std.ArrayListUnmanaged(@import("Lexer.zig").Index).initCapacity(gpa, init_err_cap),
+            .ends = try std.ArrayListUnmanaged(@import("Lexer.zig").Index).initCapacity(gpa, init_err_cap),
         };
     }
 
-    pub fn deinit(self: *ErrorList) void {
-        self.errors.deinit(self.allocator);
+    pub fn deinit(self: *ScanErrors, gpa: mem.Allocator) void {
+        self.kinds.deinit(gpa);
+        self.starts.deinit(gpa);
+        self.ends.deinit(gpa);
     }
 
-    pub fn add(self: *ErrorList, err: LexerError) !void {
-        try self.errors.append(self.allocator, err);
-    }
-
-    pub fn addSimple(
-        self: *ErrorList,
-        kind: LexerErrorKind,
-        start: SourceIndex,
-        end: SourceIndex,
+    pub fn push(
+        self: *ScanErrors,
+        gpa: mem.Allocator,
+        kind: ScanErrorKind,
+        start: @import("Lexer.zig").Index,
+        end: @import("Lexer.zig").Index,
     ) !void {
-        try self.errors.append(self.allocator, .{
-            .kind = kind,
-            .start = start,
-            .end = end,
-        });
+        self.assertHealth();
+        try self.kinds.append(gpa, kind);
+        try self.starts.append(gpa, start);
+        try self.ends.append(gpa, end);
     }
 
-    pub fn addWithChar(
-        self: *ErrorList,
-        kind: LexerErrorKind,
-        character: u8,
-        start: SourceIndex,
-        end: SourceIndex,
-    ) !void {
-        try self.errors.append(self.allocator, .{
-            .kind = kind,
-            .start = start,
-            .end = end,
-            .character = character,
-        });
+    pub fn pop(self: *ScanErrors) ?ScanErrorDesc {
+        self.assertHealth();
+
+        if (self.len() > 0)
+            return .{
+                .kind = self.kinds.pop() orelse unreachable,
+                .start = self.starts.pop() orelse unreachable,
+                .end = self.ends.pop() orelse unreachable,
+            };
+
+        return null;
     }
 
-    pub fn hasErrors(self: *const ErrorList) bool {
-        return self.errors.items.len > 0;
+    pub fn get(self: *const ScanErrors, idx: usize) ?ScanErrorDesc {
+        self.assertHealth();
+
+        if (self.len() < idx)
+            return .{
+                .kind = self.kinds.items[idx],
+                .starts = self.starts.items[idx],
+                .ends = self.ends.items[idx],
+            };
+
+        return null;
     }
 
-    pub fn count(self: *const ErrorList) usize {
-        return self.errors.items.len;
+    pub fn len(self: *const ScanErrors) usize {
+        self.assertHealth();
+        return self.kinds.items.len;
+    }
+
+    fn assertHealth(self: *const ScanErrors) void {
+        const kinds_starts = self.kinds.items.len == self.starts.items.len;
+        const starts_ends = self.starts.items.len == self.ends.items.len;
+        std.debug.assert(kinds_starts and starts_ends);
     }
 };

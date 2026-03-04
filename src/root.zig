@@ -1,20 +1,21 @@
-pub const source = @import("source/source.zig");
-pub const lexer = @import("lexer/lexer.zig");
-pub const parser = @import("parser/parser.zig");
-pub const imports = @import("imports/imports.zig");
-pub const semantic = @import("semantic/semantic.zig");
-pub const comptime_ = @import("comptime/comptime.zig");
-pub const codegen = @import("codegen/codegen.zig");
+// packages
+pub const args = @import("util/args.zig");
 
-pub const ansi = @import("utils/ansi.zig");
-pub const tuple_utils = @import("utils/tuple.zig");
-pub const token_printer = @import("lexer/token-printer.zig");
-pub const ast_printer = @import("parser/ast-printer.zig");
-pub const symbol_printer = @import("semantic/symbol-printer.zig");
-pub const type_printer = @import("semantic/type-printer.zig");
-pub const comptime_printer = @import("comptime/comptime-printer.zig");
-pub const mir_printer = @import("codegen/mir-printer.zig");
+// agnostic types
+pub const BaseIndex = u32;
 
-test {
-    _ = @import("integration_tests.zig");
-}
+pub const Severity = enum {
+    fatal,
+    err,
+    warning,
+};
+pub const ErrorInfo = struct {
+    code: []const u8,
+    message: []const u8,
+    help: []const u8,
+    severity: Severity = .err,
+};
+
+// specific types
+pub const Source = @import("source/Source.zig");
+pub const Lexer = @import("lexer/Lexer.zig");

@@ -1,39 +1,63 @@
 const std = @import("std");
-const fs = @import("std").fs;
-const mem = @import("std").mem;
+const mem = std.mem;
+const fs = std.fs;
 
-pub fn fromStr(src: []const u8, id: Id) SourceCode {
-    return .{ .buffer = src, .id = id };
-}
+id: ID,
+path: []const u8,
+contents: []const u8,
 
-pub fn fromFile(allocator: mem.Allocator, file_path: []const u8, id: Id) !SourceCode {
-    // open file as read only
-    const file = try fs.cwd().openFile(file_path, .{ .mode = .read_only });
+const Self = @This();
+
+pub const ID = u16;
+pub const Index = @import("../root.zig").BaseIndex;
+
+pub const LineCol = struct {
+    line: Index,
+    col: Index,
+};
+
+pub fn load(gpa: mem.Allocator, path: []const u8) !Self {
+    const file = try fs.cwd().openFile(path, .{ .mode = .read_only });
     defer file.close();
 
-    // get size of file and  allocate a buffer
     const file_size = try file.getEndPos();
-    const buffer = try allocator.alloc(u8, file_size);
+    const contents = try gpa.alloc(u8, file_size);
 
-    // read file into buffer
-    _ = try file.readAll(buffer);
+    _ = try file.readAll(contents);
 
-    return .{ .file_path = file_path, .buffer = buffer, .id = id };
+    return Self{
+        .id = ID_Generator.getNextID(),
+        .path = path,
+        .contents = contents,
+    };
 }
 
-pub const Id = u16; // allows for more than 65k files
-pub const SourceIndex = u32; // allows for more than 4m characters (in each file)
+pub fn deload(self: *Self, gpa: mem.Allocator) void {
+    gpa.free(self.contents);
+}
 
-pub const SourceCode = struct {
-    file_path: ?[]const u8 = null,
-    buffer: []const u8,
-    id: Id,
+pub fn lineCol(self: *const Self, offset: u32) LineCol {
+    var line = 1;
+    var col = 1;
+    for (0..offset) |i| {
+        if (i >= self.contents.len)
+            break;
 
-    pub fn get(self: *const SourceCode, idx: SourceIndex) ?u8 {
-        if (idx < self.buffer.len) return self.buffer[idx] else return null;
+        if (self.contents[i] == '\n') {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
     }
+    return LineCol{ .line = line, .col = col };
+}
 
-    pub fn getSlice(self: *const SourceCode, start: SourceIndex, end: SourceIndex) []const u8 {
-        return self.buffer[start..end];
+const ID_Generator = struct {
+    var nextID: ID = 0;
+
+    fn getNextID() ID {
+        defer nextID += 1;
+        return nextID;
     }
 };
