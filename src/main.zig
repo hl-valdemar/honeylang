@@ -33,7 +33,7 @@ pub fn main() !void {
 
     std.debug.print("{s}\n", .{src.contents});
 
-    var lexer = try honey.Lexer.init(gpa, &src);
+    var lexer = honey.Lexer.init(&src);
     defer lexer.deinit(gpa);
 
     const result = try lexer.scan(gpa);

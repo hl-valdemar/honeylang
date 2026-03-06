@@ -2,26 +2,27 @@ const std = @import("std");
 const mem = std.mem;
 const ascii = std.ascii;
 
-pos: Index,
+const token = @import("token.zig");
+const err = @import("error.zig");
+
+pos: token.Index,
 src: *const @import("../source/Source.zig"),
-tokens: @import("token.zig").Tokens,
-errors: @import("error.zig").ScanErrors,
+tokens: token.List,
+errors: err.List,
 
 const Self = @This();
 
-pub const Index = @import("../root.zig").BaseIndex;
-
 pub const ScanResult = struct {
-    tokens: @import("token.zig").Tokens,
-    errors: @import("error.zig").ScanErrors,
+    tokens: token.List,
+    errors: err.List,
 };
 
-pub fn init(gpa: mem.Allocator, src: *const @import("../source/Source.zig")) !Self {
+pub fn init(src: *const @import("../source/Source.zig")) Self {
     return .{
         .pos = 0,
         .src = src,
-        .tokens = try @import("token.zig").Tokens.init(gpa),
-        .errors = try @import("error.zig").ScanErrors.init(gpa),
+        .tokens = .{},
+        .errors = .{},
     };
 }
 
@@ -47,48 +48,49 @@ pub fn scan(self: *Self, gpa: mem.Allocator) !ScanResult {
 
                 self.advance();
             }
+            continue;
         }
 
         const start = self.pos;
         if (ascii.isAlphabetic(c) or c == '_') { // scan identifiers
             const tok = self.scanIdent();
-            try self.tokens.push(gpa, tok.kind, tok.start, tok.end);
+            try self.tokens.append(gpa, tok);
         } else if (ascii.isDigit(c)) { // scan numbers
             const tok = try self.scanNum(gpa);
-            try self.tokens.push(gpa, tok.kind, tok.start, tok.end);
+            try self.tokens.append(gpa, tok);
         } else switch (c) {
             // single-char tokens
             ',' => {
                 self.advance();
-                try self.tokens.push(gpa, .comma, start, self.pos);
+                try self.pushToken(gpa, .comma, start);
             },
             '(' => {
                 self.advance();
-                try self.tokens.push(gpa, .left_paren, start, self.pos);
+                try self.pushToken(gpa, .left_paren, start);
             },
             ')' => {
                 self.advance();
-                try self.tokens.push(gpa, .right_paren, start, self.pos);
+                try self.pushToken(gpa, .right_paren, start);
             },
             '[' => {
                 self.advance();
-                try self.tokens.push(gpa, .left_bracket, start, self.pos);
+                try self.pushToken(gpa, .left_bracket, start);
             },
             ']' => {
                 self.advance();
-                try self.tokens.push(gpa, .right_bracket, start, self.pos);
+                try self.pushToken(gpa, .right_bracket, start);
             },
             '{' => {
                 self.advance();
-                try self.tokens.push(gpa, .left_curly, start, self.pos);
+                try self.pushToken(gpa, .left_curly, start);
             },
             '}' => {
                 self.advance();
-                try self.tokens.push(gpa, .right_curly, start, self.pos);
+                try self.pushToken(gpa, .right_curly, start);
             },
             '=' => {
                 self.advance();
-                try self.tokens.push(gpa, .equal, start, self.pos);
+                try self.pushToken(gpa, .equal, start);
             },
 
             // double-char tokens
@@ -97,27 +99,27 @@ pub fn scan(self: *Self, gpa: mem.Allocator) !ScanResult {
                 const next = self.peek();
                 if (next != null and next.? == ':') {
                     self.advance();
-                    try self.tokens.push(gpa, .double_colon, start, self.pos);
+                    try self.pushToken(gpa, .double_colon, start);
                 } else {
-                    try self.tokens.push(gpa, .colon, start, self.pos);
+                    try self.pushToken(gpa, .colon, start);
                 }
             },
 
             // special tokens
             '\n' => {
                 self.advance();
-                try self.tokens.push(gpa, .newline, start, self.pos);
+                try self.pushToken(gpa, .newline, start);
             },
 
             else => {
                 // unknown character encountered
                 self.advance();
-                try self.errors.push(gpa, .unrecognized_character, start, self.pos);
+                try self.pushError(gpa, .unrecognized_character, start);
             },
         }
     }
 
-    try self.tokens.push(gpa, .eof, self.pos, self.pos);
+    try self.pushToken(gpa, .eof, self.pos);
 
     return .{
         .tokens = self.tokens,
@@ -125,7 +127,15 @@ pub fn scan(self: *Self, gpa: mem.Allocator) !ScanResult {
     };
 }
 
-fn scanIdent(self: *Self) @import("token.zig").TokenDesc {
+fn pushToken(self: *Self, gpa: mem.Allocator, kind: token.Kind, start: token.Index) !void {
+    try self.tokens.append(gpa, .{ .kind = kind, .start = start, .end = self.pos });
+}
+
+fn pushError(self: *Self, gpa: mem.Allocator, kind: err.Kind, start: token.Index) !void {
+    try self.errors.append(gpa, .{ .kind = kind, .start = start, .end = self.pos });
+}
+
+fn scanIdent(self: *Self) token.Token {
     const start = self.pos;
 
     while (self.peek()) |c| {
@@ -135,24 +145,12 @@ fn scanIdent(self: *Self) @import("token.zig").TokenDesc {
         self.advance();
     }
 
-    // handle the eventual keyword
     const ident = self.src.contents[start..self.pos];
-    if (@import("token.zig").keywords.get(ident)) |kind|
-        return .{
-            .kind = kind,
-            .start = start,
-            .end = self.pos,
-        };
-
-    return .{
-        .kind = .identifier,
-        .start = start,
-        .end = self.pos,
-    };
+    const kind: token.Kind = token.keywords.get(ident) orelse .identifier;
+    return .{ .kind = kind, .start = start, .end = self.pos };
 }
 
-fn scanNum(self: *Self, gpa: mem.Allocator) !@import("token.zig").TokenDesc {
-    // check for hex (0x) or binary (0b) prefix
+fn scanNum(self: *Self, gpa: mem.Allocator) !token.Token {
     const c = self.peek();
     if (c != null and c.? == '0') {
         const next = self.peekBy(1);
@@ -163,11 +161,10 @@ fn scanNum(self: *Self, gpa: mem.Allocator) !@import("token.zig").TokenDesc {
         }
     }
 
-    // check for decimal
     return try self.scanDec(gpa);
 }
 
-fn scanHex(self: *Self, gpa: mem.Allocator) !@import("token.zig").TokenDesc {
+fn scanHex(self: *Self, gpa: mem.Allocator) !token.Token {
     const start = self.pos;
     self.advanceBy(2); // consume '0' and 'x'
 
@@ -179,16 +176,12 @@ fn scanHex(self: *Self, gpa: mem.Allocator) !@import("token.zig").TokenDesc {
     }
 
     if (self.pos == digit_start)
-        try self.errors.push(gpa, .empty_hex_literal, start, self.pos);
+        try self.errors.append(gpa, .{ .kind = .empty_hex_literal, .start = start, .end = self.pos });
 
-    return .{
-        .kind = .number,
-        .start = start,
-        .end = self.pos,
-    };
+    return .{ .kind = .number, .start = start, .end = self.pos };
 }
 
-fn scanBin(self: *Self, gpa: mem.Allocator) !@import("token.zig").TokenDesc {
+fn scanBin(self: *Self, gpa: mem.Allocator) !token.Token {
     const start = self.pos;
     self.advanceBy(2); // consume '0' and 'b'
 
@@ -200,16 +193,12 @@ fn scanBin(self: *Self, gpa: mem.Allocator) !@import("token.zig").TokenDesc {
     }
 
     if (self.pos == digit_start)
-        try self.errors.push(gpa, .empty_bin_literal, start, self.pos);
+        try self.errors.append(gpa, .{ .kind = .empty_bin_literal, .start = start, .end = self.pos });
 
-    return .{
-        .kind = .number,
-        .start = start,
-        .end = self.pos,
-    };
+    return .{ .kind = .number, .start = start, .end = self.pos };
 }
 
-fn scanDec(self: *Self, gpa: mem.Allocator) !@import("token.zig").TokenDesc {
+fn scanDec(self: *Self, gpa: mem.Allocator) !token.Token {
     const start = self.pos;
 
     var has_decimal = false;
@@ -219,27 +208,21 @@ fn scanDec(self: *Self, gpa: mem.Allocator) !@import("token.zig").TokenDesc {
         if (ascii.isDigit(c)) {
             self.advance();
         } else if (c == '.' and !has_decimal) {
-            // check if next char is also a digit
             const next = self.peekBy(1);
             if (next != null and ascii.isDigit(next.?)) {
                 has_decimal = true;
                 self.advance();
             } else break;
         } else if (c == '.' and has_decimal) {
-            // multiple decimal points
             if (!has_error) {
-                try self.errors.push(gpa, .multiple_decimal_points, self.pos, self.pos + 1);
+                try self.errors.append(gpa, .{ .kind = .multiple_decimal_points, .start = self.pos, .end = self.pos + 1 });
                 has_error = true;
             }
             self.advance();
         } else break;
     }
 
-    return .{
-        .kind = .number,
-        .start = start,
-        .end = self.pos,
-    };
+    return .{ .kind = .number, .start = start, .end = self.pos };
 }
 
 fn peek(self: *const Self) ?u8 {
@@ -249,7 +232,7 @@ fn peek(self: *const Self) ?u8 {
     return null;
 }
 
-fn peekBy(self: *Self, n: Index) ?u8 {
+fn peekBy(self: *const Self, n: token.Index) ?u8 {
     if (self.pos + n < self.src.contents.len)
         return self.src.contents[self.pos + n];
 
@@ -260,6 +243,6 @@ fn advance(self: *Self) void {
     self.pos += 1;
 }
 
-fn advanceBy(self: *Self, n: Index) void {
+fn advanceBy(self: *Self, n: token.Index) void {
     self.pos += n;
 }
