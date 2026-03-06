@@ -36,11 +36,11 @@ pub fn main() !void {
     var lexer = honey.Lexer.init(&src);
     defer lexer.deinit(gpa);
 
-    const result = try lexer.scan(gpa);
+    try lexer.scan(gpa);
 
     std.debug.print("Tokens generated:\n", .{});
-    try pretty.print(gpa, result.tokens, .{ .array_show_item_idx = false });
+    try pretty.print(gpa, lexer.tokens, .{ .array_show_item_idx = false });
 
     std.debug.print("\nErrors generated:\n", .{});
-    try pretty.print(gpa, result.errors, .{ .array_show_item_idx = false });
+    try pretty.print(gpa, lexer.errors, .{ .array_show_item_idx = false });
 }

@@ -12,11 +12,6 @@ errors: err.List,
 
 const Self = @This();
 
-pub const ScanResult = struct {
-    tokens: token.List,
-    errors: err.List,
-};
-
 pub fn init(src: *const @import("../source/Source.zig")) Self {
     return .{
         .pos = 0,
@@ -31,7 +26,7 @@ pub fn deinit(self: *Self, gpa: mem.Allocator) void {
     self.errors.deinit(gpa);
 }
 
-pub fn scan(self: *Self, gpa: mem.Allocator) !ScanResult {
+pub fn scan(self: *Self, gpa: mem.Allocator) !void {
     while (self.peek()) |c| {
         // skip whitespace (except for newlines)
         if (ascii.isWhitespace(c) and c != '\n') {
@@ -120,11 +115,6 @@ pub fn scan(self: *Self, gpa: mem.Allocator) !ScanResult {
     }
 
     try self.pushToken(gpa, .eof, self.pos);
-
-    return .{
-        .tokens = self.tokens,
-        .errors = self.errors,
-    };
 }
 
 fn pushToken(self: *Self, gpa: mem.Allocator, kind: token.Kind, start: token.Index) !void {
