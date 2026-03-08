@@ -129,7 +129,7 @@ fn pushError(self: *Self, gpa: mem.Allocator, tag: Error.Tag, start: Token.Index
     try self.errors.append(gpa, .{ .tag = tag, .start = start, .end = self.pos });
 }
 
-fn scanIdent(self: *Self) Token.Token {
+fn scanIdent(self: *Self) Token {
     const start = self.pos;
 
     while (self.peek()) |c| {
@@ -144,7 +144,7 @@ fn scanIdent(self: *Self) Token.Token {
     return .{ .tag = tag, .start = start, .end = self.pos };
 }
 
-fn scanNum(self: *Self, gpa: mem.Allocator) !Token.Token {
+fn scanNum(self: *Self, gpa: mem.Allocator) !Token {
     const c = self.peek();
     if (c != null and c.? == '0') {
         const next = self.peekBy(1);
@@ -158,7 +158,7 @@ fn scanNum(self: *Self, gpa: mem.Allocator) !Token.Token {
     return try self.scanDec(gpa);
 }
 
-fn scanHex(self: *Self, gpa: mem.Allocator) !Token.Token {
+fn scanHex(self: *Self, gpa: mem.Allocator) !Token {
     const start = self.pos;
     self.advanceBy(2); // consume '0' and 'x'
 
@@ -175,7 +175,7 @@ fn scanHex(self: *Self, gpa: mem.Allocator) !Token.Token {
     return .{ .tag = .number, .start = start, .end = self.pos };
 }
 
-fn scanBin(self: *Self, gpa: mem.Allocator) !Token.Token {
+fn scanBin(self: *Self, gpa: mem.Allocator) !Token {
     const start = self.pos;
     self.advanceBy(2); // consume '0' and 'b'
 
@@ -192,7 +192,7 @@ fn scanBin(self: *Self, gpa: mem.Allocator) !Token.Token {
     return .{ .tag = .number, .start = start, .end = self.pos };
 }
 
-fn scanDec(self: *Self, gpa: mem.Allocator) !Token.Token {
+fn scanDec(self: *Self, gpa: mem.Allocator) !Token {
     const start = self.pos;
 
     var has_decimal = false;
