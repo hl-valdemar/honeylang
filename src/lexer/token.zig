@@ -1,14 +1,18 @@
 const std = @import("std");
 
-pub const Index = @import("../root.zig").BaseIndex;
+tag: Tag,
+start: Index,
+end: Index,
 
-pub const keywords = std.StaticStringMap(Kind).initComptime(.{
+pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "mut", .mut },
     .{ "func", .func },
     .{ "return", .@"return" },
 });
 
-pub const Kind = enum {
+pub const Index = @import("../root.zig").BaseIndex;
+
+pub const Tag = enum {
     // complex tokens
     identifier,
     number,
@@ -36,11 +40,3 @@ pub const Kind = enum {
     newline,
     eof,
 };
-
-pub const Token = struct {
-    kind: Kind,
-    start: Index,
-    end: Index,
-};
-
-pub const List = std.MultiArrayList(Token);

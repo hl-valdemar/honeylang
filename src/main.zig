@@ -37,10 +37,4 @@ pub fn main() !void {
     defer lexer.deinit(gpa);
 
     try lexer.scan(gpa);
-
-    std.debug.print("Tokens generated:\n", .{});
-    try pretty.print(gpa, lexer.tokens, .{ .array_show_item_idx = false });
-
-    std.debug.print("\nErrors generated:\n", .{});
-    try pretty.print(gpa, lexer.errors, .{ .array_show_item_idx = false });
 }

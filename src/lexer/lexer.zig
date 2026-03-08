@@ -2,20 +2,24 @@ const std = @import("std");
 const mem = std.mem;
 const ascii = std.ascii;
 
-const token = @import("token.zig");
-const err = @import("error.zig");
-
-pos: token.Index,
-src: *const @import("../source/Source.zig"),
-tokens: token.List,
-errors: err.List,
+src: *const Source,
+pos: Token.Index,
+tokens: TokenList,
+errors: ErrorList,
 
 const Self = @This();
 
-pub fn init(src: *const @import("../source/Source.zig")) Self {
+const Source = @import("../source/Source.zig");
+const Token = @import("Token.zig");
+const Error = @import("Error.zig");
+
+const TokenList = std.MultiArrayList(Token);
+const ErrorList = std.MultiArrayList(Error);
+
+pub fn init(src: *const Source) Self {
     return .{
-        .pos = 0,
         .src = src,
+        .pos = 0,
         .tokens = .{},
         .errors = .{},
     };
@@ -117,15 +121,15 @@ pub fn scan(self: *Self, gpa: mem.Allocator) !void {
     try self.pushToken(gpa, .eof, self.pos);
 }
 
-fn pushToken(self: *Self, gpa: mem.Allocator, kind: token.Kind, start: token.Index) !void {
-    try self.tokens.append(gpa, .{ .kind = kind, .start = start, .end = self.pos });
+fn pushToken(self: *Self, gpa: mem.Allocator, tag: Token.Tag, start: Token.Index) !void {
+    try self.tokens.append(gpa, .{ .tag = tag, .start = start, .end = self.pos });
 }
 
-fn pushError(self: *Self, gpa: mem.Allocator, kind: err.Kind, start: token.Index) !void {
-    try self.errors.append(gpa, .{ .kind = kind, .start = start, .end = self.pos });
+fn pushError(self: *Self, gpa: mem.Allocator, tag: Error.Tag, start: Token.Index) !void {
+    try self.errors.append(gpa, .{ .tag = tag, .start = start, .end = self.pos });
 }
 
-fn scanIdent(self: *Self) token.Token {
+fn scanIdent(self: *Self) Token.Token {
     const start = self.pos;
 
     while (self.peek()) |c| {
@@ -136,11 +140,11 @@ fn scanIdent(self: *Self) token.Token {
     }
 
     const ident = self.src.contents[start..self.pos];
-    const kind: token.Kind = token.keywords.get(ident) orelse .identifier;
-    return .{ .kind = kind, .start = start, .end = self.pos };
+    const tag: Token.Tag = Token.keywords.get(ident) orelse .identifier;
+    return .{ .tag = tag, .start = start, .end = self.pos };
 }
 
-fn scanNum(self: *Self, gpa: mem.Allocator) !token.Token {
+fn scanNum(self: *Self, gpa: mem.Allocator) !Token.Token {
     const c = self.peek();
     if (c != null and c.? == '0') {
         const next = self.peekBy(1);
@@ -154,7 +158,7 @@ fn scanNum(self: *Self, gpa: mem.Allocator) !token.Token {
     return try self.scanDec(gpa);
 }
 
-fn scanHex(self: *Self, gpa: mem.Allocator) !token.Token {
+fn scanHex(self: *Self, gpa: mem.Allocator) !Token.Token {
     const start = self.pos;
     self.advanceBy(2); // consume '0' and 'x'
 
@@ -166,12 +170,12 @@ fn scanHex(self: *Self, gpa: mem.Allocator) !token.Token {
     }
 
     if (self.pos == digit_start)
-        try self.errors.append(gpa, .{ .kind = .empty_hex_literal, .start = start, .end = self.pos });
+        try self.errors.append(gpa, .{ .tag = .empty_hex_literal, .start = start, .end = self.pos });
 
-    return .{ .kind = .number, .start = start, .end = self.pos };
+    return .{ .tag = .number, .start = start, .end = self.pos };
 }
 
-fn scanBin(self: *Self, gpa: mem.Allocator) !token.Token {
+fn scanBin(self: *Self, gpa: mem.Allocator) !Token.Token {
     const start = self.pos;
     self.advanceBy(2); // consume '0' and 'b'
 
@@ -183,12 +187,12 @@ fn scanBin(self: *Self, gpa: mem.Allocator) !token.Token {
     }
 
     if (self.pos == digit_start)
-        try self.errors.append(gpa, .{ .kind = .empty_bin_literal, .start = start, .end = self.pos });
+        try self.errors.append(gpa, .{ .tag = .empty_bin_literal, .start = start, .end = self.pos });
 
-    return .{ .kind = .number, .start = start, .end = self.pos };
+    return .{ .tag = .number, .start = start, .end = self.pos };
 }
 
-fn scanDec(self: *Self, gpa: mem.Allocator) !token.Token {
+fn scanDec(self: *Self, gpa: mem.Allocator) !Token.Token {
     const start = self.pos;
 
     var has_decimal = false;
@@ -205,14 +209,14 @@ fn scanDec(self: *Self, gpa: mem.Allocator) !token.Token {
             } else break;
         } else if (c == '.' and has_decimal) {
             if (!has_error) {
-                try self.errors.append(gpa, .{ .kind = .multiple_decimal_points, .start = self.pos, .end = self.pos + 1 });
+                try self.errors.append(gpa, .{ .tag = .multiple_decimal_points, .start = self.pos, .end = self.pos + 1 });
                 has_error = true;
             }
             self.advance();
         } else break;
     }
 
-    return .{ .kind = .number, .start = start, .end = self.pos };
+    return .{ .tag = .number, .start = start, .end = self.pos };
 }
 
 fn peek(self: *const Self) ?u8 {
@@ -222,7 +226,7 @@ fn peek(self: *const Self) ?u8 {
     return null;
 }
 
-fn peekBy(self: *const Self, n: token.Index) ?u8 {
+fn peekBy(self: *const Self, n: Token.Index) ?u8 {
     if (self.pos + n < self.src.contents.len)
         return self.src.contents[self.pos + n];
 
@@ -233,6 +237,6 @@ fn advance(self: *Self) void {
     self.pos += 1;
 }
 
-fn advanceBy(self: *Self, n: token.Index) void {
+fn advanceBy(self: *Self, n: Token.Index) void {
     self.pos += n;
 }

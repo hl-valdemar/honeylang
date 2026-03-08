@@ -1,8 +1,10 @@
 const std = @import("std");
 
-const Index = @import("token.zig").Index;
+tag: Tag,
+start: Token.Index,
+end: Token.Index,
 
-pub const info = std.EnumArray(Kind, @import("../root.zig").ErrorInfo).init(.{
+pub const info = std.EnumArray(Tag, @import("../root.zig").ErrorInfo).init(.{
     .unrecognized_character = .{
         .code = "L001",
         .message = "unrecognized character",
@@ -29,17 +31,11 @@ pub const info = std.EnumArray(Kind, @import("../root.zig").ErrorInfo).init(.{
     },
 });
 
-pub const Kind = enum {
+const Token = @import("Token.zig");
+
+pub const Tag = enum {
     unrecognized_character,
     multiple_decimal_points,
     empty_hex_literal,
     empty_bin_literal,
 };
-
-pub const ScanError = struct {
-    kind: Kind,
-    start: Index,
-    end: Index,
-};
-
-pub const List = std.MultiArrayList(ScanError);
