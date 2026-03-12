@@ -19,3 +19,4 @@ pub const ErrorInfo = struct {
 // specific types
 pub const Source = @import("source/Source.zig");
 pub const Lexer = @import("lexer/Lexer.zig");
+pub const Parser = @import("parser/Parser.zig");
