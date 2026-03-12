@@ -18,7 +18,7 @@ pub fn deinit(self: *const Self, gpa: mem.Allocator) void {
     _ = gpa;
 }
 
-pub fn parse(self: *Self, gpa: mem.Allocator) void {
+pub fn parse(self: *Self, gpa: mem.Allocator) !void {
     _ = self;
     _ = gpa;
 }
