@@ -37,4 +37,9 @@ pub fn main() !void {
     defer lexer.deinit(gpa);
 
     try lexer.scan(gpa);
+
+    var parser = honey.Parser.init(&lexer, &src);
+    defer parser.deinit(gpa);
+
+    try parser.parse(gpa);
 }
