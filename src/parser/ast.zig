@@ -4,7 +4,7 @@ const Token = @import("../lexer/Token.zig");
 const BaseIndex = @import("../root.zig").BaseIndex;
 
 nodes: NodeList.Slice,
-extra_data: []const ExtraDataType,
+extra_data: []const Slot,
 errors: []const Error,
 token_starts: []const Token.Index,
 token_tags: []const Token.Tag,
@@ -32,7 +32,7 @@ pub fn extraData(self: *const Self, comptime T: type, idx: ExtraIndex) T {
     inline for (fields, 0..) |field, i| {
         const val = self.extra_data[idx + i];
         @field(result, field.name) = switch (field.type) {
-            ExtraDataType => val,
+            Slot => val,
             NodeIndex => @enumFromInt(val),
             ExtraIndex => val,
             else => @compileError("unsupported extra_data field type"),
@@ -41,30 +41,29 @@ pub fn extraData(self: *const Self, comptime T: type, idx: ExtraIndex) T {
     return result;
 }
 
-pub fn extraSlice(self: *const Self, start: ExtraIndex, end: ExtraIndex) []const ExtraDataType {
+pub fn extraSlice(self: *const Self, start: ExtraIndex, end: ExtraIndex) []const Slot {
     return self.extra_data[start..end];
 }
 
+const Slot = BaseIndex;
+
 /// index into node list.
-pub const NodeIndex = enum(BaseIndex) {
-    none = std.math.maxInt(BaseIndex), // no-node sentinel
+pub const NodeIndex = enum(Slot) {
+    none = std.math.maxInt(Slot), // no-node sentinel
     _,
 
-    pub fn unwrap(self: NodeIndex) ?BaseIndex {
+    pub fn unwrap(self: NodeIndex) ?Slot {
         if (self == .none) return null;
         return @intFromEnum(self);
     }
 
-    pub fn asExtra(self: NodeIndex) ExtraIndex {
+    pub fn asExtra(self: NodeIndex) Slot {
         return @intFromEnum(self);
     }
 };
 
 /// index into flat extra-data array.
-pub const ExtraIndex = BaseIndex;
-
-/// encoding type for extra data.
-pub const ExtraDataType = u32;
+pub const ExtraIndex = Slot;
 
 pub const Node = struct {
     tag: Tag,
@@ -72,8 +71,8 @@ pub const Node = struct {
     data: Data,
 
     pub const Data = struct {
-        lhs: ExtraIndex = 0,
-        rhs: ExtraIndex = 0,
+        lhs: Slot = 0,
+        rhs: Slot = 0,
     };
 
     pub const Tag = enum {

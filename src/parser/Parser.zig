@@ -4,13 +4,13 @@ const mem = std.mem;
 const Source = @import("../source/Source.zig");
 const Lexer = @import("../lexer/Lexer.zig");
 
-lexer: *const Lexer,
+tokens: Lexer.TokensResult,
 src: *const Source,
 
 const Self = @This();
 
-pub fn init(lexer: *const Lexer, src: *const Source) Self {
-    return Self{ .src = src, .lexer = lexer };
+pub fn init(tokens: Lexer.TokensResult, src: *const Source) Self {
+    return Self{ .tokens = tokens, .src = src };
 }
 
 pub fn deinit(self: *const Self, gpa: mem.Allocator) void {

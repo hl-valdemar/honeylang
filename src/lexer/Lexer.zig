@@ -16,6 +16,12 @@ const Error = @import("Error.zig");
 const TokenList = std.MultiArrayList(Token);
 const ErrorList = std.MultiArrayList(Error);
 
+pub const TokensResult = struct {
+    tags: []const Token.Tag,
+    starts: []const Token.Index,
+    ends: []const Token.Index,
+};
+
 pub fn init(src: *const Source) Self {
     return .{
         .src = src,
@@ -30,7 +36,7 @@ pub fn deinit(self: *Self, gpa: mem.Allocator) void {
     self.errors.deinit(gpa);
 }
 
-pub fn scan(self: *Self, gpa: mem.Allocator) !void {
+pub fn scan(self: *Self, gpa: mem.Allocator) !TokensResult {
     while (self.peek()) |c| {
         // skip whitespace (except for newlines)
         if (ascii.isWhitespace(c) and c != '\n') {
@@ -119,6 +125,14 @@ pub fn scan(self: *Self, gpa: mem.Allocator) !void {
     }
 
     try self.pushToken(gpa, .eof, self.pos);
+
+    // slice and dice
+    const result = self.tokens.slice();
+    return TokensResult{
+        .tags = result.items(.tag)[0..],
+        .starts = result.items(.start)[0..],
+        .ends = result.items(.end)[0..],
+    };
 }
 
 fn pushToken(self: *Self, gpa: mem.Allocator, tag: Token.Tag, start: Token.Index) !void {
