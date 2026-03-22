@@ -16,12 +16,6 @@ const Error = @import("Error.zig");
 const TokenList = std.MultiArrayList(Token);
 const ErrorList = std.MultiArrayList(Error);
 
-pub const TokensResult = struct {
-    tags: []const Token.Tag,
-    starts: []const Token.Index,
-    ends: []const Token.Index,
-};
-
 pub fn init(src: *const Source) Self {
     return .{
         .src = src,
@@ -31,12 +25,18 @@ pub fn init(src: *const Source) Self {
     };
 }
 
-pub fn deinit(self: *Self, gpa: mem.Allocator) void {
-    self.tokens.deinit(gpa);
-    self.errors.deinit(gpa);
+pub fn deinit(self: *Self, alloc: mem.Allocator) void {
+    self.tokens.deinit(alloc);
+    self.errors.deinit(alloc);
 }
 
-pub fn scan(self: *Self, gpa: mem.Allocator) !TokensResult {
+pub const Tokens = struct {
+    tags: []const Token.Tag,
+    starts: []const Token.Index,
+    ends: []const Token.Index,
+};
+
+pub fn scan(self: *Self, alloc: mem.Allocator) !Tokens {
     while (self.peek()) |c| {
         // skip whitespace (except for newlines)
         if (ascii.isWhitespace(c) and c != '\n') {
@@ -59,43 +59,43 @@ pub fn scan(self: *Self, gpa: mem.Allocator) !TokensResult {
         const start = self.pos;
         if (ascii.isAlphabetic(c) or c == '_') { // scan identifiers
             const tok = self.scanIdent();
-            try self.tokens.append(gpa, tok);
+            try self.tokens.append(alloc, tok);
         } else if (ascii.isDigit(c)) { // scan numbers
-            const tok = try self.scanNum(gpa);
-            try self.tokens.append(gpa, tok);
+            const tok = try self.scanNum(alloc);
+            try self.tokens.append(alloc, tok);
         } else switch (c) {
             // single-char tokens
             ',' => {
                 self.advance();
-                try self.pushToken(gpa, .comma, start);
+                try self.pushToken(alloc, .comma, start);
             },
             '(' => {
                 self.advance();
-                try self.pushToken(gpa, .left_paren, start);
+                try self.pushToken(alloc, .left_paren, start);
             },
             ')' => {
                 self.advance();
-                try self.pushToken(gpa, .right_paren, start);
+                try self.pushToken(alloc, .right_paren, start);
             },
             '[' => {
                 self.advance();
-                try self.pushToken(gpa, .left_bracket, start);
+                try self.pushToken(alloc, .left_bracket, start);
             },
             ']' => {
                 self.advance();
-                try self.pushToken(gpa, .right_bracket, start);
+                try self.pushToken(alloc, .right_bracket, start);
             },
             '{' => {
                 self.advance();
-                try self.pushToken(gpa, .left_curly, start);
+                try self.pushToken(alloc, .left_curly, start);
             },
             '}' => {
                 self.advance();
-                try self.pushToken(gpa, .right_curly, start);
+                try self.pushToken(alloc, .right_curly, start);
             },
             '=' => {
                 self.advance();
-                try self.pushToken(gpa, .equal, start);
+                try self.pushToken(alloc, .equal, start);
             },
 
             // double-char tokens
@@ -104,43 +104,43 @@ pub fn scan(self: *Self, gpa: mem.Allocator) !TokensResult {
                 const next = self.peek();
                 if (next != null and next.? == ':') {
                     self.advance();
-                    try self.pushToken(gpa, .double_colon, start);
+                    try self.pushToken(alloc, .double_colon, start);
                 } else {
-                    try self.pushToken(gpa, .colon, start);
+                    try self.pushToken(alloc, .colon, start);
                 }
             },
 
             // special tokens
             '\n' => {
                 self.advance();
-                try self.pushToken(gpa, .newline, start);
+                try self.pushToken(alloc, .newline, start);
             },
 
             else => {
                 // unknown character encountered
                 self.advance();
-                try self.pushError(gpa, .unrecognized_character, start);
+                try self.pushError(alloc, .unrecognized_character, start);
             },
         }
     }
 
-    try self.pushToken(gpa, .eof, self.pos);
+    try self.pushToken(alloc, .eof, self.pos);
 
     // slice and dice
     const result = self.tokens.slice();
-    return TokensResult{
-        .tags = result.items(.tag)[0..],
-        .starts = result.items(.start)[0..],
-        .ends = result.items(.end)[0..],
+    return .{
+        .tags = result.items(.tag),
+        .starts = result.items(.start),
+        .ends = result.items(.end),
     };
 }
 
-fn pushToken(self: *Self, gpa: mem.Allocator, tag: Token.Tag, start: Token.Index) !void {
-    try self.tokens.append(gpa, .{ .tag = tag, .start = start, .end = self.pos });
+fn pushToken(self: *Self, alloc: mem.Allocator, tag: Token.Tag, start: Token.Index) !void {
+    try self.tokens.append(alloc, .{ .tag = tag, .start = start, .end = self.pos });
 }
 
-fn pushError(self: *Self, gpa: mem.Allocator, tag: Error.Tag, start: Token.Index) !void {
-    try self.errors.append(gpa, .{ .tag = tag, .start = start, .end = self.pos });
+fn pushError(self: *Self, alloc: mem.Allocator, tag: Error.Tag, start: Token.Index) !void {
+    try self.errors.append(alloc, .{ .tag = tag, .start = start, .end = self.pos });
 }
 
 fn scanIdent(self: *Self) Token {
@@ -158,21 +158,21 @@ fn scanIdent(self: *Self) Token {
     return .{ .tag = tag, .start = start, .end = self.pos };
 }
 
-fn scanNum(self: *Self, gpa: mem.Allocator) !Token {
+fn scanNum(self: *Self, alloc: mem.Allocator) !Token {
     const c = self.peek();
     if (c != null and c.? == '0') {
         const next = self.peekBy(1);
         if (next != null and next.? == 'x') {
-            return try self.scanHex(gpa);
+            return try self.scanHex(alloc);
         } else if (next != null and next.? == 'b') {
-            return try self.scanBin(gpa);
+            return try self.scanBin(alloc);
         }
     }
 
-    return try self.scanDec(gpa);
+    return try self.scanDec(alloc);
 }
 
-fn scanHex(self: *Self, gpa: mem.Allocator) !Token {
+fn scanHex(self: *Self, alloc: mem.Allocator) !Token {
     const start = self.pos;
     self.advanceBy(2); // consume '0' and 'x'
 
@@ -184,12 +184,12 @@ fn scanHex(self: *Self, gpa: mem.Allocator) !Token {
     }
 
     if (self.pos == digit_start)
-        try self.errors.append(gpa, .{ .tag = .empty_hex_literal, .start = start, .end = self.pos });
+        try self.errors.append(alloc, .{ .tag = .empty_hex_literal, .start = start, .end = self.pos });
 
     return .{ .tag = .number, .start = start, .end = self.pos };
 }
 
-fn scanBin(self: *Self, gpa: mem.Allocator) !Token {
+fn scanBin(self: *Self, alloc: mem.Allocator) !Token {
     const start = self.pos;
     self.advanceBy(2); // consume '0' and 'b'
 
@@ -201,12 +201,12 @@ fn scanBin(self: *Self, gpa: mem.Allocator) !Token {
     }
 
     if (self.pos == digit_start)
-        try self.errors.append(gpa, .{ .tag = .empty_bin_literal, .start = start, .end = self.pos });
+        try self.errors.append(alloc, .{ .tag = .empty_bin_literal, .start = start, .end = self.pos });
 
     return .{ .tag = .number, .start = start, .end = self.pos };
 }
 
-fn scanDec(self: *Self, gpa: mem.Allocator) !Token {
+fn scanDec(self: *Self, alloc: mem.Allocator) !Token {
     const start = self.pos;
 
     var has_decimal = false;
@@ -223,7 +223,7 @@ fn scanDec(self: *Self, gpa: mem.Allocator) !Token {
             } else break;
         } else if (c == '.' and has_decimal) {
             if (!has_error) {
-                try self.errors.append(gpa, .{ .tag = .multiple_decimal_points, .start = self.pos, .end = self.pos + 1 });
+                try self.errors.append(alloc, .{ .tag = .multiple_decimal_points, .start = self.pos, .end = self.pos + 1 });
                 has_error = true;
             }
             self.advance();

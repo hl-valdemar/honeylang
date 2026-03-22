@@ -16,12 +16,12 @@ pub const LineCol = struct {
     col: Index,
 };
 
-pub fn load(gpa: mem.Allocator, path: []const u8) !Self {
+pub fn load(alloc: mem.Allocator, path: []const u8) !Self {
     const file = try fs.cwd().openFile(path, .{ .mode = .read_only });
     defer file.close();
 
     const file_size = try file.getEndPos();
-    const contents = try gpa.alloc(u8, file_size);
+    const contents = try alloc.alloc(u8, file_size);
 
     _ = try file.readAll(contents);
 
@@ -32,8 +32,8 @@ pub fn load(gpa: mem.Allocator, path: []const u8) !Self {
     };
 }
 
-pub fn deload(self: *Self, gpa: mem.Allocator) void {
-    gpa.free(self.contents);
+pub fn deload(self: *Self, alloc: mem.Allocator) void {
+    alloc.free(self.contents);
 }
 
 pub fn lineCol(self: *const Self, offset: u32) LineCol {

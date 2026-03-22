@@ -3,15 +3,17 @@ const std = @import("std");
 const Token = @import("../lexer/Token.zig");
 const BaseIndex = @import("../root.zig").BaseIndex;
 
-nodes: NodeList.Slice,
+nodes: Nodes.Slice,
+errors: Errors.Slice,
 extra_data: []const Slot,
-errors: []const Error,
-token_starts: []const Token.Index,
 token_tags: []const Token.Tag,
+token_starts: []const Token.Index,
 
 const Self = @This();
 
-pub const NodeList = std.MultiArrayList(Node);
+pub const Nodes = std.MultiArrayList(Node);
+pub const Slots = std.ArrayListUnmanaged(Slot);
+pub const Errors = std.MultiArrayList(Error);
 
 pub fn nodeData(self: *const Self, idx: NodeIndex) Node.Data {
     return self.nodes.items(.data)[@intFromEnum(idx)];
@@ -45,7 +47,7 @@ pub fn extraSlice(self: *const Self, start: ExtraIndex, end: ExtraIndex) []const
     return self.extra_data[start..end];
 }
 
-const Slot = BaseIndex;
+pub const Slot = BaseIndex;
 
 /// index into node list.
 pub const NodeIndex = enum(Slot) {
@@ -70,42 +72,77 @@ pub const Node = struct {
     main_token: Token.Index, // anchor in source
     data: Data,
 
+    /// struct of registers for arbitrary data.
     pub const Data = struct {
-        lhs: Slot = 0,
-        rhs: Slot = 0,
+        a: Slot = 0,
+        b: Slot = 0,
     };
 
     pub const Tag = enum {
-        /// root node. extra_data[lhs..rhs] contains top-level node indices.
+        /// main_token: unused
+        /// extra_data[a..b] contains top-level node indices
         root,
 
         /// name :: value
         /// main_token: identifier
-        /// lhs: value expression (NodeIndex)
-        /// rhs: unused
+        /// a: value expression (NodeIndex)
+        /// b: unused
         const_decl,
 
         /// name = value
         /// main_token: identifier
-        /// lhs: value expression (NodeIndex)
-        /// rhs: unused
+        /// a: value expression (NodeIndex)
+        /// b: unused
         var_decl,
 
         /// name :: func(params) return_type { body }
         /// main_token: func keyword
-        /// lhs: ExtraIndex → FuncDecl
-        /// rhs: unused
+        /// a: ExtraIndex → FuncDecl
+        /// b: unused
         func_decl,
 
         /// name type (e.g. a int)
         /// main_token: identifier (param name)
-        /// lhs: type expression (NodeIndex)
-        /// rhs: unused
+        /// a: type expression (NodeIndex)
+        /// b: unused
         param,
+
+        /// `-a`, `!a`
+        /// main_token: operator token
+        /// a: operand (NodeIndex)
+        /// b: unused
+        unary_op,
+
+        /// `a + b`, `a * b`, etc.
+        /// main_token: operator token
+        /// a: left operand (NodeIndex)
+        /// b: right operand (NodeIndex)
+        binary_op,
+
+        /// a bare identifier.
+        /// main_token: the identifier token
+        /// a, b: unused
+        identifier,
+
+        /// a numeric literal.
+        /// main_token: the number token
+        /// a, b: unused
+        number_literal,
+
+        /// a string literal.
+        /// main_token: the string token
+        /// a, b: unused
+        string_literal,
+
+        /// a grouped expression: `(expr)`
+        /// main_token: `(` token
+        /// a: inner expression (NodeIndex)
+        /// b: unused
+        grouped_expr,
 
         /// node representing a parse error. downstream passes insert traps.
         /// main_token: token where error was detected
-        /// lhs, rhs: unused
+        /// a, b: unused
         @"error",
     };
 };
