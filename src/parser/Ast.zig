@@ -140,6 +140,17 @@ pub const Node = struct {
         /// b: unused
         grouped_expr,
 
+        /// a block of statements: `{ ... }`
+        /// main_token: `{` token
+        /// extra_data[a..b] contains statement node indices
+        block,
+
+        /// return expr
+        /// main_token: `return` token
+        /// a: value expression (NodeIndex), .none for bare return
+        /// b: unused
+        return_val,
+
         /// node representing a parse error. downstream passes insert traps.
         /// main_token: token where error was detected
         /// a, b: unused
@@ -156,7 +167,7 @@ pub const FuncDecl = struct {
     flags: u32, // packed: bits[0] = is_variadic, bits[1..3] for calling convention
 
     pub const Flag = struct {
-        pub const is_variadic: u32 = 1 << 0;
+        pub const is_variadic: u32 = 1;
         pub const cc_shift: u5 = 1;
         pub const cc_mask: u32 = 0b110;
     };
@@ -170,12 +181,11 @@ pub const FuncDecl = struct {
 pub const Error = struct {
     tag: Tag,
     token: Token.Index,
+    expected: Token.Tag = .eof,
 
     pub const Tag = enum {
         expected_expression,
-        expected_identifier,
-        expected_token,
-        expected_newline,
         expected_declaration,
+        expected_token,
     };
 };

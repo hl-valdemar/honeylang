@@ -36,6 +36,10 @@ pub const Tag = enum {
     // double-char tokens
     double_colon,
 
+    // call-conv tokens
+    cc_honey,
+    cc_c,
+
     // special tokens
     newline,
     eof,
