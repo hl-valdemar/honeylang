@@ -20,3 +20,7 @@ pub const ErrorInfo = struct {
 pub const Source = @import("source/Source.zig");
 pub const Lexer = @import("lexer/Lexer.zig");
 pub const Parser = @import("parser/Parser.zig");
+
+test {
+    @import("std").testing.refAllDeclsRecursive(@This());
+}

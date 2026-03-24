@@ -42,5 +42,6 @@ pub const Tag = enum {
 
     // special tokens
     newline,
+    invalid,
     eof,
 };

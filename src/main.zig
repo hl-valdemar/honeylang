@@ -8,13 +8,7 @@ const honey = @import("honeylang");
 
 pub fn main() !void {
     var gpa = heap.DebugAllocator(.{}).init;
-    defer {
-        const check = gpa.deinit();
-        switch (check) {
-            .leak => std.debug.print("\nMemory leaks spotted!\n", .{}),
-            .ok => std.debug.print("\nNo memory leaks spotted!\n", .{}),
-        }
-    }
+    defer _ = gpa.deinit();
 
     const alloc = gpa.allocator();
 
@@ -28,9 +22,10 @@ pub fn main() !void {
         std.process.exit(1);
     }
 
-    var src = try honey.Source.load(alloc, parsed.source_files.items[0]);
-    defer src.deload(alloc);
+    var src = try honey.Source.init.fromFile(alloc, parsed.source_files.items[0]);
+    defer src.deinit(alloc);
 
+    std.debug.print("\n[::Source Code::]\n\n", .{});
     std.debug.print("{s}\n", .{src.contents});
 
     var lexer = honey.Lexer.init(&src);
@@ -43,21 +38,9 @@ pub fn main() !void {
 
     const ast = try parser.parse(alloc);
 
-    try pretty.print(alloc, ast, .{
-        .array_show_item_idx = false,
-        .inline_mode = true,
-    });
+    const rendered = try ast.render(alloc, src.contents);
+    defer alloc.free(rendered);
 
-    const root_tag = ast.nodeTag(@enumFromInt(0));
-    std.debug.print("\nroot_tag: {any}\n", .{root_tag});
-
-    const top_level_decls_info = ast.nodeData(@enumFromInt(0));
-    const top_level_decls_slice = ast.extra_data[top_level_decls_info.a..top_level_decls_info.b];
-
-    std.debug.print("\nnum top-level decls: {d}\n\n", .{top_level_decls_slice.len});
-
-    for (top_level_decls_slice, 0..) |node_idx, i| {
-        const tag = ast.nodeTag(@enumFromInt(node_idx));
-        std.debug.print("top-level decl {d}: {any}\n", .{ i, tag });
-    }
+    std.debug.print("\n[::Rendered AST::]\n\n", .{});
+    std.debug.print("{s}", .{rendered});
 }

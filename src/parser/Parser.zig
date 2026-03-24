@@ -330,3 +330,57 @@ fn addError(self: *Self, alloc: mem.Allocator, tag: Ast.Error.Tag) !Ast.NodeInde
         .data = .{},
     });
 }
+
+test "parse const decl" {
+    const alloc = std.testing.allocator;
+
+    const src_str =
+        \\pi :: 3.14
+        \\
+    ;
+
+    var src = try Source.init.fromStr(alloc, src_str);
+    defer src.deinit(alloc);
+
+    var lexer = Lexer.init(&src);
+    defer lexer.deinit(alloc);
+
+    const tokens = try lexer.scan(alloc);
+
+    var parser = Self.init(tokens, &src);
+    defer parser.deinit(alloc);
+
+    const ast = try parser.parse(alloc);
+    const rendered_str = try ast.render(alloc, src.contents);
+    defer alloc.free(rendered_str);
+
+    try std.testing.expectEqualStrings(src_str, rendered_str);
+}
+
+test "parse func decl" {
+    const alloc = std.testing.allocator;
+
+    const src_str =
+        \\main :: func() int {
+        \\    return 0xff
+        \\}
+        \\
+    ;
+
+    var src = try Source.init.fromStr(alloc, src_str);
+    defer src.deinit(alloc);
+
+    var lexer = Lexer.init(&src);
+    defer lexer.deinit(alloc);
+
+    const tokens = try lexer.scan(alloc);
+
+    var parser = Self.init(tokens, &src);
+    defer parser.deinit(alloc);
+
+    const ast = try parser.parse(alloc);
+    const rendered_str = try ast.render(alloc, src.contents);
+    defer alloc.free(rendered_str);
+
+    try std.testing.expectEqualStrings(src_str, rendered_str);
+}

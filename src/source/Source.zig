@@ -3,7 +3,7 @@ const mem = std.mem;
 const fs = std.fs;
 
 id: ID,
-path: []const u8,
+path: ?[]const u8,
 contents: []const u8,
 
 const Self = @This();
@@ -12,33 +12,43 @@ pub const ID = u16;
 pub const Index = @import("../root.zig").BaseIndex;
 
 pub const LineCol = struct {
-    line: Index,
-    col: Index,
+    line: u32,
+    col: u32,
 };
 
-pub fn load(alloc: mem.Allocator, path: []const u8) !Self {
-    const file = try fs.cwd().openFile(path, .{ .mode = .read_only });
-    defer file.close();
+pub const init = struct {
+    pub fn fromStr(alloc: mem.Allocator, str: []const u8) !Self {
+        return .{
+            .id = ID_Generator.getNextID(),
+            .path = null,
+            .contents = try alloc.dupe(u8, str),
+        };
+    }
 
-    const file_size = try file.getEndPos();
-    const contents = try alloc.alloc(u8, file_size);
+    pub fn fromFile(alloc: mem.Allocator, path: []const u8) !Self {
+        const file = try fs.cwd().openFile(path, .{ .mode = .read_only });
+        defer file.close();
 
-    _ = try file.readAll(contents);
+        const file_size = try file.getEndPos();
+        const contents = try alloc.alloc(u8, file_size);
 
-    return Self{
-        .id = ID_Generator.getNextID(),
-        .path = path,
-        .contents = contents,
-    };
-}
+        _ = try file.readAll(contents);
 
-pub fn deload(self: *Self, alloc: mem.Allocator) void {
+        return Self{
+            .id = ID_Generator.getNextID(),
+            .path = path,
+            .contents = contents,
+        };
+    }
+};
+
+pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     alloc.free(self.contents);
 }
 
 pub fn lineCol(self: *const Self, offset: u32) LineCol {
-    var line = 1;
-    var col = 1;
+    var line: u32 = 1;
+    var col: u32 = 1;
     for (0..offset) |i| {
         if (i >= self.contents.len)
             break;

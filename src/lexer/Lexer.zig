@@ -36,97 +36,27 @@ pub const Tokens = struct {
     ends: []const Token.Index,
 };
 
+pub const ScannedToken = struct {
+    tag: Token.Tag,
+    start: Token.Index,
+    end: Token.Index,
+    err: ?Error.Tag = null,
+};
+
 pub fn scan(self: *Self, alloc: mem.Allocator) !Tokens {
-    while (self.peek()) |c| {
-        // skip whitespace (except for newlines)
-        if (ascii.isWhitespace(c) and c != '\n') {
-            self.advance();
-            continue;
+    while (true) {
+        const tok = nextToken(self.src.contents, &self.pos);
+
+        if (tok.err) |err_tag| {
+            try self.errors.append(alloc, .{ .tag = err_tag, .start = tok.start, .end = tok.end });
         }
 
-        // skip comments
-        if (c == '#') {
-            self.advance();
-            while (self.peek()) |next| {
-                if (next == '\n')
-                    break;
+        if (tok.tag == .invalid) continue;
 
-                self.advance();
-            }
-            continue;
-        }
-
-        const start = self.pos;
-        if (ascii.isAlphabetic(c) or c == '_') { // scan identifiers
-            const tok = self.scanIdent();
-            try self.tokens.append(alloc, tok);
-        } else if (ascii.isDigit(c)) { // scan numbers
-            const tok = try self.scanNum(alloc);
-            try self.tokens.append(alloc, tok);
-        } else switch (c) {
-            // single-char tokens
-            ',' => {
-                self.advance();
-                try self.pushToken(alloc, .comma, start);
-            },
-            '(' => {
-                self.advance();
-                try self.pushToken(alloc, .left_paren, start);
-            },
-            ')' => {
-                self.advance();
-                try self.pushToken(alloc, .right_paren, start);
-            },
-            '[' => {
-                self.advance();
-                try self.pushToken(alloc, .left_bracket, start);
-            },
-            ']' => {
-                self.advance();
-                try self.pushToken(alloc, .right_bracket, start);
-            },
-            '{' => {
-                self.advance();
-                try self.pushToken(alloc, .left_curly, start);
-            },
-            '}' => {
-                self.advance();
-                try self.pushToken(alloc, .right_curly, start);
-            },
-            '=' => {
-                self.advance();
-                try self.pushToken(alloc, .equal, start);
-            },
-
-            // double-char tokens
-            ':' => {
-                self.advance();
-                const next = self.peek();
-                if (next != null and next.? == ':') {
-                    self.advance();
-                    try self.pushToken(alloc, .double_colon, start);
-                } else {
-                    try self.pushToken(alloc, .colon, start);
-                }
-            },
-
-            // special tokens
-            '\n' => {
-                self.advance();
-                try self.pushToken(alloc, .newline, start);
-            },
-
-            else => {
-                // unknown character encountered
-                self.advance();
-                try self.pushError(alloc, .unrecognized_character, start);
-            },
-        }
+        try self.tokens.append(alloc, .{ .tag = tok.tag, .start = tok.start, .end = tok.end });
+        if (tok.tag == .eof) break;
     }
 
-    try self.pushToken(alloc, .eof, self.pos);
-
-    // slice and dice
     const result = self.tokens.slice();
     return .{
         .tags = result.items(.tag),
@@ -135,122 +65,139 @@ pub fn scan(self: *Self, alloc: mem.Allocator) !Tokens {
     };
 }
 
-fn pushToken(self: *Self, alloc: mem.Allocator, tag: Token.Tag, start: Token.Index) !void {
-    try self.tokens.append(alloc, .{ .tag = tag, .start = start, .end = self.pos });
-}
-
-fn pushError(self: *Self, alloc: mem.Allocator, tag: Error.Tag, start: Token.Index) !void {
-    try self.errors.append(alloc, .{ .tag = tag, .start = start, .end = self.pos });
-}
-
-fn scanIdent(self: *Self) Token {
-    const start = self.pos;
-
-    while (self.peek()) |c| {
-        if (!ascii.isAlphanumeric(c) and c != '_')
-            break;
-
-        self.advance();
-    }
-
-    const ident = self.src.contents[start..self.pos];
-    const tag: Token.Tag = Token.keywords.get(ident) orelse .identifier;
-    return .{ .tag = tag, .start = start, .end = self.pos };
-}
-
-fn scanNum(self: *Self, alloc: mem.Allocator) !Token {
-    const c = self.peek();
-    if (c != null and c.? == '0') {
-        const next = self.peekBy(1);
-        if (next != null and next.? == 'x') {
-            return try self.scanHex(alloc);
-        } else if (next != null and next.? == 'b') {
-            return try self.scanBin(alloc);
+pub fn nextToken(source: []const u8, pos: *Token.Index) ScannedToken {
+    // skip whitespace (except newlines) and comments
+    while (pos.* < source.len) {
+        const c = source[pos.*];
+        if (ascii.isWhitespace(c) and c != '\n') {
+            pos.* += 1;
+            continue;
         }
+        if (c == '#') {
+            pos.* += 1;
+            while (pos.* < source.len and source[pos.*] != '\n') pos.* += 1;
+            continue;
+        }
+        break;
     }
 
-    return try self.scanDec(alloc);
+    if (pos.* >= source.len) return .{ .tag = .eof, .start = pos.*, .end = pos.* };
+
+    const start = pos.*;
+    const c = source[pos.*];
+
+    // identifiers and keywords
+    if (ascii.isAlphabetic(c) or c == '_') {
+        pos.* += 1;
+        while (pos.* < source.len and (ascii.isAlphanumeric(source[pos.*]) or source[pos.*] == '_'))
+            pos.* += 1;
+
+        const ident = source[start..pos.*];
+        const tag: Token.Tag = Token.keywords.get(ident) orelse .identifier;
+        return .{ .tag = tag, .start = start, .end = pos.* };
+    }
+
+    // numbers
+    if (ascii.isDigit(c)) return scanNumber(source, pos);
+
+    // single and double char tokens
+    pos.* += 1;
+    return switch (c) {
+        ',' => .{ .tag = .comma, .start = start, .end = pos.* },
+        '(' => .{ .tag = .left_paren, .start = start, .end = pos.* },
+        ')' => .{ .tag = .right_paren, .start = start, .end = pos.* },
+        '[' => .{ .tag = .left_bracket, .start = start, .end = pos.* },
+        ']' => .{ .tag = .right_bracket, .start = start, .end = pos.* },
+        '{' => .{ .tag = .left_curly, .start = start, .end = pos.* },
+        '}' => .{ .tag = .right_curly, .start = start, .end = pos.* },
+        '=' => .{ .tag = .equal, .start = start, .end = pos.* },
+        '\n' => .{ .tag = .newline, .start = start, .end = pos.* },
+        ':' => blk: {
+            if (pos.* < source.len and source[pos.*] == ':') {
+                pos.* += 1;
+                break :blk ScannedToken{ .tag = .double_colon, .start = start, .end = pos.* };
+            }
+            break :blk ScannedToken{ .tag = .colon, .start = start, .end = pos.* };
+        },
+        else => .{ .tag = .invalid, .start = start, .end = pos.*, .err = .unrecognized_character },
+    };
 }
 
-fn scanHex(self: *Self, alloc: mem.Allocator) !Token {
-    const start = self.pos;
-    self.advanceBy(2); // consume '0' and 'x'
+fn scanNumber(source: []const u8, pos: *Token.Index) ScannedToken {
+    if (source[pos.*] == '0' and pos.* + 1 < source.len) {
+        if (source[pos.* + 1] == 'x') return scanHex(source, pos);
+        if (source[pos.* + 1] == 'b') return scanBin(source, pos);
+    }
+    return scanDec(source, pos);
+}
 
-    const digit_start = self.pos;
-    while (self.peek()) |c| {
+fn scanHex(source: []const u8, pos: *Token.Index) ScannedToken {
+    const start = pos.*;
+    pos.* += 2; // skip '0x'
+
+    const digit_start = pos.*;
+    while (pos.* < source.len) {
+        const c = source[pos.*];
         if (ascii.isDigit(c) or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F')) {
-            self.advance();
+            pos.* += 1;
         } else break;
     }
 
-    if (self.pos == digit_start)
-        try self.errors.append(alloc, .{ .tag = .empty_hex_literal, .start = start, .end = self.pos });
-
-    return .{ .tag = .number, .start = start, .end = self.pos };
+    const err: ?Error.Tag = if (pos.* == digit_start) .empty_hex_literal else null;
+    return .{ .tag = .number, .start = start, .end = pos.*, .err = err };
 }
 
-fn scanBin(self: *Self, alloc: mem.Allocator) !Token {
-    const start = self.pos;
-    self.advanceBy(2); // consume '0' and 'b'
+fn scanBin(source: []const u8, pos: *Token.Index) ScannedToken {
+    const start = pos.*;
+    pos.* += 2; // skip '0b'
 
-    const digit_start = self.pos;
-    while (self.peek()) |c| {
+    const digit_start = pos.*;
+    while (pos.* < source.len) {
+        const c = source[pos.*];
         if (c == '0' or c == '1') {
-            self.advance();
+            pos.* += 1;
         } else break;
     }
 
-    if (self.pos == digit_start)
-        try self.errors.append(alloc, .{ .tag = .empty_bin_literal, .start = start, .end = self.pos });
-
-    return .{ .tag = .number, .start = start, .end = self.pos };
+    const err: ?Error.Tag = if (pos.* == digit_start) .empty_bin_literal else null;
+    return .{ .tag = .number, .start = start, .end = pos.*, .err = err };
 }
 
-fn scanDec(self: *Self, alloc: mem.Allocator) !Token {
-    const start = self.pos;
-
+fn scanDec(source: []const u8, pos: *Token.Index) ScannedToken {
+    const start = pos.*;
     var has_decimal = false;
-    var has_error = false;
+    var err: ?Error.Tag = null;
 
-    while (self.peek()) |c| {
+    while (pos.* < source.len) {
+        const c = source[pos.*];
         if (ascii.isDigit(c)) {
-            self.advance();
+            pos.* += 1;
         } else if (c == '.' and !has_decimal) {
-            const next = self.peekBy(1);
-            if (next != null and ascii.isDigit(next.?)) {
+            if (pos.* + 1 < source.len and ascii.isDigit(source[pos.* + 1])) {
                 has_decimal = true;
-                self.advance();
+                pos.* += 1;
             } else break;
         } else if (c == '.' and has_decimal) {
-            if (!has_error) {
-                try self.errors.append(alloc, .{ .tag = .multiple_decimal_points, .start = self.pos, .end = self.pos + 1 });
-                has_error = true;
-            }
-            self.advance();
+            if (err == null) err = .multiple_decimal_points;
+            pos.* += 1;
         } else break;
     }
 
-    return .{ .tag = .number, .start = start, .end = self.pos };
+    return .{ .tag = .number, .start = start, .end = pos.*, .err = err };
 }
 
-fn peek(self: *const Self) ?u8 {
-    if (self.pos < self.src.contents.len)
-        return self.src.contents[self.pos];
+test "scan const decl" {
+    const alloc = std.testing.allocator;
 
-    return null;
-}
+    var src = try Source.init.fromStr(alloc, "pi :: 3.14");
+    defer src.deinit(alloc);
 
-fn peekBy(self: *const Self, n: Token.Index) ?u8 {
-    if (self.pos + n < self.src.contents.len)
-        return self.src.contents[self.pos + n];
+    var lexer = Self.init(&src);
+    defer lexer.deinit(alloc);
 
-    return null;
-}
+    const tokens = try lexer.scan(alloc);
 
-fn advance(self: *Self) void {
-    self.pos += 1;
-}
-
-fn advanceBy(self: *Self, n: Token.Index) void {
-    self.pos += n;
+    try std.testing.expectEqual(tokens.tags[0], .identifier);
+    try std.testing.expectEqual(tokens.tags[1], .double_colon);
+    try std.testing.expectEqual(tokens.tags[2], .number);
 }
