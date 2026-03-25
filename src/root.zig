@@ -2,7 +2,7 @@
 pub const args = @import("util/args.zig");
 
 // agnostic types
-pub const BaseIndex = u32;
+pub const BaseIdx = u32;
 
 pub const Severity = enum {
     fatal,
@@ -22,5 +22,6 @@ pub const Lexer = @import("lexer/Lexer.zig");
 pub const Parser = @import("parser/Parser.zig");
 
 test {
-    @import("std").testing.refAllDeclsRecursive(@This());
+    _ = @import("lexer/tests.zig");
+    _ = @import("parser/tests.zig");
 }

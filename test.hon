@@ -1,7 +1,11 @@
-pi :: 3.14
-x = 32
-y = 0b1010
-z = 0xbeaf
+# constants (`::`)
+x :: 32
+y int :: 32
+z float :: 3.14
+
+# variables (`=`)
+a = 0xf0f1
+a int = 0xf0f1
 
 main :: func() int {
     return 0xff

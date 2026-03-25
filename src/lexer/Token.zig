@@ -1,8 +1,8 @@
 const std = @import("std");
 
 tag: Tag,
-start: Index,
-end: Index,
+start: Idx,
+end: Idx,
 
 pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "mut", .mut },
@@ -10,7 +10,7 @@ pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "return", .@"return" },
 });
 
-pub const Index = @import("../root.zig").BaseIndex;
+pub const Idx = @import("../root.zig").BaseIdx;
 
 pub const Tag = enum {
     // complex tokens

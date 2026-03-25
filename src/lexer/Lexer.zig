@@ -3,7 +3,7 @@ const mem = std.mem;
 const ascii = std.ascii;
 
 src: *const Source,
-pos: Token.Index,
+pos: Token.Idx,
 tokens: TokenList,
 errors: ErrorList,
 
@@ -32,14 +32,14 @@ pub fn deinit(self: *Self, alloc: mem.Allocator) void {
 
 pub const Tokens = struct {
     tags: []const Token.Tag,
-    starts: []const Token.Index,
-    ends: []const Token.Index,
+    starts: []const Token.Idx,
+    ends: []const Token.Idx,
 };
 
 pub const ScannedToken = struct {
     tag: Token.Tag,
-    start: Token.Index,
-    end: Token.Index,
+    start: Token.Idx,
+    end: Token.Idx,
     err: ?Error.Tag = null,
 };
 
@@ -65,7 +65,7 @@ pub fn scan(self: *Self, alloc: mem.Allocator) !Tokens {
     };
 }
 
-pub fn nextToken(source: []const u8, pos: *Token.Index) ScannedToken {
+pub fn nextToken(source: []const u8, pos: *Token.Idx) ScannedToken {
     // skip whitespace (except newlines) and comments
     while (pos.* < source.len) {
         const c = source[pos.*];
@@ -123,7 +123,7 @@ pub fn nextToken(source: []const u8, pos: *Token.Index) ScannedToken {
     };
 }
 
-fn scanNumber(source: []const u8, pos: *Token.Index) ScannedToken {
+fn scanNumber(source: []const u8, pos: *Token.Idx) ScannedToken {
     if (source[pos.*] == '0' and pos.* + 1 < source.len) {
         if (source[pos.* + 1] == 'x') return scanHex(source, pos);
         if (source[pos.* + 1] == 'b') return scanBin(source, pos);
@@ -131,7 +131,7 @@ fn scanNumber(source: []const u8, pos: *Token.Index) ScannedToken {
     return scanDec(source, pos);
 }
 
-fn scanHex(source: []const u8, pos: *Token.Index) ScannedToken {
+fn scanHex(source: []const u8, pos: *Token.Idx) ScannedToken {
     const start = pos.*;
     pos.* += 2; // skip '0x'
 
@@ -147,7 +147,7 @@ fn scanHex(source: []const u8, pos: *Token.Index) ScannedToken {
     return .{ .tag = .number, .start = start, .end = pos.*, .err = err };
 }
 
-fn scanBin(source: []const u8, pos: *Token.Index) ScannedToken {
+fn scanBin(source: []const u8, pos: *Token.Idx) ScannedToken {
     const start = pos.*;
     pos.* += 2; // skip '0b'
 
@@ -163,7 +163,7 @@ fn scanBin(source: []const u8, pos: *Token.Index) ScannedToken {
     return .{ .tag = .number, .start = start, .end = pos.*, .err = err };
 }
 
-fn scanDec(source: []const u8, pos: *Token.Index) ScannedToken {
+fn scanDec(source: []const u8, pos: *Token.Idx) ScannedToken {
     const start = pos.*;
     var has_decimal = false;
     var err: ?Error.Tag = null;
@@ -184,20 +184,4 @@ fn scanDec(source: []const u8, pos: *Token.Index) ScannedToken {
     }
 
     return .{ .tag = .number, .start = start, .end = pos.*, .err = err };
-}
-
-test "scan const decl" {
-    const alloc = std.testing.allocator;
-
-    var src = try Source.init.fromStr(alloc, "pi :: 3.14");
-    defer src.deinit(alloc);
-
-    var lexer = Self.init(&src);
-    defer lexer.deinit(alloc);
-
-    const tokens = try lexer.scan(alloc);
-
-    try std.testing.expectEqual(tokens.tags[0], .identifier);
-    try std.testing.expectEqual(tokens.tags[1], .double_colon);
-    try std.testing.expectEqual(tokens.tags[2], .number);
 }

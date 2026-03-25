@@ -1,8 +1,8 @@
 const std = @import("std");
 
 tag: Tag,
-start: Token.Index,
-end: Token.Index,
+start: Token.Idx,
+end: Token.Idx,
 
 pub const info = std.EnumArray(Tag, @import("../root.zig").ErrorInfo).init(.{
     .unrecognized_character = .{
