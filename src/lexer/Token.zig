@@ -1,14 +1,15 @@
 const std = @import("std");
-
-tag: Tag,
-start: Idx,
-end: Idx,
+const StringPool = @import("../root.zig").StringPool;
 
 pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "mut", .mut },
     .{ "func", .func },
     .{ "return", .@"return" },
 });
+
+tag: Tag,
+start: Idx,
+str_id: StringPool.ID,
 
 pub const Idx = @import("../root.zig").BaseIdx;
 

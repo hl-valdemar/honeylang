@@ -1,13 +1,8 @@
 const std = @import("std");
 const mem = std.mem;
 
-const Source = @import("../source/Source.zig");
-const Lexer = @import("../lexer/Lexer.zig");
-const Token = @import("../lexer/Token.zig");
-const Ast = @import("Ast.zig");
-
-tokens: Lexer.Tokens,
 src: *const Source,
+tokens: Lexer.ScanResult,
 pos: Token.Idx,
 nodes: Ast.Nodes,
 extra_data: Ast.Slots,
@@ -16,10 +11,20 @@ errors: Ast.Errors,
 
 const Self = @This();
 
-pub fn init(tokens: Lexer.Tokens, src: *const Source) Self {
+const Source = @import("../source/Source.zig");
+const Lexer = @import("../lexer/Lexer.zig");
+const Token = @import("../lexer/Token.zig");
+const Ast = @import("Ast.zig");
+
+pub const Context = struct {
+    src: *const Source,
+    tokens: Lexer.ScanResult,
+};
+
+pub fn init(ctx: Context) Self {
     return .{
-        .tokens = tokens,
-        .src = src,
+        .src = ctx.src,
+        .tokens = ctx.tokens,
         .pos = 0,
         .nodes = .{},
         .extra_data = .{},
@@ -69,6 +74,7 @@ pub fn parse(self: *Self, alloc: mem.Allocator) !Ast {
         .errors = self.errors.slice(),
         .token_tags = self.tokens.tags,
         .token_starts = self.tokens.starts,
+        .token_str_ids = self.tokens.str_ids,
     };
 }
 
@@ -94,7 +100,7 @@ fn parseTopLevelDecl(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
 }
 
 fn parseConstOrFunc(self: *Self, alloc: mem.Allocator, name_tok: Token.Idx, type_expr: Ast.NodeIdx) !Ast.NodeIdx {
-    self.advance(); // consume `::`
+    self.advance(); // skip `::`
     if (self.tag(self.pos) == .func or self.tag(self.pos) == .cc_c)
         return try self.parseFuncDecl(alloc, name_tok);
     return try self.parseConstDecl(alloc, name_tok, type_expr);
@@ -112,7 +118,7 @@ fn parseConstDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Idx, type_e
 }
 
 fn parseVarDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Idx, type_expr: Ast.NodeIdx) !Ast.NodeIdx {
-    self.advance(); // consume `=`
+    self.advance(); // skip `=`
     const value = try self.parseExpr(alloc);
     try self.expect(alloc, .newline);
 
@@ -224,7 +230,7 @@ fn parseStatement(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
 
 fn parseReturnStatement(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
     const tok = self.pos;
-    self.advance(); // consume `return`
+    self.advance(); // skip `return`
 
     // parse value unless immediately terminated
     const value: Ast.NodeIdx = if (self.tag(self.pos) != .newline and

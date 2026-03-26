@@ -1,15 +1,19 @@
 const std = @import("std");
 
+const StringPool = @import("../util/StringPool.zig");
 const Source = @import("../source/Source.zig");
 const Lexer = @import("Lexer.zig");
 
 test "scan const decl" {
     const alloc = std.testing.allocator;
 
-    var src = try Source.init.fromStr(alloc, "pi :: 3.14");
+    var src = try Source.init.fromStr(alloc, "pi :: 3.14", 0);
     defer src.deinit(alloc);
 
-    var lexer = Lexer.init(&src);
+    var str_pool = StringPool.init();
+    defer str_pool.deinit(alloc);
+
+    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool });
     defer lexer.deinit(alloc);
 
     const tokens = try lexer.scan(alloc);

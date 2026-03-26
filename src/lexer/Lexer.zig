@@ -3,12 +3,14 @@ const mem = std.mem;
 const ascii = std.ascii;
 
 src: *const Source,
+str_pool: *StringPool,
 pos: Token.Idx,
 tokens: TokenList,
 errors: ErrorList,
 
 const Self = @This();
 
+const StringPool = @import("../root.zig").StringPool;
 const Source = @import("../source/Source.zig");
 const Token = @import("Token.zig");
 const Error = @import("Error.zig");
@@ -16,9 +18,21 @@ const Error = @import("Error.zig");
 const TokenList = std.MultiArrayList(Token);
 const ErrorList = std.MultiArrayList(Error);
 
-pub fn init(src: *const Source) Self {
+pub const ScanResult = struct {
+    tags: []const Token.Tag,
+    starts: []const Token.Idx,
+    str_ids: []const StringPool.ID,
+};
+
+pub const Context = struct {
+    src: *const Source,
+    str_pool: *StringPool,
+};
+
+pub fn init(ctx: Context) Self {
     return .{
-        .src = src,
+        .src = ctx.src,
+        .str_pool = ctx.str_pool,
         .pos = 0,
         .tokens = .{},
         .errors = .{},
@@ -30,20 +44,7 @@ pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     self.errors.deinit(alloc);
 }
 
-pub const Tokens = struct {
-    tags: []const Token.Tag,
-    starts: []const Token.Idx,
-    ends: []const Token.Idx,
-};
-
-pub const ScannedToken = struct {
-    tag: Token.Tag,
-    start: Token.Idx,
-    end: Token.Idx,
-    err: ?Error.Tag = null,
-};
-
-pub fn scan(self: *Self, alloc: mem.Allocator) !Tokens {
+pub fn scan(self: *Self, alloc: mem.Allocator) !ScanResult {
     while (true) {
         const tok = nextToken(self.src.contents, &self.pos);
 
@@ -53,7 +54,14 @@ pub fn scan(self: *Self, alloc: mem.Allocator) !Tokens {
 
         if (tok.tag == .invalid) continue;
 
-        try self.tokens.append(alloc, .{ .tag = tok.tag, .start = tok.start, .end = tok.end });
+        const str_id = str_id: switch (tok.tag) {
+            .identifier, .number => {
+                break :str_id try self.str_pool.intern(alloc, self.src.contents[tok.start..tok.end]);
+            },
+            else => break :str_id StringPool.ID.none,
+        };
+
+        try self.tokens.append(alloc, .{ .tag = tok.tag, .start = tok.start, .str_id = str_id });
         if (tok.tag == .eof) break;
     }
 
@@ -61,9 +69,16 @@ pub fn scan(self: *Self, alloc: mem.Allocator) !Tokens {
     return .{
         .tags = result.items(.tag),
         .starts = result.items(.start),
-        .ends = result.items(.end),
+        .str_ids = result.items(.str_id),
     };
 }
+
+const ScannedToken = struct {
+    tag: Token.Tag,
+    start: Token.Idx,
+    end: Token.Idx,
+    err: ?Error.Tag = null,
+};
 
 pub fn nextToken(source: []const u8, pos: *Token.Idx) ScannedToken {
     // skip whitespace (except newlines) and comments

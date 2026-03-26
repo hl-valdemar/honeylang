@@ -1,18 +1,20 @@
 const std = @import("std");
 const mem = std.mem;
 
-const BaseIdx = @import("../root.zig").BaseIdx;
-const Source = @import("../source/Source.zig");
-const Token = @import("../lexer/Token.zig");
-const Lexer = @import("../lexer/Lexer.zig");
-
 nodes: Nodes.Slice,
 errors: Errors.Slice,
 extra_data: []const Slot,
 token_tags: []const Token.Tag,
 token_starts: []const Token.Idx,
+token_str_ids: []const StringPool.ID,
 
 const Self = @This();
+
+const BaseIdx = @import("../root.zig").BaseIdx;
+const StringPool = @import("../root.zig").StringPool;
+const Source = @import("../source/Source.zig");
+const Token = @import("../lexer/Token.zig");
+const Lexer = @import("../lexer/Lexer.zig");
 
 pub const Nodes = std.MultiArrayList(Node);
 pub const Slots = std.ArrayListUnmanaged(Slot);
@@ -67,7 +69,7 @@ pub const Node = struct {
         var_decl,
 
         /// name :: func(params) return_type { body }
-        /// main_token: func keyword
+        /// main_token: identifier
         /// a: ExtraIdx → FuncDecl
         /// b: unused
         func_decl,
@@ -192,64 +194,69 @@ pub fn extraSlice(self: *const Self, start: ExtraIdx, end: ExtraIdx) []const Slo
     return self.extra_data[start..end];
 }
 
-pub fn tokenSlice(self: *const Self, src: []const u8, tok: Token.Idx) []const u8 {
-    var pos = self.token_starts[tok];
-    const scanned = Lexer.nextToken(src, &pos);
-    return src[scanned.start..scanned.end];
-}
-
 /// render ast as raw honey code.
-pub fn render(self: *const Self, alloc: mem.Allocator, src: []const u8) ![]const u8 {
+pub fn render(self: *const Self, alloc: mem.Allocator, src: []const u8, str_pool: *const StringPool) ![]const u8 {
     var buf = std.ArrayListUnmanaged(u8){};
     const root_idx: NodeIdx = @enumFromInt(0);
-    try self.renderNode(alloc, &buf, root_idx, src, 0);
+    try self.renderNode(alloc, &buf, root_idx, src, str_pool, 0);
     return buf.toOwnedSlice(alloc);
 }
 
-fn renderNode(self: *const Self, alloc: mem.Allocator, buf: *std.ArrayListUnmanaged(u8), idx: NodeIdx, src: []const u8, indent: u32) mem.Allocator.Error!void {
+fn renderNode(
+    self: *const Self,
+    alloc: mem.Allocator,
+    buf: *std.ArrayListUnmanaged(u8),
+    idx: NodeIdx,
+    src: []const u8,
+    str_pool: *const StringPool,
+    indent: u32,
+) mem.Allocator.Error!void {
     const data = self.nodeData(idx);
     switch (self.nodeTag(idx)) {
         .root => {
             const decl_idxs = self.extra_data[data.a..data.b];
-            try self.renderDeclList(alloc, buf, decl_idxs, src, indent);
+            try self.renderDeclList(alloc, buf, decl_idxs, src, str_pool, indent);
         },
         .const_decl => {
+            const ident_idx = self.nodeMainToken(idx);
             const type_idx: NodeIdx = @enumFromInt(data.a);
             const val_idx: NodeIdx = @enumFromInt(data.b);
 
             // write `name [type] :: value\n`
             try buf.appendNTimes(alloc, ' ', indent);
-            try buf.appendSlice(alloc, self.tokenSlice(src, self.nodeMainToken(idx)));
+            try buf.appendSlice(alloc, str_pool.get(self.token_str_ids[ident_idx]));
             if (type_idx != .none) {
                 try buf.append(alloc, ' ');
-                try self.renderNode(alloc, buf, type_idx, src, 0);
+                try self.renderNode(alloc, buf, type_idx, src, str_pool, 0);
             }
             try buf.appendSlice(alloc, " :: ");
-            try self.renderNode(alloc, buf, val_idx, src, 0);
+            try self.renderNode(alloc, buf, val_idx, src, str_pool, 0);
             try buf.append(alloc, '\n');
         },
         .var_decl => {
+            const ident_idx = self.nodeMainToken(idx);
             const type_idx: NodeIdx = @enumFromInt(data.a);
             const val_idx: NodeIdx = @enumFromInt(data.b);
 
             // write `name [type] = value\n`
             try buf.appendNTimes(alloc, ' ', indent);
-            try buf.appendSlice(alloc, self.tokenSlice(src, self.nodeMainToken(idx)));
+            try buf.appendSlice(alloc, str_pool.get(self.token_str_ids[ident_idx]));
             if (type_idx != .none) {
                 try buf.append(alloc, ' ');
-                try self.renderNode(alloc, buf, type_idx, src, 0);
+                try self.renderNode(alloc, buf, type_idx, src, str_pool, 0);
             }
             try buf.appendSlice(alloc, " = ");
-            try self.renderNode(alloc, buf, val_idx, src, 0);
+            try self.renderNode(alloc, buf, val_idx, src, str_pool, 0);
             try buf.append(alloc, '\n');
         },
         .func_decl => {
+            const ident_idx = self.nodeMainToken(idx);
             const func = self.extraData(FuncDecl, data.a);
             const params = self.extra_data[func.params_start..func.params_end];
 
             // write `name :: [cc] func(params) type { body }\n`
             try buf.appendNTimes(alloc, ' ', indent);
-            try buf.appendSlice(alloc, self.tokenSlice(src, self.nodeMainToken(idx)));
+            try buf.appendSlice(alloc, str_pool.get(self.token_str_ids[ident_idx]));
             try buf.appendSlice(alloc, " :: ");
 
             switch ((func.flags & FuncDecl.Flag.cc_mask) >> FuncDecl.Flag.cc_shift) {
@@ -262,31 +269,31 @@ fn renderNode(self: *const Self, alloc: mem.Allocator, buf: *std.ArrayListUnmana
 
             for (params, 0..) |param_idx, i| {
                 if (i > 0) try buf.appendSlice(alloc, ", ");
-                try self.renderNode(alloc, buf, @enumFromInt(param_idx), src, 0);
+                try self.renderNode(alloc, buf, @enumFromInt(param_idx), src, str_pool, 0);
             }
 
             try buf.appendSlice(alloc, ") ");
-            try self.renderNode(alloc, buf, func.return_type, src, 0);
+            try self.renderNode(alloc, buf, func.return_type, src, str_pool, 0);
             try buf.append(alloc, ' ');
-            try self.renderNode(alloc, buf, func.body, src, indent);
+            try self.renderNode(alloc, buf, func.body, src, str_pool, indent);
             try buf.append(alloc, '\n');
         },
         .param => {
             const param_idx = self.nodeMainToken(idx);
-            const param_val = self.tokenSlice(src, param_idx);
+            const param_val = str_pool.get(self.token_str_ids[param_idx]);
             const type_idx: NodeIdx = @enumFromInt(data.a);
 
             // write `name type_expr`
             try buf.appendSlice(alloc, param_val);
             try buf.append(alloc, ' ');
-            try self.renderNode(alloc, buf, type_idx, src, 0);
+            try self.renderNode(alloc, buf, type_idx, src, str_pool, 0);
         },
         .block => {
             const decl_idxs = self.extra_data[data.a..data.b];
 
             // write `{ body }`
             try buf.appendSlice(alloc, "{\n");
-            try self.renderDeclList(alloc, buf, decl_idxs, src, indent + 4);
+            try self.renderDeclList(alloc, buf, decl_idxs, src, str_pool, indent + 4);
             try buf.appendNTimes(alloc, ' ', indent);
             try buf.append(alloc, '}');
         },
@@ -298,20 +305,20 @@ fn renderNode(self: *const Self, alloc: mem.Allocator, buf: *std.ArrayListUnmana
             try buf.appendSlice(alloc, "return");
             if (val_idx != .none) {
                 try buf.append(alloc, ' ');
-                try self.renderNode(alloc, buf, val_idx, src, 0);
+                try self.renderNode(alloc, buf, val_idx, src, str_pool, 0);
             }
             try buf.append(alloc, '\n');
         },
         .identifier => {
             const ident_idx = self.nodeMainToken(idx);
-            const ident_val = self.tokenSlice(src, ident_idx);
+            const ident_val = str_pool.get(self.token_str_ids[ident_idx]);
 
             // write token string
             try buf.appendSlice(alloc, ident_val);
         },
         .number_literal => {
             const num_idx = self.nodeMainToken(idx);
-            const num_val = self.tokenSlice(src, num_idx);
+            const num_val = str_pool.get(self.token_str_ids[num_idx]);
 
             // write token string
             try buf.appendSlice(alloc, num_val);
@@ -326,11 +333,11 @@ fn renderNode(self: *const Self, alloc: mem.Allocator, buf: *std.ArrayListUnmana
 }
 
 /// render a list of declarations and insert blank lines before func_decl nodes.
-fn renderDeclList(self: *const Self, alloc: mem.Allocator, buf: *std.ArrayListUnmanaged(u8), decls: []const Slot, src: []const u8, indent: u32) mem.Allocator.Error!void {
+fn renderDeclList(self: *const Self, alloc: mem.Allocator, buf: *std.ArrayListUnmanaged(u8), decls: []const Slot, src: []const u8, str_pool: *const StringPool, indent: u32) mem.Allocator.Error!void {
     for (decls, 0..) |decl_idx, i| {
         const node_idx: NodeIdx = @enumFromInt(decl_idx);
         if (i > 0 and self.nodeTag(node_idx) == .func_decl)
             try buf.append(alloc, '\n');
-        try self.renderNode(alloc, buf, node_idx, src, indent);
+        try self.renderNode(alloc, buf, node_idx, src, str_pool, indent);
     }
 }

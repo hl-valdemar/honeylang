@@ -17,15 +17,15 @@ pub const LineCol = struct {
 };
 
 pub const init = struct {
-    pub fn fromStr(alloc: mem.Allocator, str: []const u8) !Self {
+    pub fn fromStr(alloc: mem.Allocator, str: []const u8, id: ID) !Self {
         return .{
-            .id = ID_Generator.getNextID(),
+            .id = id,
             .path = null,
             .contents = try alloc.dupe(u8, str),
         };
     }
 
-    pub fn fromFile(alloc: mem.Allocator, path: []const u8) !Self {
+    pub fn fromFile(alloc: mem.Allocator, path: []const u8, id: ID) !Self {
         const file = try fs.cwd().openFile(path, .{ .mode = .read_only });
         defer file.close();
 
@@ -34,8 +34,8 @@ pub const init = struct {
 
         _ = try file.readAll(contents);
 
-        return Self{
-            .id = ID_Generator.getNextID(),
+        return .{
+            .id = id,
             .path = path,
             .contents = contents,
         };
@@ -62,12 +62,3 @@ pub fn lineCol(self: *const Self, offset: u32) LineCol {
     }
     return LineCol{ .line = line, .col = col };
 }
-
-const ID_Generator = struct {
-    var nextID: ID = 0;
-
-    fn getNextID() ID {
-        defer nextID += 1;
-        return nextID;
-    }
-};
