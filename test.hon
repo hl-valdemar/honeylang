@@ -8,5 +8,5 @@ a = 0xf0f1
 a int = 0xf0f1
 
 main :: func() int {
-    return 0xff
+    return 0xff + 2 * 3
 }

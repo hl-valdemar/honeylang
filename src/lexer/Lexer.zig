@@ -78,6 +78,14 @@ const ScannedToken = struct {
     start: Token.Idx,
     end: Token.Idx,
     err: ?Error.Tag = null,
+
+    pub fn from(tag: Token.Tag, start: Token.Idx, end: Token.Idx) ScannedToken {
+        return .{ .tag = tag, .start = start, .end = end };
+    }
+
+    pub fn fromErr(tag: Token.Tag, start: Token.Idx, end: Token.Idx, err: Error.Tag) ScannedToken {
+        return .{ .tag = tag, .start = start, .end = end, .err = err };
+    }
 };
 
 pub fn nextToken(source: []const u8, pos: *Token.Idx) ScannedToken {
@@ -118,23 +126,34 @@ pub fn nextToken(source: []const u8, pos: *Token.Idx) ScannedToken {
     // single and double char tokens
     pos.* += 1;
     return switch (c) {
-        ',' => .{ .tag = .comma, .start = start, .end = pos.* },
-        '(' => .{ .tag = .left_paren, .start = start, .end = pos.* },
-        ')' => .{ .tag = .right_paren, .start = start, .end = pos.* },
-        '[' => .{ .tag = .left_bracket, .start = start, .end = pos.* },
-        ']' => .{ .tag = .right_bracket, .start = start, .end = pos.* },
-        '{' => .{ .tag = .left_curly, .start = start, .end = pos.* },
-        '}' => .{ .tag = .right_curly, .start = start, .end = pos.* },
-        '=' => .{ .tag = .equal, .start = start, .end = pos.* },
-        '\n' => .{ .tag = .newline, .start = start, .end = pos.* },
+        // arithmetic
+        '+' => .from(.add, start, pos.*),
+        '-' => .from(.sub, start, pos.*),
+        '*' => .from(.mul, start, pos.*),
+        '/' => .from(.div, start, pos.*),
+
+        // paren-type
+        '(' => .from(.left_paren, start, pos.*),
+        ')' => .from(.right_paren, start, pos.*),
+        '[' => .from(.left_bracket, start, pos.*),
+        ']' => .from(.right_bracket, start, pos.*),
+        '{' => .from(.left_curly, start, pos.*),
+        '}' => .from(.right_curly, start, pos.*),
+
+        // other
+        ',' => .from(.comma, start, pos.*),
+        '=' => .from(.equal, start, pos.*),
+        '\n' => .from(.newline, start, pos.*),
+
+        // double-char
         ':' => blk: {
             if (pos.* < source.len and source[pos.*] == ':') {
                 pos.* += 1;
-                break :blk ScannedToken{ .tag = .double_colon, .start = start, .end = pos.* };
+                break :blk .from(.double_colon, start, pos.*);
             }
-            break :blk ScannedToken{ .tag = .colon, .start = start, .end = pos.* };
+            break :blk .from(.colon, start, pos.*);
         },
-        else => .{ .tag = .invalid, .start = start, .end = pos.*, .err = .unrecognized_character },
+        else => .fromErr(.invalid, start, pos.*, .unrecognized_character),
     };
 }
 

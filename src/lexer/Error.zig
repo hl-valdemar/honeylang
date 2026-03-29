@@ -4,7 +4,9 @@ tag: Tag,
 start: Token.Idx,
 end: Token.Idx,
 
-pub const info = std.EnumArray(Tag, @import("../root.zig").ErrorInfo).init(.{
+const ErrorInfo = @import("../root.zig").ErrorInfo;
+
+pub const info = std.EnumArray(Tag, ErrorInfo).init(.{
     .unrecognized_character = .{
         .code = "L001",
         .message = "unrecognized character",

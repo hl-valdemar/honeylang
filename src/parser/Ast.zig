@@ -194,6 +194,12 @@ pub fn extraSlice(self: *const Self, start: ExtraIdx, end: ExtraIdx) []const Slo
     return self.extra_data[start..end];
 }
 
+pub fn tokenSlice(self: *const Self, idx: Token.Idx, src: []const u8) []const u8 {
+    var start = self.token_starts[idx];
+    const token = Lexer.nextToken(src, &start);
+    return src[token.start..token.end];
+}
+
 /// render ast as raw honey code.
 pub fn render(self: *const Self, alloc: mem.Allocator, src: []const u8, str_pool: *const StringPool) ![]const u8 {
     var buf = std.ArrayListUnmanaged(u8){};
@@ -308,6 +314,21 @@ fn renderNode(
                 try self.renderNode(alloc, buf, val_idx, src, str_pool, 0);
             }
             try buf.append(alloc, '\n');
+        },
+        .binary_op => {
+            const op_idx = self.nodeMainToken(idx);
+            const op_val = self.tokenSlice(op_idx, src);
+
+            const left_idx: NodeIdx = @enumFromInt(data.a);
+            const right_idx: NodeIdx = @enumFromInt(data.b);
+
+            // write `<expr> <op> <expr>`
+            try buf.appendNTimes(alloc, ' ', indent);
+            try self.renderNode(alloc, buf, left_idx, src, str_pool, 0);
+            try buf.append(alloc, ' ');
+            try buf.appendSlice(alloc, op_val);
+            try buf.append(alloc, ' ');
+            try self.renderNode(alloc, buf, right_idx, src, str_pool, 0);
         },
         .identifier => {
             const ident_idx = self.nodeMainToken(idx);

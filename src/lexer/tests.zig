@@ -22,3 +22,22 @@ test "scan const decl" {
     try std.testing.expectEqual(tokens.tags[1], .double_colon);
     try std.testing.expectEqual(tokens.tags[2], .number);
 }
+
+test "scan arithmetic expression" {
+    const alloc = std.testing.allocator;
+
+    var src = try Source.init.fromStr(alloc, "a + 2", 0);
+    defer src.deinit(alloc);
+
+    var str_pool = StringPool.init();
+    defer str_pool.deinit(alloc);
+
+    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool });
+    defer lexer.deinit(alloc);
+
+    const tokens = try lexer.scan(alloc);
+
+    try std.testing.expectEqual(tokens.tags[0], .identifier);
+    try std.testing.expectEqual(tokens.tags[1], .add);
+    try std.testing.expectEqual(tokens.tags[2], .number);
+}

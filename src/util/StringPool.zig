@@ -17,7 +17,7 @@ const Entry = struct {
     len: u32,
 };
 
-// used for rehashing existing keys (StringID → bytes)
+/// used for rehashing existing keys (StringID → bytes).
 const MapCtx = struct {
     entries: []const Entry,
     buffer: []const u8,
@@ -34,7 +34,7 @@ const MapCtx = struct {
     }
 };
 
-// used for lookups by raw []const u8 against stored StringIDs
+//. used for lookups by raw []const u8 against stored StringIDs.
 const SliceAdapter = struct {
     entries: []const Entry,
     buffer: []const u8,

@@ -23,6 +23,12 @@ pub const Tag = enum {
     func,
     @"return",
 
+    // arithmetic tokens
+    add,
+    sub,
+    mul,
+    div,
+
     // single-char tokens
     colon,
     comma,
