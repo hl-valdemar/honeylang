@@ -61,3 +61,14 @@ test "parse func decl" {
     defer alloc.free(rendered_str);
     try std.testing.expectEqualStrings(src_str, rendered_str);
 }
+
+test "parse arithmetic expr" {
+    const alloc = std.testing.allocator;
+    const src_str =
+        \\x = 1 + 2 * 3
+        \\
+    ;
+    const rendered_str = try parse(alloc, src_str);
+    defer alloc.free(rendered_str);
+    try std.testing.expectEqualStrings(src_str, rendered_str);
+}

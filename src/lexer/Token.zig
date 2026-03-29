@@ -8,10 +8,10 @@ pub const keywords = std.StaticStringMap(Tag).initComptime(.{
 });
 
 tag: Tag,
-start: Idx,
+start: Ref,
 str_id: StringPool.ID,
 
-pub const Idx = @import("../root.zig").BaseIdx;
+pub const Ref = @import("../root.zig").BaseRef;
 
 pub const Tag = enum {
     // complex tokens

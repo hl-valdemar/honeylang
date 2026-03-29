@@ -6,7 +6,7 @@ pub const Lexer = @import("lexer/Lexer.zig");
 pub const Parser = @import("parser/Parser.zig");
 
 // agnostic types
-pub const BaseIdx = u32;
+pub const BaseRef = u32;
 
 pub const Severity = enum {
     fatal,

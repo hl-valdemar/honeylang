@@ -4,9 +4,9 @@ const ascii = std.ascii;
 
 src: *const Source,
 str_pool: *StringPool,
-pos: Token.Idx,
-tokens: TokenList,
-errors: ErrorList,
+pos: Token.Ref,
+tokens: Tokens,
+errors: Errors,
 
 const Self = @This();
 
@@ -15,14 +15,8 @@ const Source = @import("../source/Source.zig");
 const Token = @import("Token.zig");
 const Error = @import("Error.zig");
 
-const TokenList = std.MultiArrayList(Token);
-const ErrorList = std.MultiArrayList(Error);
-
-pub const ScanResult = struct {
-    tags: []const Token.Tag,
-    starts: []const Token.Idx,
-    str_ids: []const StringPool.ID,
-};
+pub const Tokens = std.MultiArrayList(Token);
+const Errors = std.MultiArrayList(Error);
 
 pub const Context = struct {
     src: *const Source,
@@ -44,7 +38,7 @@ pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     self.errors.deinit(alloc);
 }
 
-pub fn scan(self: *Self, alloc: mem.Allocator) !ScanResult {
+pub fn scan(self: *Self, alloc: mem.Allocator) !Tokens.Slice {
     while (true) {
         const tok = nextToken(self.src.contents, &self.pos);
 
@@ -65,30 +59,25 @@ pub fn scan(self: *Self, alloc: mem.Allocator) !ScanResult {
         if (tok.tag == .eof) break;
     }
 
-    const result = self.tokens.slice();
-    return .{
-        .tags = result.items(.tag),
-        .starts = result.items(.start),
-        .str_ids = result.items(.str_id),
-    };
+    return self.tokens.slice();
 }
 
 const ScannedToken = struct {
     tag: Token.Tag,
-    start: Token.Idx,
-    end: Token.Idx,
+    start: Token.Ref,
+    end: Token.Ref,
     err: ?Error.Tag = null,
 
-    pub fn from(tag: Token.Tag, start: Token.Idx, end: Token.Idx) ScannedToken {
+    pub fn from(tag: Token.Tag, start: Token.Ref, end: Token.Ref) ScannedToken {
         return .{ .tag = tag, .start = start, .end = end };
     }
 
-    pub fn fromErr(tag: Token.Tag, start: Token.Idx, end: Token.Idx, err: Error.Tag) ScannedToken {
+    pub fn fromErr(tag: Token.Tag, start: Token.Ref, end: Token.Ref, err: Error.Tag) ScannedToken {
         return .{ .tag = tag, .start = start, .end = end, .err = err };
     }
 };
 
-pub fn nextToken(source: []const u8, pos: *Token.Idx) ScannedToken {
+pub fn nextToken(source: []const u8, pos: *Token.Ref) ScannedToken {
     // skip whitespace (except newlines) and comments
     while (pos.* < source.len) {
         const c = source[pos.*];
@@ -157,7 +146,7 @@ pub fn nextToken(source: []const u8, pos: *Token.Idx) ScannedToken {
     };
 }
 
-fn scanNumber(source: []const u8, pos: *Token.Idx) ScannedToken {
+fn scanNumber(source: []const u8, pos: *Token.Ref) ScannedToken {
     if (source[pos.*] == '0' and pos.* + 1 < source.len) {
         if (source[pos.* + 1] == 'x') return scanHex(source, pos);
         if (source[pos.* + 1] == 'b') return scanBin(source, pos);
@@ -165,7 +154,7 @@ fn scanNumber(source: []const u8, pos: *Token.Idx) ScannedToken {
     return scanDec(source, pos);
 }
 
-fn scanHex(source: []const u8, pos: *Token.Idx) ScannedToken {
+fn scanHex(source: []const u8, pos: *Token.Ref) ScannedToken {
     const start = pos.*;
     pos.* += 2; // skip '0x'
 
@@ -181,7 +170,7 @@ fn scanHex(source: []const u8, pos: *Token.Idx) ScannedToken {
     return .{ .tag = .number, .start = start, .end = pos.*, .err = err };
 }
 
-fn scanBin(source: []const u8, pos: *Token.Idx) ScannedToken {
+fn scanBin(source: []const u8, pos: *Token.Ref) ScannedToken {
     const start = pos.*;
     pos.* += 2; // skip '0b'
 
@@ -197,7 +186,7 @@ fn scanBin(source: []const u8, pos: *Token.Idx) ScannedToken {
     return .{ .tag = .number, .start = start, .end = pos.*, .err = err };
 }
 
-fn scanDec(source: []const u8, pos: *Token.Idx) ScannedToken {
+fn scanDec(source: []const u8, pos: *Token.Ref) ScannedToken {
     const start = pos.*;
     var has_decimal = false;
     var err: ?Error.Tag = null;

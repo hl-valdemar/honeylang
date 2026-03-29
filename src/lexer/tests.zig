@@ -18,9 +18,9 @@ test "scan const decl" {
 
     const tokens = try lexer.scan(alloc);
 
-    try std.testing.expectEqual(tokens.tags[0], .identifier);
-    try std.testing.expectEqual(tokens.tags[1], .double_colon);
-    try std.testing.expectEqual(tokens.tags[2], .number);
+    try std.testing.expectEqual(tokens.items(.tag)[0], .identifier);
+    try std.testing.expectEqual(tokens.items(.tag)[1], .double_colon);
+    try std.testing.expectEqual(tokens.items(.tag)[2], .number);
 }
 
 test "scan arithmetic expression" {
@@ -37,7 +37,7 @@ test "scan arithmetic expression" {
 
     const tokens = try lexer.scan(alloc);
 
-    try std.testing.expectEqual(tokens.tags[0], .identifier);
-    try std.testing.expectEqual(tokens.tags[1], .add);
-    try std.testing.expectEqual(tokens.tags[2], .number);
+    try std.testing.expectEqual(tokens.items(.tag)[0], .identifier);
+    try std.testing.expectEqual(tokens.items(.tag)[1], .add);
+    try std.testing.expectEqual(tokens.items(.tag)[2], .number);
 }

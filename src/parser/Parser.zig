@@ -2,8 +2,8 @@ const std = @import("std");
 const mem = std.mem;
 
 src: *const Source,
-tokens: Lexer.ScanResult,
-pos: Token.Idx,
+tokens: Lexer.Tokens.Slice,
+pos: Token.Ref,
 nodes: Ast.Nodes,
 extra_data: Ast.Slots,
 scratch: Ast.Slots,
@@ -33,7 +33,7 @@ const BindingPower = struct {
 
 pub const Context = struct {
     src: *const Source,
-    tokens: Lexer.ScanResult,
+    tokens: Lexer.Tokens.Slice,
 };
 
 pub fn init(ctx: Context) Self {
@@ -87,13 +87,11 @@ pub fn parse(self: *Self, alloc: mem.Allocator) !Ast {
         .nodes = self.nodes.slice(),
         .extra_data = self.extra_data.items,
         .errors = self.errors.slice(),
-        .token_tags = self.tokens.tags,
-        .token_starts = self.tokens.starts,
-        .token_str_ids = self.tokens.str_ids,
+        .tokens = self.tokens,
     };
 }
 
-fn parseTopLevelDecl(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
+fn parseTopLevelDecl(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
     if (self.tag(self.pos) != .identifier) return self.addError(alloc, .expected_declaration);
 
     const name_tok = self.pos;
@@ -114,14 +112,14 @@ fn parseTopLevelDecl(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
     }
 }
 
-fn parseConstOrFunc(self: *Self, alloc: mem.Allocator, name_tok: Token.Idx, type_expr: Ast.NodeIdx) !Ast.NodeIdx {
+fn parseConstOrFunc(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_expr: Ast.Node.Ref) !Ast.Node.Ref {
     self.advance(); // skip `::`
     if (self.tag(self.pos) == .func or self.tag(self.pos) == .cc_c)
         return try self.parseFuncDecl(alloc, name_tok);
     return try self.parseConstDecl(alloc, name_tok, type_expr);
 }
 
-fn parseConstDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Idx, type_expr: Ast.NodeIdx) !Ast.NodeIdx {
+fn parseConstDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_expr: Ast.Node.Ref) !Ast.Node.Ref {
     const value = try self.parseExpr(alloc, 0);
     try self.expect(alloc, .newline);
 
@@ -132,7 +130,7 @@ fn parseConstDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Idx, type_e
     });
 }
 
-fn parseVarDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Idx, type_expr: Ast.NodeIdx) !Ast.NodeIdx {
+fn parseVarDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_expr: Ast.Node.Ref) !Ast.Node.Ref {
     self.advance(); // skip `=`
     const value = try self.parseExpr(alloc, 0);
     try self.expect(alloc, .newline);
@@ -144,7 +142,7 @@ fn parseVarDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Idx, type_exp
     });
 }
 
-fn parseFuncDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Idx) !Ast.NodeIdx {
+fn parseFuncDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref) !Ast.Node.Ref {
     // optional calling convention
     var flags: u32 = 0;
     if (self.tag(self.pos) == .cc_c) {
@@ -167,9 +165,9 @@ fn parseFuncDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Idx) !Ast.No
 
     // copy params to extra_data
     const params = self.scratch.items[scratch_top..];
-    const params_start: Ast.ExtraIdx = @intCast(self.extra_data.items.len);
+    const params_start: Ast.Slot = @intCast(self.extra_data.items.len);
     try self.extra_data.appendSlice(alloc, params);
-    const params_end: Ast.ExtraIdx = @intCast(self.extra_data.items.len);
+    const params_end: Ast.Slot = @intCast(self.extra_data.items.len);
     self.scratch.items.len = scratch_top;
 
     const return_type = try self.parseExpr(alloc, 0);
@@ -191,7 +189,7 @@ fn parseFuncDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Idx) !Ast.No
     });
 }
 
-fn parseParam(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
+fn parseParam(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
     const name_tok = self.pos;
     try self.expect(alloc, .identifier);
 
@@ -204,7 +202,7 @@ fn parseParam(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
     });
 }
 
-fn parseBlock(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
+fn parseBlock(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
     const lbrace = self.pos;
     try self.expect(alloc, .left_curly);
 
@@ -232,7 +230,7 @@ fn parseBlock(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
     });
 }
 
-fn parseStatement(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
+fn parseStatement(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
     switch (self.tag(self.pos)) {
         .@"return" => return self.parseReturnStatement(alloc),
         else => {
@@ -243,12 +241,12 @@ fn parseStatement(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
     }
 }
 
-fn parseReturnStatement(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
+fn parseReturnStatement(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
     const tok = self.pos;
     self.advance(); // skip `return`
 
     // parse value unless immediately terminated
-    const value: Ast.NodeIdx = if (self.tag(self.pos) != .newline and
+    const value: Ast.Node.Ref = if (self.tag(self.pos) != .newline and
         self.tag(self.pos) != .eof and
         self.tag(self.pos) != .right_curly)
         try self.parseExpr(alloc, 0)
@@ -265,7 +263,7 @@ fn parseReturnStatement(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
 }
 
 /// parse an expression (pratt parsing).
-fn parseExpr(self: *Self, alloc: mem.Allocator, min_bp: BindingPower.Type) !Ast.NodeIdx {
+fn parseExpr(self: *Self, alloc: mem.Allocator, min_bp: BindingPower.Type) !Ast.Node.Ref {
     var left = try self.parsePrimary(alloc);
 
     while (true) {
@@ -290,7 +288,7 @@ fn parseExpr(self: *Self, alloc: mem.Allocator, min_bp: BindingPower.Type) !Ast.
     return left;
 }
 
-fn parsePrimary(self: *Self, alloc: mem.Allocator) !Ast.NodeIdx {
+fn parsePrimary(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
     switch (self.tag(self.pos)) {
         .number => {
             const tok = self.pos;
@@ -334,39 +332,39 @@ fn advance(self: *Self) void {
     self.pos += 1;
 }
 
-fn advanceN(self: *Self, offset: Token.Idx) void {
+fn advanceN(self: *Self, offset: Token.Ref) void {
     self.pos += offset;
 }
 
 /// get the tag for a token at the given position.
 /// pre: position is in bounds of the token arrays.
-fn tag(self: *const Self, pos: Token.Idx) Token.Tag {
+fn tag(self: *const Self, pos: Token.Ref) Token.Tag {
     // note: we should never reach a state where the index is out of bounds.
     // in case we do, just crash the program.
-    return self.tokens.tags[pos];
+    return self.tokens.items(.tag)[pos];
 }
 
-fn addExtraData(self: *Self, alloc: mem.Allocator, comptime T: type, data: T) !Ast.ExtraIdx {
-    const start: Ast.ExtraIdx = @intCast(self.extra_data.items.len);
+fn addExtraData(self: *Self, alloc: mem.Allocator, comptime T: type, data: T) !Ast.Slot {
+    const start: Ast.Slot = @intCast(self.extra_data.items.len);
     const fields = @typeInfo(T).@"struct".fields;
     inline for (fields) |field| {
         const val = @field(data, field.name);
         try self.extra_data.append(alloc, switch (field.type) {
             Ast.Slot => val,
-            Ast.NodeIdx => @intFromEnum(val),
+            Ast.Node.Ref => @intFromEnum(val),
             else => @compileError("unsupported extra_data field type"),
         });
     }
     return start;
 }
 
-fn addNode(self: *Self, alloc: mem.Allocator, node: Ast.Node) !Ast.NodeIdx {
+fn addNode(self: *Self, alloc: mem.Allocator, node: Ast.Node) !Ast.Node.Ref {
     const idx: u32 = @intCast(self.nodes.len);
     try self.nodes.append(alloc, node);
     return @enumFromInt(idx);
 }
 
-fn addError(self: *Self, alloc: mem.Allocator, t: Ast.Error.Tag) !Ast.NodeIdx {
+fn addError(self: *Self, alloc: mem.Allocator, t: Ast.Error.Tag) !Ast.Node.Ref {
     try self.errors.append(alloc, .{ .tag = t, .token = self.pos });
     self.advance(); // skip offending token
 
