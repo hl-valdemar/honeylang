@@ -9,7 +9,7 @@ contents: []const u8,
 const Self = @This();
 
 pub const ID = u16;
-pub const Ref = @import("../root.zig").BaseRef;
+pub const Ref = u32;
 
 pub const LineCol = struct {
     line: u32,

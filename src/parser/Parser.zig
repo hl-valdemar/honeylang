@@ -5,12 +5,13 @@ src: *const Source,
 tokens: Lexer.Tokens.Slice,
 pos: Token.Ref,
 nodes: Ast.Nodes,
-extra_data: Ast.Slots,
-scratch: Ast.Slots,
+extra_data: Ast.Refs,
+scratch: Ast.Refs,
 errors: Ast.Errors,
 
 const Self = @This();
 
+const BaseRef = @import("../root.zig").BaseRef;
 const Source = @import("../source/Source.zig");
 const Lexer = @import("../lexer/Lexer.zig");
 const Token = @import("../lexer/Token.zig");
@@ -70,14 +71,14 @@ pub fn parse(self: *Self, alloc: mem.Allocator) !Ast {
         if (self.tag(self.pos) == .eof) break;
 
         const decl = try self.parseTopLevelDecl(alloc);
-        try self.scratch.append(alloc, @intFromEnum(decl));
+        try self.scratch.append(alloc, decl);
     }
 
     // copy to extra-data
     const decls = self.scratch.items[scratch_top..];
-    const extra_start: Ast.Slot = @intCast(self.extra_data.items.len);
+    const extra_start: BaseRef = @enumFromInt(@as(u32, @intCast(self.extra_data.items.len)));
     try self.extra_data.appendSlice(alloc, decls);
-    const extra_end: Ast.Slot = @intCast(self.extra_data.items.len);
+    const extra_end: BaseRef = @enumFromInt(@as(u32, @intCast(self.extra_data.items.len)));
     self.scratch.items.len = scratch_top; // reset scratch pointer
 
     // patch root data
@@ -126,7 +127,7 @@ fn parseConstDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_e
     return self.addNode(alloc, .{
         .tag = .const_decl,
         .main_token = name_tok,
-        .data = .{ .a = @intFromEnum(type_expr), .b = @intFromEnum(value) },
+        .data = .{ .a = type_expr, .b = value },
     });
 }
 
@@ -138,7 +139,7 @@ fn parseVarDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_exp
     return self.addNode(alloc, .{
         .tag = .var_decl,
         .main_token = name_tok,
-        .data = .{ .a = @intFromEnum(type_expr), .b = @intFromEnum(value) },
+        .data = .{ .a = type_expr, .b = value },
     });
 }
 
@@ -157,7 +158,7 @@ fn parseFuncDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref) !Ast.No
     const scratch_top = self.scratch.items.len;
     while (self.tag(self.pos) != .right_paren and self.tag(self.pos) != .eof) {
         const param = try self.parseParam(alloc);
-        try self.scratch.append(alloc, @intFromEnum(param));
+        try self.scratch.append(alloc, param);
         if (self.tag(self.pos) == .comma) self.advance();
     }
 
@@ -165,9 +166,9 @@ fn parseFuncDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref) !Ast.No
 
     // copy params to extra_data
     const params = self.scratch.items[scratch_top..];
-    const params_start: Ast.Slot = @intCast(self.extra_data.items.len);
+    const params_start: BaseRef = @enumFromInt(@as(u32, @intCast(self.extra_data.items.len)));
     try self.extra_data.appendSlice(alloc, params);
-    const params_end: Ast.Slot = @intCast(self.extra_data.items.len);
+    const params_end: BaseRef = @enumFromInt(@as(u32, @intCast(self.extra_data.items.len)));
     self.scratch.items.len = scratch_top;
 
     const return_type = try self.parseExpr(alloc, 0);
@@ -198,7 +199,7 @@ fn parseParam(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
     return self.addNode(alloc, .{
         .tag = .param,
         .main_token = name_tok,
-        .data = .{ .a = @intFromEnum(type_expr) },
+        .data = .{ .a = type_expr },
     });
 }
 
@@ -212,15 +213,15 @@ fn parseBlock(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
         if (self.tag(self.pos) == .right_curly or self.tag(self.pos) == .eof) break;
 
         const stmt = try self.parseStatement(alloc);
-        try self.scratch.append(alloc, @intFromEnum(stmt));
+        try self.scratch.append(alloc, stmt);
     }
 
     try self.expect(alloc, .right_curly);
 
     const stmts = self.scratch.items[scratch_top..];
-    const start: Ast.Slot = @intCast(self.extra_data.items.len);
+    const start: BaseRef = @enumFromInt(@as(u32, @intCast(self.extra_data.items.len)));
     try self.extra_data.appendSlice(alloc, stmts);
-    const end: Ast.Slot = @intCast(self.extra_data.items.len);
+    const end: BaseRef = @enumFromInt(@as(u32, @intCast(self.extra_data.items.len)));
     self.scratch.items.len = scratch_top;
 
     return self.addNode(alloc, .{
@@ -258,7 +259,7 @@ fn parseReturnStatement(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
     return self.addNode(alloc, .{
         .tag = .return_val,
         .main_token = tok,
-        .data = .{ .a = @intFromEnum(value) },
+        .data = .{ .a = value },
     });
 }
 
@@ -279,8 +280,8 @@ fn parseExpr(self: *Self, alloc: mem.Allocator, min_bp: BindingPower.Type) !Ast.
             .tag = .binary_op,
             .main_token = op_pos,
             .data = .{
-                .a = @intFromEnum(left),
-                .b = @intFromEnum(right),
+                .a = left,
+                .b = right,
             },
         });
     }
@@ -344,14 +345,14 @@ fn tag(self: *const Self, pos: Token.Ref) Token.Tag {
     return self.tokens.items(.tag)[pos];
 }
 
-fn addExtraData(self: *Self, alloc: mem.Allocator, comptime T: type, data: T) !Ast.Slot {
-    const start: Ast.Slot = @intCast(self.extra_data.items.len);
+fn addExtraData(self: *Self, alloc: mem.Allocator, comptime T: type, data: T) !BaseRef {
+    const start: BaseRef = @enumFromInt(@as(u32, @intCast(self.extra_data.items.len)));
     const fields = @typeInfo(T).@"struct".fields;
     inline for (fields) |field| {
         const val = @field(data, field.name);
         try self.extra_data.append(alloc, switch (field.type) {
-            Ast.Slot => val,
-            Ast.Node.Ref => @intFromEnum(val),
+            BaseRef => val,
+            u32 => @enumFromInt(val),
             else => @compileError("unsupported extra_data field type"),
         });
     }

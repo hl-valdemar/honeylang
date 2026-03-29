@@ -2,7 +2,6 @@ const std = @import("std");
 const mem = std.mem;
 const heap = std.heap;
 const builtin = @import("builtin");
-const pretty = @import("lib/pretty.zig");
 const honey = @import("honeylang");
 
 pub fn main() !void {

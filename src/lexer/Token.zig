@@ -11,7 +11,7 @@ tag: Tag,
 start: Ref,
 str_id: StringPool.ID,
 
-pub const Ref = @import("../root.zig").BaseRef;
+pub const Ref = u32;
 
 pub const Tag = enum {
     // complex tokens

@@ -2,11 +2,13 @@ const std = @import("std");
 const mem = std.mem;
 
 nodes: Nodes.Slice,
-extra_data: []const Slot,
+extra_data: []const BaseRef,
 errors: Errors.Slice,
 tokens: Lexer.Tokens.Slice,
 
 const Self = @This();
+
+pub const BaseRef = @import("../root.zig").BaseRef;
 
 const StringPool = @import("../root.zig").StringPool;
 const Source = @import("../source/Source.zig");
@@ -14,36 +16,19 @@ const Token = @import("../lexer/Token.zig");
 const Lexer = @import("../lexer/Lexer.zig");
 
 pub const Nodes = std.MultiArrayList(Node);
-pub const Slots = std.ArrayListUnmanaged(Slot);
+pub const Refs = std.ArrayListUnmanaged(BaseRef);
 pub const Errors = std.MultiArrayList(Error);
-
-/// abstract index up for interpretation.
-pub const Slot = @import("../root.zig").BaseRef;
 
 pub const Node = struct {
     tag: Tag,
     main_token: Token.Ref, // anchor in source
     data: Data,
 
-    /// index into node list.
-    pub const Ref = enum(Slot) {
-        none = std.math.maxInt(Slot), // no-node sentinel
-        _,
+    pub const Ref = BaseRef;
 
-        pub fn unwrap(self: Ref) ?Slot {
-            if (self == .none) return null;
-            return @intFromEnum(self);
-        }
-
-        pub fn asExtra(self: Ref) Slot {
-            return @intFromEnum(self);
-        }
-    };
-
-    /// struct of registers for arbitrary data.
     pub const Data = struct {
-        a: Slot = 0,
-        b: Slot = 0,
+        a: BaseRef = @enumFromInt(0),
+        b: BaseRef = @enumFromInt(0),
     };
 
     pub const Tag = enum {
@@ -65,7 +50,7 @@ pub const Node = struct {
 
         /// name :: func(params) return_type { body }
         /// main_token: identifier
-        /// a: Slot → FuncDecl
+        /// a: BaseRef → FuncDecl
         /// b: unused
         func_decl,
 
@@ -128,8 +113,8 @@ pub const Node = struct {
 
 /// extra data for func_decl. packed into extra-data as consecutive integers.
 pub const FuncDecl = struct {
-    params_start: Slot,
-    params_end: Slot,
+    params_start: BaseRef,
+    params_end: BaseRef,
     return_type: Node.Ref, // .none for void
     body: Node.Ref, // .none for extern declarations
     flags: u32, // packed: bits[0] = is_variadic, bits[1..3] for calling convention
@@ -171,22 +156,22 @@ pub fn nodeMainToken(self: *const Self, idx: Node.Ref) Token.Ref {
 }
 
 /// read a packed struct from extra_data starting from idx.
-pub fn extraData(self: *const Self, comptime T: type, idx: Slot) T {
+pub fn extraData(self: *const Self, comptime T: type, idx: BaseRef) T {
     const fields = @typeInfo(T).@"struct".fields;
     var result: T = undefined;
     inline for (fields, 0..) |field, i| {
-        const val = self.extra_data[idx + i];
+        const val = self.extra_data[@intFromEnum(idx) + i];
         @field(result, field.name) = switch (field.type) {
-            Slot => val,
-            Node.Ref => @enumFromInt(val),
+            BaseRef => val,
+            u32 => @intFromEnum(val),
             else => @compileError("unsupported extra_data field type"),
         };
     }
     return result;
 }
 
-pub fn extraSlice(self: *const Self, start: Slot, end: Slot) []const Slot {
-    return self.extra_data[start..end];
+pub fn extraSlice(self: *const Self, start: BaseRef, end: BaseRef) []const BaseRef {
+    return self.extra_data[@intFromEnum(start)..@intFromEnum(end)];
 }
 
 pub fn tokenSlice(self: *const Self, idx: Token.Ref, src: []const u8) []const u8 {
@@ -215,45 +200,40 @@ fn renderNode(
     const data = self.nodeData(idx);
     switch (self.nodeTag(idx)) {
         .root => {
-            const decl_idxs = self.extra_data[data.a..data.b];
-            try self.renderDeclList(alloc, buf, decl_idxs, src, str_pool, indent);
+            try self.renderDeclList(alloc, buf, self.extraSlice(data.a, data.b), src, str_pool, indent);
         },
         .const_decl => {
             const ident_idx = self.nodeMainToken(idx);
-            const type_idx: Node.Ref = @enumFromInt(data.a);
-            const val_idx: Node.Ref = @enumFromInt(data.b);
 
             // write `name [type] :: value\n`
             try buf.appendNTimes(alloc, ' ', indent);
             try buf.appendSlice(alloc, str_pool.get(self.tokens.items(.str_id)[ident_idx]));
-            if (type_idx != .none) {
+            if (data.a != .none) {
                 try buf.append(alloc, ' ');
-                try self.renderNode(alloc, buf, type_idx, src, str_pool, 0);
+                try self.renderNode(alloc, buf, data.a, src, str_pool, 0);
             }
             try buf.appendSlice(alloc, " :: ");
-            try self.renderNode(alloc, buf, val_idx, src, str_pool, 0);
+            try self.renderNode(alloc, buf, data.b, src, str_pool, 0);
             try buf.append(alloc, '\n');
         },
         .var_decl => {
             const ident_idx = self.nodeMainToken(idx);
-            const type_idx: Node.Ref = @enumFromInt(data.a);
-            const val_idx: Node.Ref = @enumFromInt(data.b);
 
             // write `name [type] = value\n`
             try buf.appendNTimes(alloc, ' ', indent);
             try buf.appendSlice(alloc, str_pool.get(self.tokens.items(.str_id)[ident_idx]));
-            if (type_idx != .none) {
+            if (data.a != .none) {
                 try buf.append(alloc, ' ');
-                try self.renderNode(alloc, buf, type_idx, src, str_pool, 0);
+                try self.renderNode(alloc, buf, data.a, src, str_pool, 0);
             }
             try buf.appendSlice(alloc, " = ");
-            try self.renderNode(alloc, buf, val_idx, src, str_pool, 0);
+            try self.renderNode(alloc, buf, data.b, src, str_pool, 0);
             try buf.append(alloc, '\n');
         },
         .func_decl => {
             const ident_idx = self.nodeMainToken(idx);
             const func = self.extraData(FuncDecl, data.a);
-            const params = self.extra_data[func.params_start..func.params_end];
+            const params = self.extraSlice(func.params_start, func.params_end);
 
             // write `name :: [cc] func(params) type { body }\n`
             try buf.appendNTimes(alloc, ' ', indent);
@@ -268,9 +248,9 @@ fn renderNode(
 
             try buf.appendSlice(alloc, "func(");
 
-            for (params, 0..) |param_idx, i| {
+            for (params, 0..) |param_ref, i| {
                 if (i > 0) try buf.appendSlice(alloc, ", ");
-                try self.renderNode(alloc, buf, @enumFromInt(param_idx), src, str_pool, 0);
+                try self.renderNode(alloc, buf, param_ref, src, str_pool, 0);
             }
 
             try buf.appendSlice(alloc, ") ");
@@ -280,33 +260,28 @@ fn renderNode(
             try buf.append(alloc, '\n');
         },
         .param => {
-            const param_idx = self.nodeMainToken(idx);
-            const param_val = str_pool.get(self.tokens.items(.str_id)[param_idx]);
-            const type_idx: Node.Ref = @enumFromInt(data.a);
+            const param_tok = self.nodeMainToken(idx);
+            const param_val = str_pool.get(self.tokens.items(.str_id)[param_tok]);
 
             // write `name type_expr`
             try buf.appendSlice(alloc, param_val);
             try buf.append(alloc, ' ');
-            try self.renderNode(alloc, buf, type_idx, src, str_pool, 0);
+            try self.renderNode(alloc, buf, data.a, src, str_pool, 0);
         },
         .block => {
-            const decl_idxs = self.extra_data[data.a..data.b];
-
             // write `{ body }`
             try buf.appendSlice(alloc, "{\n");
-            try self.renderDeclList(alloc, buf, decl_idxs, src, str_pool, indent + 4);
+            try self.renderDeclList(alloc, buf, self.extraSlice(data.a, data.b), src, str_pool, indent + 4);
             try buf.appendNTimes(alloc, ' ', indent);
             try buf.append(alloc, '}');
         },
         .return_val => {
-            const val_idx: Node.Ref = @enumFromInt(data.a);
-
-            // write `return <expr>\n`
+            // write `return [expr]\n`
             try buf.appendNTimes(alloc, ' ', indent);
             try buf.appendSlice(alloc, "return");
-            if (val_idx != .none) {
+            if (data.a != .none) {
                 try buf.append(alloc, ' ');
-                try self.renderNode(alloc, buf, val_idx, src, str_pool, 0);
+                try self.renderNode(alloc, buf, data.a, src, str_pool, 0);
             }
             try buf.append(alloc, '\n');
         },
@@ -314,30 +289,21 @@ fn renderNode(
             const op_idx = self.nodeMainToken(idx);
             const op_val = self.tokenSlice(op_idx, src);
 
-            const left_idx: Node.Ref = @enumFromInt(data.a);
-            const right_idx: Node.Ref = @enumFromInt(data.b);
-
-            // write `<expr> <op> <expr>`
+            // write `[expr] [op] [expr]`
             try buf.appendNTimes(alloc, ' ', indent);
-            try self.renderNode(alloc, buf, left_idx, src, str_pool, 0);
+            try self.renderNode(alloc, buf, data.a, src, str_pool, 0);
             try buf.append(alloc, ' ');
             try buf.appendSlice(alloc, op_val);
             try buf.append(alloc, ' ');
-            try self.renderNode(alloc, buf, right_idx, src, str_pool, 0);
+            try self.renderNode(alloc, buf, data.b, src, str_pool, 0);
         },
         .identifier => {
             const ident_idx = self.nodeMainToken(idx);
-            const ident_val = str_pool.get(self.tokens.items(.str_id)[ident_idx]);
-
-            // write token string
-            try buf.appendSlice(alloc, ident_val);
+            try buf.appendSlice(alloc, str_pool.get(self.tokens.items(.str_id)[ident_idx]));
         },
         .number_literal => {
             const num_idx = self.nodeMainToken(idx);
-            const num_val = str_pool.get(self.tokens.items(.str_id)[num_idx]);
-
-            // write token string
-            try buf.appendSlice(alloc, num_val);
+            try buf.appendSlice(alloc, str_pool.get(self.tokens.items(.str_id)[num_idx]));
         },
         .@"error" => {
             try buf.appendSlice(alloc, "<error>");
@@ -353,15 +319,14 @@ fn renderDeclList(
     self: *const Self,
     alloc: mem.Allocator,
     buf: *std.ArrayListUnmanaged(u8),
-    decls: []const Slot,
+    decls: []const BaseRef,
     src: []const u8,
     str_pool: *const StringPool,
     indent: u32,
 ) mem.Allocator.Error!void {
-    for (decls, 0..) |decl_idx, i| {
-        const node_idx: Node.Ref = @enumFromInt(decl_idx);
-        if (i > 0 and self.nodeTag(node_idx) == .func_decl)
+    for (decls, 0..) |decl_ref, i| {
+        if (i > 0 and self.nodeTag(decl_ref) == .func_decl)
             try buf.append(alloc, '\n');
-        try self.renderNode(alloc, buf, node_idx, src, str_pool, indent);
+        try self.renderNode(alloc, buf, decl_ref, src, str_pool, indent);
     }
 }

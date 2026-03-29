@@ -5,8 +5,13 @@ pub const SourceManager = @import("source/Manager.zig");
 pub const Lexer = @import("lexer/Lexer.zig");
 pub const Parser = @import("parser/Parser.zig");
 
+const std = @import("std");
+
 // agnostic types
-pub const BaseRef = u32;
+pub const BaseRef = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+};
 
 pub const Severity = enum {
     fatal,
