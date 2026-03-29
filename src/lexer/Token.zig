@@ -3,6 +3,8 @@ const StringPool = @import("../root.zig").StringPool;
 
 pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "mut", .mut },
+    .{ "if", .@"if" },
+    .{ "else", .@"else" },
     .{ "func", .func },
     .{ "return", .@"return" },
 });
@@ -20,14 +22,21 @@ pub const Tag = enum {
 
     // keywords
     mut,
+    @"if",
+    @"else",
     func,
     @"return",
 
     // arithmetic tokens
-    add,
-    sub,
-    mul,
+    plus,
+    minus,
+    times,
     div,
+
+    // logic tokens
+    not,
+    @"and",
+    @"or",
 
     // single-char tokens
     colon,

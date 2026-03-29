@@ -43,5 +43,17 @@ pub fn main() !void {
     defer alloc.free(rendered);
 
     std.debug.print("\n[::Rendered AST::]\n\n", .{});
-    std.debug.print("{s}", .{rendered});
+    std.debug.print("{s}\n", .{rendered});
+
+    var hir = honey.HIR.init();
+    defer hir.deinit(alloc);
+
+    const root: honey.HIR.Inst.Ref = @enumFromInt(0);
+    _ = try hir.lower(alloc, root, &ast, &str_pool);
+
+    const rendered_hir = try hir.render(alloc, &str_pool);
+    defer alloc.free(rendered_hir);
+
+    std.debug.print("\n[::Rendered HIR::]\n\n", .{});
+    std.debug.print("{s}\n", .{rendered_hir});
 }

@@ -1,7 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 
-nodes: Nodes.Slice,
+nodes:  Nodes.Slice,
 extra_data: []const BaseRef,
 errors: Errors.Slice,
 tokens: Lexer.Tokens.Slice,
@@ -21,7 +21,7 @@ pub const Errors = std.MultiArrayList(Error);
 
 pub const Node = struct {
     tag: Tag,
-    main_token: Token.Ref, // anchor in source
+    main_tok: Token.Ref, // anchor in source
     data: Data,
 
     pub const Ref = BaseRef;
@@ -36,25 +36,37 @@ pub const Node = struct {
         /// extra_data[a..b] contains top-level node indices
         root,
 
-        /// name :: value
+        /// <name> [type] :: <value>
         /// main_token: identifier
         /// a: type expression (Ref)
         /// b: value expression (Ref)
         const_decl,
 
-        /// name = value
+        /// <name> [type] = <value>
         /// main_token: identifier
         /// a: type expression (Ref)
         /// b: value expression (Ref)
         var_decl,
 
-        /// name :: func(params) return_type { body }
+        /// `if <expr> { [body] }`
+        /// main_token: if
+        /// a: condition (Ref)
+        /// b: body (Ref)
+        if_simple,
+
+        /// `if <expr> { [body] } else { [body] }`
+        /// main_token: if
+        /// a: condition (Ref)
+        /// b: extra-data index (BaseRef) → { body, else_node }
+        if_else,
+
+        /// `<name> :: [cc] func([params]) <type> { [body] }`
         /// main_token: identifier
-        /// a: BaseRef → FuncDecl
+        /// a: extra-data index (BaseRef) → FuncDecl
         /// b: unused
         func_decl,
 
-        /// name type (e.g. a int)
+        /// <name> <type> (e.g. a int)
         /// main_token: identifier (param name)
         /// a: type expression (Ref)
         /// b: unused
@@ -87,18 +99,24 @@ pub const Node = struct {
         /// a, b: unused
         string_literal,
 
-        /// a grouped expression: `(expr)`
+        /// `(<expr>)`
         /// main_token: `(` token
         /// a: inner expression (Ref)
         /// b: unused
         grouped_expr,
 
-        /// a block of statements: `{ ... }`
+        /// a dangling expression
+        /// main_token: first token of expression
+        /// a: expr
+        /// b: unused
+        expr_statement,
+
+        /// `{ [body] }`
         /// main_token: `{` token
         /// extra_data[a..b] contains statement node indices
         block,
 
-        /// return expr
+        /// `<return> [expr]`
         /// main_token: `return` token
         /// a: value expression (Ref), .none for bare return
         /// b: unused
@@ -113,11 +131,20 @@ pub const Node = struct {
 
 /// extra data for func_decl. packed into extra-data as consecutive integers.
 pub const FuncDecl = struct {
+    /// index into extra_data
     params_start: BaseRef,
+
+    /// index into extra_data
     params_end: BaseRef,
-    return_type: Node.Ref, // .none for void
-    body: Node.Ref, // .none for extern declarations
-    flags: u32, // packed: bits[0] = is_variadic, bits[1..3] for calling convention
+
+    /// .none for void
+    ret_type: Node.Ref, // .none for void
+
+    /// .none for extern declarations
+    body: Node.Ref,
+
+    /// packed: bits[0] = is_variadic, bits[1..3] for calling convention
+    flags: u32,
 
     pub const Flag = struct {
         pub const is_variadic: u32 = 1;
@@ -129,6 +156,12 @@ pub const FuncDecl = struct {
         honey = 0,
         c = 1,
     };
+};
+
+/// extra data for if_else. packed into extra-data as consecutive integers. (condition in parent node.)
+pub const ElseIfInfo = struct {
+    body: Node.Ref,
+    else_node: Node.Ref,
 };
 
 pub const Error = struct {
@@ -143,24 +176,24 @@ pub const Error = struct {
     };
 };
 
-pub fn nodeData(self: *const Self, idx: Node.Ref) Node.Data {
-    return self.nodes.items(.data)[@intFromEnum(idx)];
+pub fn nodeData(self: *const Self, node: Node.Ref) Node.Data {
+    return self.nodes.items(.data)[@intFromEnum(node)];
 }
 
-pub fn nodeTag(self: *const Self, idx: Node.Ref) Node.Tag {
-    return self.nodes.items(.tag)[@intFromEnum(idx)];
+pub fn nodeTag(self: *const Self, node: Node.Ref) Node.Tag {
+    return self.nodes.items(.tag)[@intFromEnum(node)];
 }
 
-pub fn nodeMainToken(self: *const Self, idx: Node.Ref) Token.Ref {
-    return self.nodes.items(.main_token)[@intFromEnum(idx)];
+pub fn nodeMainToken(self: *const Self, node: Node.Ref) Token.Ref {
+    return self.nodes.items(.main_tok)[@intFromEnum(node)];
 }
 
 /// read a packed struct from extra_data starting from idx.
-pub fn extraData(self: *const Self, comptime T: type, idx: BaseRef) T {
+pub fn unpackExtraData(self: *const Self, comptime T: type, ref: BaseRef) T {
     const fields = @typeInfo(T).@"struct".fields;
     var result: T = undefined;
     inline for (fields, 0..) |field, i| {
-        const val = self.extra_data[@intFromEnum(idx) + i];
+        const val = self.extra_data[@intFromEnum(ref) + i];
         @field(result, field.name) = switch (field.type) {
             BaseRef => val,
             u32 => @intFromEnum(val),
@@ -174,159 +207,171 @@ pub fn extraSlice(self: *const Self, start: BaseRef, end: BaseRef) []const BaseR
     return self.extra_data[@intFromEnum(start)..@intFromEnum(end)];
 }
 
-pub fn tokenSlice(self: *const Self, idx: Token.Ref, src: []const u8) []const u8 {
-    var start = self.tokens.items(.start)[idx];
-    const token = Lexer.nextToken(src, &start);
-    return src[token.start..token.end];
+pub fn tokenSlice(self: *const Self, tok: Token.Ref, src: []const u8) []const u8 {
+    var start = self.tokens.items(.start)[tok];
+    const scanned = Lexer.nextToken(src, &start);
+    return src[scanned.start..scanned.end];
 }
+
+const Writer = std.ArrayListUnmanaged(u8).Writer;
 
 /// render ast as raw honey code.
 pub fn render(self: *const Self, alloc: mem.Allocator, src: []const u8, str_pool: *const StringPool) ![]const u8 {
     var buf = std.ArrayListUnmanaged(u8){};
-    const root_idx: Node.Ref = @enumFromInt(0);
-    try self.renderNode(alloc, &buf, root_idx, src, str_pool, 0);
+    const w = buf.writer(alloc);
+    const root: Node.Ref = @enumFromInt(0);
+    try self.renderNode(w, root, src, str_pool, 0);
     return buf.toOwnedSlice(alloc);
 }
 
 fn renderNode(
     self: *const Self,
-    alloc: mem.Allocator,
-    buf: *std.ArrayListUnmanaged(u8),
-    idx: Node.Ref,
+    w: Writer,
+    node: Node.Ref,
     src: []const u8,
     str_pool: *const StringPool,
     indent: u32,
-) mem.Allocator.Error!void {
-    const data = self.nodeData(idx);
-    switch (self.nodeTag(idx)) {
+) Writer.Error!void {
+    const data = self.nodeData(node);
+    switch (self.nodeTag(node)) {
         .root => {
-            try self.renderDeclList(alloc, buf, self.extraSlice(data.a, data.b), src, str_pool, indent);
+            try self.renderDeclList(w, self.extraSlice(data.a, data.b), src, str_pool, indent);
         },
         .const_decl => {
-            const ident_idx = self.nodeMainToken(idx);
-
-            // write `name [type] :: value\n`
-            try buf.appendNTimes(alloc, ' ', indent);
-            try buf.appendSlice(alloc, str_pool.get(self.tokens.items(.str_id)[ident_idx]));
+            const tok = self.nodeMainToken(node);
+            try w.writeByteNTimes(' ', indent);
+            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
             if (data.a != .none) {
-                try buf.append(alloc, ' ');
-                try self.renderNode(alloc, buf, data.a, src, str_pool, 0);
+                try w.writeByte(' ');
+                try self.renderNode(w, data.a, src, str_pool, 0);
             }
-            try buf.appendSlice(alloc, " :: ");
-            try self.renderNode(alloc, buf, data.b, src, str_pool, 0);
-            try buf.append(alloc, '\n');
+            try w.writeAll(" :: ");
+            try self.renderNode(w, data.b, src, str_pool, 0);
+            try w.writeByte('\n');
         },
         .var_decl => {
-            const ident_idx = self.nodeMainToken(idx);
-
-            // write `name [type] = value\n`
-            try buf.appendNTimes(alloc, ' ', indent);
-            try buf.appendSlice(alloc, str_pool.get(self.tokens.items(.str_id)[ident_idx]));
+            const tok = self.nodeMainToken(node);
+            try w.writeByteNTimes(' ', indent);
+            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
             if (data.a != .none) {
-                try buf.append(alloc, ' ');
-                try self.renderNode(alloc, buf, data.a, src, str_pool, 0);
+                try w.writeByte(' ');
+                try self.renderNode(w, data.a, src, str_pool, 0);
             }
-            try buf.appendSlice(alloc, " = ");
-            try self.renderNode(alloc, buf, data.b, src, str_pool, 0);
-            try buf.append(alloc, '\n');
+            try w.writeAll(" = ");
+            try self.renderNode(w, data.b, src, str_pool, 0);
+            try w.writeByte('\n');
+        },
+        .if_simple => {
+            const tok = self.nodeMainToken(node);
+            try w.writeByteNTimes(' ', indent);
+            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
+            try w.writeByte(' ');
+            try self.renderNode(w, data.a, src, str_pool, 0);
+            try w.writeByte(' ');
+            try self.renderNode(w, data.b, src, str_pool, indent);
+            try w.writeByte('\n');
+        },
+        .if_else => {
+            const tok = self.nodeMainToken(node);
+            const info = self.unpackExtraData(ElseIfInfo, data.b);
+            try w.writeByteNTimes(' ', indent);
+            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
+            try w.writeByte(' ');
+            try self.renderNode(w, data.a, src, str_pool, 0);
+            try w.writeByte(' ');
+            try self.renderNode(w, info.body, src, str_pool, indent);
+            if (info.else_node != .none) {
+                try w.writeAll(" else ");
+                try self.renderNode(w, info.else_node, src, str_pool, indent);
+            }
+            try w.writeByte('\n');
         },
         .func_decl => {
-            const ident_idx = self.nodeMainToken(idx);
-            const func = self.extraData(FuncDecl, data.a);
+            const tok = self.nodeMainToken(node);
+            const func = self.unpackExtraData(FuncDecl, data.a);
             const params = self.extraSlice(func.params_start, func.params_end);
-
-            // write `name :: [cc] func(params) type { body }\n`
-            try buf.appendNTimes(alloc, ' ', indent);
-            try buf.appendSlice(alloc, str_pool.get(self.tokens.items(.str_id)[ident_idx]));
-            try buf.appendSlice(alloc, " :: ");
-
+            try w.writeByteNTimes(' ', indent);
+            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
+            try w.writeAll(" :: ");
             switch ((func.flags & FuncDecl.Flag.cc_mask) >> FuncDecl.Flag.cc_shift) {
-                @intFromEnum(FuncDecl.CallingConvention.c) => try buf.appendSlice(alloc, "c "),
-                @intFromEnum(FuncDecl.CallingConvention.honey) => {}, // default, write nothing
+                @intFromEnum(FuncDecl.CallingConvention.c) => try w.writeAll("c "),
+                @intFromEnum(FuncDecl.CallingConvention.honey) => {},
                 else => unreachable,
             }
-
-            try buf.appendSlice(alloc, "func(");
-
-            for (params, 0..) |param_ref, i| {
-                if (i > 0) try buf.appendSlice(alloc, ", ");
-                try self.renderNode(alloc, buf, param_ref, src, str_pool, 0);
+            try w.writeAll("func(");
+            for (params, 0..) |param, i| {
+                if (i > 0) try w.writeAll(", ");
+                try self.renderNode(w, param, src, str_pool, 0);
             }
-
-            try buf.appendSlice(alloc, ") ");
-            try self.renderNode(alloc, buf, func.return_type, src, str_pool, 0);
-            try buf.append(alloc, ' ');
-            try self.renderNode(alloc, buf, func.body, src, str_pool, indent);
-            try buf.append(alloc, '\n');
+            try w.writeAll(") ");
+            try self.renderNode(w, func.ret_type, src, str_pool, 0);
+            try w.writeByte(' ');
+            try self.renderNode(w, func.body, src, str_pool, indent);
+            try w.writeByte('\n');
         },
         .param => {
-            const param_tok = self.nodeMainToken(idx);
-            const param_val = str_pool.get(self.tokens.items(.str_id)[param_tok]);
-
-            // write `name type_expr`
-            try buf.appendSlice(alloc, param_val);
-            try buf.append(alloc, ' ');
-            try self.renderNode(alloc, buf, data.a, src, str_pool, 0);
+            const tok = self.nodeMainToken(node);
+            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
+            try w.writeByte(' ');
+            try self.renderNode(w, data.a, src, str_pool, 0);
         },
         .block => {
-            // write `{ body }`
-            try buf.appendSlice(alloc, "{\n");
-            try self.renderDeclList(alloc, buf, self.extraSlice(data.a, data.b), src, str_pool, indent + 4);
-            try buf.appendNTimes(alloc, ' ', indent);
-            try buf.append(alloc, '}');
+            try w.writeAll("{\n");
+            try self.renderDeclList(w, self.extraSlice(data.a, data.b), src, str_pool, indent + 4);
+            try w.writeByteNTimes(' ', indent);
+            try w.writeByte('}');
         },
         .return_val => {
-            // write `return [expr]\n`
-            try buf.appendNTimes(alloc, ' ', indent);
-            try buf.appendSlice(alloc, "return");
+            try w.writeByteNTimes(' ', indent);
+            try w.writeAll("return");
             if (data.a != .none) {
-                try buf.append(alloc, ' ');
-                try self.renderNode(alloc, buf, data.a, src, str_pool, 0);
+                try w.writeByte(' ');
+                try self.renderNode(w, data.a, src, str_pool, 0);
             }
-            try buf.append(alloc, '\n');
+            try w.writeByte('\n');
         },
         .binary_op => {
-            const op_idx = self.nodeMainToken(idx);
-            const op_val = self.tokenSlice(op_idx, src);
-
-            // write `[expr] [op] [expr]`
-            try buf.appendNTimes(alloc, ' ', indent);
-            try self.renderNode(alloc, buf, data.a, src, str_pool, 0);
-            try buf.append(alloc, ' ');
-            try buf.appendSlice(alloc, op_val);
-            try buf.append(alloc, ' ');
-            try self.renderNode(alloc, buf, data.b, src, str_pool, 0);
+            const op_str = self.tokenSlice(self.nodeMainToken(node), src);
+            try w.writeByteNTimes(' ', indent);
+            try self.renderNode(w, data.a, src, str_pool, 0);
+            try w.print(" {s} ", .{op_str});
+            try self.renderNode(w, data.b, src, str_pool, 0);
+        },
+        .grouped_expr => {
+            try w.writeByte('(');
+            try self.renderNode(w, data.a, src, str_pool, 0);
+            try w.writeByte(')');
+        },
+        .expr_statement => {
+            try w.writeByteNTimes(' ', indent);
+            try self.renderNode(w, data.a, src, str_pool, 0);
+            try w.writeByte('\n');
         },
         .identifier => {
-            const ident_idx = self.nodeMainToken(idx);
-            try buf.appendSlice(alloc, str_pool.get(self.tokens.items(.str_id)[ident_idx]));
+            const tok = self.nodeMainToken(node);
+            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
         },
         .number_literal => {
-            const num_idx = self.nodeMainToken(idx);
-            try buf.appendSlice(alloc, str_pool.get(self.tokens.items(.str_id)[num_idx]));
+            const tok = self.nodeMainToken(node);
+            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
         },
-        .@"error" => {
-            try buf.appendSlice(alloc, "<error>");
-        },
-        else => {
-            try buf.appendSlice(alloc, "<?>");
-        },
+        .@"error" => try w.writeAll("<error>"),
+        else => try w.writeAll("<?>"),
     }
 }
 
 /// render a list of declarations and insert blank lines before func_decl nodes.
 fn renderDeclList(
     self: *const Self,
-    alloc: mem.Allocator,
-    buf: *std.ArrayListUnmanaged(u8),
+    w: Writer,
     decls: []const BaseRef,
     src: []const u8,
     str_pool: *const StringPool,
     indent: u32,
-) mem.Allocator.Error!void {
-    for (decls, 0..) |decl_ref, i| {
-        if (i > 0 and self.nodeTag(decl_ref) == .func_decl)
-            try buf.append(alloc, '\n');
-        try self.renderNode(alloc, buf, decl_ref, src, str_pool, indent);
+) Writer.Error!void {
+    for (decls, 0..) |decl, i| {
+        if (i > 0 and self.nodeTag(decl) == .func_decl)
+            try w.writeByte('\n');
+        try self.renderNode(w, decl, src, str_pool, indent);
     }
 }

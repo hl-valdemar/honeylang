@@ -4,6 +4,7 @@ pub const StringPool = @import("util/StringPool.zig");
 pub const SourceManager = @import("source/Manager.zig");
 pub const Lexer = @import("lexer/Lexer.zig");
 pub const Parser = @import("parser/Parser.zig");
+pub const HIR = @import("ir/HIR.zig");
 
 const std = @import("std");
 
@@ -30,4 +31,5 @@ test {
     _ = @import("util/StringPool.zig");
     _ = @import("lexer/tests.zig");
     _ = @import("parser/tests.zig");
+    _ = @import("ir/tests.zig");
 }

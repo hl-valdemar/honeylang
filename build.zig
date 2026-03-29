@@ -10,11 +10,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    const pretty = b.addModule("pretty", .{
-        .root_source_file = b.path("lib/pretty.zig"),
-        .target = target,
-    });
-
     // CLI executable - separate root module that imports the library
     const exe = b.addExecutable(.{
         .name = "honey",
@@ -24,7 +19,6 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "honeylang", .module = mod },
-                .{ .name = "pretty", .module = pretty },
             },
         }),
     });

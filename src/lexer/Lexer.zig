@@ -49,7 +49,7 @@ pub fn scan(self: *Self, alloc: mem.Allocator) !Tokens.Slice {
         if (tok.tag == .invalid) continue;
 
         const str_id = str_id: switch (tok.tag) {
-            .identifier, .number => {
+            .identifier, .number, .mut, .@"if", .@"else", .@"return", .func => {
                 break :str_id try self.str_pool.intern(alloc, self.src.contents[tok.start..tok.end]);
             },
             else => break :str_id StringPool.ID.none,
@@ -116,9 +116,9 @@ pub fn nextToken(source: []const u8, pos: *Token.Ref) ScannedToken {
     pos.* += 1;
     return switch (c) {
         // arithmetic
-        '+' => .from(.add, start, pos.*),
-        '-' => .from(.sub, start, pos.*),
-        '*' => .from(.mul, start, pos.*),
+        '+' => .from(.plus, start, pos.*),
+        '-' => .from(.minus, start, pos.*),
+        '*' => .from(.times, start, pos.*),
         '/' => .from(.div, start, pos.*),
 
         // paren-type

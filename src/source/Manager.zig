@@ -2,17 +2,17 @@ const std = @import("std");
 const mem = std.mem;
 const fs = std.fs;
 
-var next_id: Source.ID = 0;
-
 const Self = @This();
 
 const Source = @import("Source.zig");
 
+var next_id: Source.ID = 0;
+
 pub const init = struct {
     pub fn fromStr(alloc: mem.Allocator, str: []const u8) !Source {
-        defer next_id += 1;
+        next_id += 1;
         return .{
-            .id = next_id,
+            .id = next_id - 1,
             .path = null,
             .contents = try alloc.dupe(u8, str),
         };
@@ -27,9 +27,9 @@ pub const init = struct {
 
         _ = try file.readAll(contents);
 
-        defer next_id += 1;
+        next_id += 1;
         return .{
-            .id = next_id,
+            .id = next_id - 1,
             .path = path,
             .contents = contents,
         };

@@ -72,3 +72,33 @@ test "parse arithmetic expr" {
     defer alloc.free(rendered_str);
     try std.testing.expectEqualStrings(src_str, rendered_str);
 }
+
+test "parse simple if statement with grouped condition" {
+    const alloc = std.testing.allocator;
+    const src_str =
+        \\main :: func() void {
+        \\    if (true) {
+        \\        a + b
+        \\    }
+        \\}
+        \\
+    ;
+    const rendered_str = try parse(alloc, src_str);
+    defer alloc.free(rendered_str);
+    try std.testing.expectEqualStrings(src_str, rendered_str);
+}
+
+test "parse simple if statement with non-grouped condition" {
+    const alloc = std.testing.allocator;
+    const src_str =
+        \\main :: func() void {
+        \\    if true {
+        \\        a + b
+        \\    }
+        \\}
+        \\
+    ;
+    const rendered_str = try parse(alloc, src_str);
+    defer alloc.free(rendered_str);
+    try std.testing.expectEqualStrings(src_str, rendered_str);
+}

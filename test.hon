@@ -9,5 +9,11 @@ a int = 0xf0f1
 
 # func decls
 main :: func() int {
-    return 0xff + 2 * 3
+    do_arithmetic :: false
+
+    #if do_arithmetic {
+    #    return 0xff + 2 * 3
+    #}
+    
+    return 0xff
 }

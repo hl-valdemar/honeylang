@@ -38,6 +38,6 @@ test "scan arithmetic expression" {
     const tokens = try lexer.scan(alloc);
 
     try std.testing.expectEqual(tokens.items(.tag)[0], .identifier);
-    try std.testing.expectEqual(tokens.items(.tag)[1], .add);
+    try std.testing.expectEqual(tokens.items(.tag)[1], .plus);
     try std.testing.expectEqual(tokens.items(.tag)[2], .number);
 }
