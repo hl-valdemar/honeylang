@@ -240,36 +240,48 @@ fn parseBlock(self: *Self, alloc: mem.Allocator) mem.Allocator.Error!Ast.Node.Re
 fn parseStatement(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
     switch (self.tokenTag(self.pos)) {
         .identifier => {
-            const name_tok = self.pos;
-            self.advance();
+            const next = self.tokenTag(self.pos + 1);
 
-            switch (self.tokenTag(self.pos)) {
-                .double_colon => return try self.parseConstDecl(alloc, name_tok, .none),
-                .equal => return try self.parseVarDecl(alloc, name_tok, .none),
-                else => {
-                    // type annotation → parse `name type :: value` or `name type = value`
-                    const type_expr = try self.parseExpr(alloc, 0);
-                    return switch (self.tokenTag(self.pos)) {
-                        .double_colon => try self.parseConstOrFunc(alloc, name_tok, type_expr),
-                        .equal => try self.parseVarDecl(alloc, name_tok, type_expr),
-                        else => self.addError(alloc, .expected_declaration),
-                    };
-                },
+            if (next == .double_colon or next == .equal) {
+                // untyped decl: `name :: value` or `name = value`
+                const name_tok = self.pos;
+                self.advance();
+                return switch (self.tokenTag(self.pos)) {
+                    .double_colon => try self.parseConstDecl(alloc, name_tok, .none),
+                    .equal => try self.parseVarDecl(alloc, name_tok, .none),
+                    else => unreachable,
+                };
             }
+
+            if (next == .identifier) {
+                // typed decl: `name type :: value` or `name type = value`
+                const name_tok = self.pos;
+                self.advance();
+                const type_expr = try self.parseExpr(alloc, 0);
+                return switch (self.tokenTag(self.pos)) {
+                    .double_colon => try self.parseConstOrFunc(alloc, name_tok, type_expr),
+                    .equal => try self.parseVarDecl(alloc, name_tok, type_expr),
+                    else => self.addError(alloc, .expected_declaration),
+                };
+            }
+
+            return self.parseExprStatement(alloc);
         },
         .@"if" => return self.parseIfStatement(alloc),
         .@"return" => return self.parseReturnStatement(alloc),
-        else => {
-            const tok = self.pos;
-            const expr = try self.parseExpr(alloc, 0);
-            try self.expect(alloc, .newline);
-            return self.addNode(alloc, .{
-                .tag = .expr_statement,
-                .main_tok = tok,
-                .data = .{ .a = expr },
-            });
-        },
+        else => return self.parseExprStatement(alloc),
     }
+}
+
+fn parseExprStatement(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
+    const tok = self.pos;
+    const expr = try self.parseExpr(alloc, 0);
+    try self.expect(alloc, .newline);
+    return self.addNode(alloc, .{
+        .tag = .expr_statement,
+        .main_tok = tok,
+        .data = .{ .a = expr },
+    });
 }
 
 fn parseIfStatement(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
