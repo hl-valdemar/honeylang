@@ -4,13 +4,13 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // library module - public API exposed via src/root.zig
+    // library module - public api exposed via src/root.zig
     const mod = b.addModule("honeylang", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
     });
 
-    // CLI executable - separate root module that imports the library
+    // cli executable - separate root module that imports the library
     const exe = b.addExecutable(.{
         .name = "honey",
         .root_module = b.createModule(.{

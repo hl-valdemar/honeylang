@@ -20,7 +20,7 @@ test "scan const decl" {
 
     try std.testing.expectEqual(tokens.items(.tag)[0], .identifier);
     try std.testing.expectEqual(tokens.items(.tag)[1], .double_colon);
-    try std.testing.expectEqual(tokens.items(.tag)[2], .number);
+    try std.testing.expectEqual(tokens.items(.tag)[2], .float);
 }
 
 test "scan arithmetic expression" {
@@ -39,5 +39,5 @@ test "scan arithmetic expression" {
 
     try std.testing.expectEqual(tokens.items(.tag)[0], .identifier);
     try std.testing.expectEqual(tokens.items(.tag)[1], .plus);
-    try std.testing.expectEqual(tokens.items(.tag)[2], .number);
+    try std.testing.expectEqual(tokens.items(.tag)[2], .int);
 }

@@ -1,7 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 
-nodes:  Nodes.Slice,
+nodes: Nodes.Slice,
 extra_data: []const BaseRef,
 errors: Errors.Slice,
 tokens: Lexer.Tokens.Slice,
@@ -89,10 +89,15 @@ pub const Node = struct {
         /// a, b: unused
         identifier,
 
-        /// a numeric literal.
-        /// main_token: the number token
+        /// an integer literal.
+        /// main_token: the integer token
         /// a, b: unused
-        number_literal,
+        int_literal,
+
+        /// an float literal.
+        /// main_token: the float token
+        /// a, b: unused
+        float_literal,
 
         /// a string literal.
         /// main_token: the string token
@@ -224,14 +229,7 @@ pub fn render(self: *const Self, alloc: mem.Allocator, src: []const u8, str_pool
     return buf.toOwnedSlice(alloc);
 }
 
-fn renderNode(
-    self: *const Self,
-    w: Writer,
-    node: Node.Ref,
-    src: []const u8,
-    str_pool: *const StringPool,
-    indent: u32,
-) Writer.Error!void {
+fn renderNode(self: *const Self, w: Writer, node: Node.Ref, src: []const u8, str_pool: *const StringPool, indent: u32) Writer.Error!void {
     const data = self.nodeData(node);
     switch (self.nodeTag(node)) {
         .root => {
@@ -347,11 +345,7 @@ fn renderNode(
             try self.renderNode(w, data.a, src, str_pool, 0);
             try w.writeByte('\n');
         },
-        .identifier => {
-            const tok = self.nodeMainToken(node);
-            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
-        },
-        .number_literal => {
+        .identifier, .int_literal, .float_literal => {
             const tok = self.nodeMainToken(node);
             try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
         },
@@ -361,14 +355,7 @@ fn renderNode(
 }
 
 /// render a list of declarations and insert blank lines before func_decl nodes.
-fn renderDeclList(
-    self: *const Self,
-    w: Writer,
-    decls: []const BaseRef,
-    src: []const u8,
-    str_pool: *const StringPool,
-    indent: u32,
-) Writer.Error!void {
+fn renderDeclList(self: *const Self, w: Writer, decls: []const BaseRef, src: []const u8, str_pool: *const StringPool, indent: u32) Writer.Error!void {
     for (decls, 0..) |decl, i| {
         if (i > 0 and self.nodeTag(decl) == .func_decl)
             try w.writeByte('\n');

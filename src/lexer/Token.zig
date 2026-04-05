@@ -18,27 +18,24 @@ pub const Ref = u32;
 pub const Tag = enum {
     // complex tokens
     identifier,
-    number,
+    int,
+    float,
 
     // keywords
     mut,
     @"if",
     @"else",
+    @"and",
+    @"or",
     func,
     @"return",
 
-    // arithmetic tokens
+    // single-char tokens
     plus,
     minus,
-    times,
-    div,
-
-    // logic tokens
-    not,
-    @"and",
-    @"or",
-
-    // single-char tokens
+    star,
+    slash,
+    bang,
     colon,
     comma,
     equal,

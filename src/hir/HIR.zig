@@ -24,9 +24,10 @@ pub const Inst = struct {
     pub const Tag = enum(u32) {
         // ilterals
         int_literal, // a: string pool id
+        float_literal, // a: string pool id
         str_literal, // a: string pool id
 
-        // math
+        // binary ops
         // a: left Ref
         // b: right Ref
         add,
@@ -34,9 +35,14 @@ pub const Inst = struct {
         mul,
         div,
 
+        // unary ops
+        // a: Ref
+        not,
+        negate,
+
         // references
         ref, // a: Ref to the decl/param instruction
-        type_ref, // a: Ref to a type (could be builtin or computed)
+        type_ref, // a: Ref to a type (builtin or computed)
 
         // decls
         // a: string id (name), b: extra_data index → DeclInfo
@@ -48,6 +54,9 @@ pub const Inst = struct {
         ret, // a: Ref to value (or .none)
         block, // a, b: extra_data range to Ref indices
         func, // a: string id (name), b: extra_data index → FuncInfo
+
+        // if statements
+        if_simple, // a: condition (Ref), b: body (Ref)
     };
 };
 
@@ -151,6 +160,11 @@ pub fn lower(
                 .b = extra_idx,
             });
         },
+        .if_simple => {
+            const condition = try self.lower(alloc, data.a, ast, str_pool);
+            const body = try self.lower(alloc, data.b, ast, str_pool);
+            return self.emit(alloc, .if_simple, .{ .a = condition, .b = body });
+        },
         .param => {
             const name_tok = ast.nodeMainToken(node);
             const name = ast.tokens.items(.str_id)[name_tok];
@@ -171,13 +185,29 @@ pub fn lower(
             return self.emit(alloc, .block, .{ .a = start, .b = end });
         },
         .expr_statement => return self.lower(alloc, data.a, ast, str_pool),
-        .return_val => return self.lower(alloc, data.a, ast, str_pool),
+        .return_val => {
+            const expr = try self.lower(alloc, data.a, ast, str_pool);
+            return self.emit(alloc, .ret, .{ .a = expr });
+        },
+        .unary_op => {
+            const expr = try self.lower(alloc, data.a, ast, str_pool);
+            const op_tok = ast.nodeMainToken(node);
+            const tag: Inst.Tag = switch (ast.tokens.items(.tag)[op_tok]) {
+                .bang => .not,
+                .minus => .negate,
+                else => unreachable,
+            };
+            return self.emit(alloc, tag, .{ .a = expr });
+        },
         .binary_op => {
             const left = try self.lower(alloc, data.a, ast, str_pool);
             const right = try self.lower(alloc, data.b, ast, str_pool);
             const op_tok = ast.nodeMainToken(node);
-            const tag = switch (ast.tokens.items(.tag)[op_tok]) {
+            const tag: Inst.Tag = switch (ast.tokens.items(.tag)[op_tok]) {
                 .plus => .add,
+                .minus => .sub,
+                .star => .mul,
+                .slash => .div,
                 else => unreachable,
             };
             return self.emit(alloc, tag, .{ .a = left, .b = right });
@@ -189,10 +219,17 @@ pub fn lower(
                 .a = @enumFromInt(@intFromEnum(name)),
             });
         },
-        .number_literal => {
+        .int_literal => {
             const tok = ast.nodeMainToken(node);
             const name = ast.tokens.items(.str_id)[tok];
             return try self.emit(alloc, .int_literal, .{
+                .a = @enumFromInt(@intFromEnum(name)),
+            });
+        },
+        .float_literal => {
+            const tok = ast.nodeMainToken(node);
+            const name = ast.tokens.items(.str_id)[tok];
+            return try self.emit(alloc, .float_literal, .{
                 .a = @enumFromInt(@intFromEnum(name)),
             });
         },
@@ -251,29 +288,35 @@ pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPo
         const inst = self.insts.get(idx);
         switch (inst.tag) {
             .int_literal => {
-                const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
-                try w.print("%{d} = int({s})\n", .{ idx, name });
+                const val = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                try w.print("%{d: <3} int({s})\n", .{ idx, val });
+            },
+            .float_literal => {
+                const val = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                try w.print("%{d: <3} float({s})\n", .{ idx, val });
             },
             .str_literal => {
-                const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
-                try w.print("%{d} = str(\"{s}\")\n", .{ idx, name });
+                const val = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                try w.print("%{d: <3} str(\"{s}\")\n", .{ idx, val });
+            },
+            .not, .negate => {
+                const tag_name = @tagName(inst.tag);
+                try w.print("%{d: <3} {s}(%{d})\n", .{ idx, tag_name, @intFromEnum(inst.data.a) });
             },
             .add, .sub, .mul, .div => {
                 const tag_name = @tagName(inst.tag);
-                try w.print("%{d} = {s}(%{d}, %{d})\n", .{ idx, tag_name, @intFromEnum(inst.data.a), @intFromEnum(inst.data.b) });
+                try w.print("%{d: <3} {s}(%{d}, %{d})\n", .{ idx, tag_name, @intFromEnum(inst.data.a), @intFromEnum(inst.data.b) });
             },
-            .ref => {
-                try w.print("%{d} = ref(%{d})\n", .{ idx, @intFromEnum(inst.data.a) });
-            },
+            .ref => try w.print("%{d: <3} ref(%{d})\n", .{ idx, @intFromEnum(inst.data.a) }),
             .type_ref => {
                 const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
-                try w.print("%{d} = type_ref({s})\n", .{ idx, name });
+                try w.print("%{d: <3} type_ref({s})\n", .{ idx, name });
             },
             .decl_const, .decl_var => {
                 const tag_name = @tagName(inst.tag);
                 const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
                 const info = self.unpackExtraData(DeclInfo, inst.data.b);
-                try w.print("%{d} = {s}(\"{s}\"", .{ idx, tag_name, name });
+                try w.print("%{d: <3} {s}(\"{s}\"", .{ idx, tag_name, name });
                 if (info.type != .none) {
                     try w.print(", type=%{d}", .{@intFromEnum(info.type)});
                 } else {
@@ -283,28 +326,27 @@ pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPo
             },
             .param => {
                 const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
-                try w.print("%{d} = param(\"{s}\", type=%{d})\n", .{ idx, name, @intFromEnum(inst.data.b) });
+                try w.print("%{d: <3} param(\"{s}\", type=%{d})\n", .{ idx, name, @intFromEnum(inst.data.b) });
             },
             .ret => {
                 if (inst.data.a != .none) {
-                    try w.print("%{d} = ret(%{d})\n", .{ idx, @intFromEnum(inst.data.a) });
+                    try w.print("%{d: <3} ret(%{d})\n", .{ idx, @intFromEnum(inst.data.a) });
                 } else {
-                    try w.print("%{d} = ret()\n", .{idx});
+                    try w.print("%{d: <3} ret()\n", .{idx});
                 }
             },
-            .block => {
-                try w.print("%{d} = block(%{d}..%{d})\n", .{ idx, @intFromEnum(inst.data.a), @intFromEnum(inst.data.b) });
-            },
+            .block => try w.print("%{d: <3} block(%{d}..%{d})\n", .{ idx, @intFromEnum(inst.data.a), @intFromEnum(inst.data.b) }),
             .func => {
                 const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
                 const info = self.unpackExtraData(FuncInfo, inst.data.b);
                 const cc: Ast.FuncDecl.CallingConvention = @enumFromInt((info.flags & Ast.FuncDecl.Flag.cc_mask) >> Ast.FuncDecl.Flag.cc_shift);
-                try w.print("%{d} = func(\"{s}\", cc={s}, params=%{d}..%{d}", .{ idx, name, @tagName(cc), @intFromEnum(info.params_start), @intFromEnum(info.params_end) });
+                try w.print("%{d: <3} func(\"{s}\", cc={s}, params=%{d}..%{d}", .{ idx, name, @tagName(cc), @intFromEnum(info.params_start), @intFromEnum(info.params_end) });
                 if (info.ret_type != .none) {
                     try w.print(", ret=%{d}", .{@intFromEnum(info.ret_type)});
                 }
                 try w.print(", body=%{d})\n", .{@intFromEnum(info.body)});
             },
+            .if_simple => try w.print("%{d: <3} if_simple(cond=%{d}, body=%{d})\n", .{ idx, @intFromEnum(inst.data.a), @intFromEnum(inst.data.b) }),
         }
     }
 

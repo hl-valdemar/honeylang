@@ -29,7 +29,7 @@ const BindingPower = struct {
 
     fn from(tag: Token.Tag) ?BindingPower {
         return switch (tag) {
-            .times, .div => .{ .left = 12, .right = 13 },
+            .star, .slash => .{ .left = 12, .right = 13 },
             .plus, .minus => .{ .left = 10, .right = 11 },
             else => null, // terminate expression
         };
@@ -368,11 +368,20 @@ fn parseExpr(self: *Self, alloc: mem.Allocator, min_bp: BindingPower.Type) mem.A
 
 fn parsePrimary(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
     switch (self.tokenTag(self.pos)) {
-        .number => {
+        .int => {
             const tok = self.pos;
-            self.advance(); // skip number
+            self.advance(); // skip int
             return self.addNode(alloc, .{
-                .tag = .number_literal,
+                .tag = .int_literal,
+                .main_tok = tok,
+                .data = .{},
+            });
+        },
+        .float => {
+            const tok = self.pos;
+            self.advance(); // skip float
+            return self.addNode(alloc, .{
+                .tag = .float_literal,
                 .main_tok = tok,
                 .data = .{},
             });
@@ -386,7 +395,7 @@ fn parsePrimary(self: *Self, alloc: mem.Allocator) !Ast.Node.Ref {
                 .data = .{},
             });
         },
-        .minus, .not => {
+        .minus, .bang => {
             const tok = self.pos;
             self.advance(); // skip '-'
             const expr = try self.parseExpr(alloc, BindingPower.prefix_bp);

@@ -49,7 +49,7 @@ pub fn scan(self: *Self, alloc: mem.Allocator) !Tokens.Slice {
         if (tok.tag == .invalid) continue;
 
         const str_id = str_id: switch (tok.tag) {
-            .identifier, .number, .mut, .@"if", .@"else", .@"return", .func => {
+            .identifier, .int, .float, .mut, .@"if", .@"else", .@"return", .func => {
                 break :str_id try self.str_pool.intern(alloc, self.src.contents[tok.start..tok.end]);
             },
             else => break :str_id StringPool.ID.none,
@@ -118,8 +118,8 @@ pub fn nextToken(source: []const u8, pos: *Token.Ref) ScannedToken {
         // arithmetic
         '+' => .from(.plus, start, pos.*),
         '-' => .from(.minus, start, pos.*),
-        '*' => .from(.times, start, pos.*),
-        '/' => .from(.div, start, pos.*),
+        '*' => .from(.star, start, pos.*),
+        '/' => .from(.slash, start, pos.*),
 
         // paren-type
         '(' => .from(.left_paren, start, pos.*),
@@ -167,7 +167,7 @@ fn scanHex(source: []const u8, pos: *Token.Ref) ScannedToken {
     }
 
     const err: ?Error.Tag = if (pos.* == digit_start) .empty_hex_literal else null;
-    return .{ .tag = .number, .start = start, .end = pos.*, .err = err };
+    return .{ .tag = .int, .start = start, .end = pos.*, .err = err };
 }
 
 fn scanBin(source: []const u8, pos: *Token.Ref) ScannedToken {
@@ -183,7 +183,7 @@ fn scanBin(source: []const u8, pos: *Token.Ref) ScannedToken {
     }
 
     const err: ?Error.Tag = if (pos.* == digit_start) .empty_bin_literal else null;
-    return .{ .tag = .number, .start = start, .end = pos.*, .err = err };
+    return .{ .tag = .int, .start = start, .end = pos.*, .err = err };
 }
 
 fn scanDec(source: []const u8, pos: *Token.Ref) ScannedToken {
@@ -206,5 +206,6 @@ fn scanDec(source: []const u8, pos: *Token.Ref) ScannedToken {
         } else break;
     }
 
-    return .{ .tag = .number, .start = start, .end = pos.*, .err = err };
+    const tag: Token.Tag = if (has_decimal) .float else .int;
+    return .{ .tag = tag, .start = start, .end = pos.*, .err = err };
 }
