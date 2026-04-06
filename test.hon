@@ -1,5 +1,5 @@
 # constants (`::`)
-x :: 32
+x :: 0xff
 y int :: 32
 z float :: 3.14
 
@@ -11,9 +11,9 @@ a int = 0xf0f1
 main :: func() int {
     do_arithmetic :: false
 
-    if do_arithmetic {
-        return 0xff + 2 * 3
-    }
+    #if do_arithmetic {
+    #    return 0xff + 2 * 3
+    #}
     
-    return 0xff
+    return x
 }

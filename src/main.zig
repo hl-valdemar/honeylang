@@ -36,7 +36,6 @@ pub fn main() !void {
 
     var parser = honey.Parser.init(.{ .src = &src, .tokens = tokens });
     defer parser.deinit(alloc);
-
     const ast = try parser.parse(alloc);
 
     const rendered = try ast.render(alloc, src.contents, &str_pool);
@@ -45,15 +44,22 @@ pub fn main() !void {
     std.debug.print("\n[::Rendered AST::]\n\n", .{});
     std.debug.print("{s}\n", .{rendered});
 
-    var hir = honey.HIR.init();
+    var hir = try honey.Parser.lower(alloc, &ast, &str_pool);
     defer hir.deinit(alloc);
 
-    const root: honey.HIR.Inst.Ref = @enumFromInt(0);
-    _ = try hir.lower(alloc, root, &ast, &str_pool);
-
-    const rendered_hir = try hir.render(alloc, &str_pool);
+    const rendered_hir = try hir.render(alloc);
     defer alloc.free(rendered_hir);
 
     std.debug.print("\n[::Rendered HIR::]\n\n", .{});
     std.debug.print("{s}\n", .{rendered_hir});
+
+    var sema = honey.Sema.init(&hir, &str_pool);
+    defer sema.deinit(alloc);
+    try sema.analyze(alloc);
+
+    const rendered_mir = try sema.mir.render(alloc);
+    defer alloc.free(rendered_mir);
+
+    std.debug.print("\n[::Rendered MIR::]\n\n", .{});
+    std.debug.print("{s}\n", .{rendered_mir});
 }
