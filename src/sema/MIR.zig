@@ -1,7 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
 
-str_pool: *const StringPool,
 /// instructions. parallel to types. Indexed by Inst.Ref.
 insts: std.MultiArrayList(Inst) = .{},
 extra_data: std.ArrayListUnmanaged(Inst.Ref) = .{},
@@ -183,7 +182,7 @@ pub fn extraSlice(self: *const Self, start: BaseRef, end: BaseRef) []const BaseR
     return self.extra_data.items[@intFromEnum(start)..@intFromEnum(end)];
 }
 
-pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
+pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPool) ![]const u8 {
     var buf = std.ArrayListUnmanaged(u8){};
     const w = buf.writer(alloc);
 
@@ -193,15 +192,15 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
             .builtin_type => try w.print("%{d: <3} type({s})\n", .{ idx, @tagName(inst.type) }),
             .builtin_value => try w.print("%{d: <3} {s}({d})\n", .{ idx, @tagName(inst.type), @intFromEnum(inst.data.a) }),
             .int_literal => {
-                const val = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const val = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
                 try w.print("%{d: <3} int({s})\n", .{ idx, val });
             },
             .float_literal => {
-                const val = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const val = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
                 try w.print("%{d: <3} float({s})\n", .{ idx, val });
             },
             .str_literal => {
-                const val = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const val = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
                 try w.print("%{d: <3} str(\"{s}\")\n", .{ idx, val });
             },
             .not, .negate => {
@@ -216,19 +215,19 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
                 );
             },
             .ref => {
-                const name = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
                 try w.print("%{d: <3} ref(\"{s}\")\n", .{ idx, name });
             },
             .decl_const, .decl_var => {
                 const tag_name = @tagName(inst.tag);
-                const name = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
 
                 try w.print("%{d: <3} {s}(\"{s}\"", .{ idx, tag_name, name });
                 try w.print(", type={s}", .{@tagName(inst.type)});
                 try w.print(", value=%{d})\n", .{@intFromEnum(inst.data.b)});
             },
             .param => {
-                const name = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
                 try w.print(
                     "%{d: <3} param(\"{s}\", type=%{d})\n",
                     .{ idx, name, @intFromEnum(inst.data.b) },
@@ -251,7 +250,7 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
             },
             .decl_func => {
                 const tag_name = @tagName(inst.tag);
-                const name = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
                 const info = self.unpackExtraData(FuncInfo, inst.data.b);
                 const cc: AST.FuncDecl.CallingConvention =
                     @enumFromInt((info.flags & AST.FuncDecl.Flag.cc_mask) >> AST.FuncDecl.Flag.cc_shift);

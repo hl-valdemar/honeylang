@@ -1,11 +1,11 @@
 # constants (`::`)
-x :: 0xff
+x :: 0xff + 1
 y int :: 32
 z float :: 3.14
 
 # variables (`=`)
 a = 0xf0f1
-a int = 0xf0f1
+b int = 0xf0f1
 
 # func decls
 main :: func() int {
@@ -14,6 +14,6 @@ main :: func() int {
     #if do_arithmetic {
     #    return 0xff + 2 * 3
     #}
-    
-    return x
+
+    return x + y
 }

@@ -32,34 +32,44 @@ pub fn main() !void {
 
     var lexer = honey.Lexer.init(.{ .src = &src, .str_pool = &str_pool });
     defer lexer.deinit(alloc);
-    const tokens = try lexer.scan(alloc);
+    try lexer.scan(alloc);
 
-    var parser = honey.Parser.init(.{ .src = &src, .tokens = tokens });
+    var parser = honey.Parser.init(.{ .src = &src, .tokens = lexer.tokens.slice() });
     defer parser.deinit(alloc);
     const ast = try parser.parse(alloc);
 
-    const rendered = try ast.render(alloc, src.contents, &str_pool);
-    defer alloc.free(rendered);
+    const ast_render = try ast.render(alloc, src.contents, &str_pool);
+    defer alloc.free(ast_render);
 
     std.debug.print("\n[::Rendered AST::]\n\n", .{});
-    std.debug.print("{s}\n", .{rendered});
+    std.debug.print("{s}\n", .{ast_render});
 
     var hir = try honey.Parser.lower(alloc, &ast, &str_pool);
     defer hir.deinit(alloc);
 
-    const rendered_hir = try hir.render(alloc);
-    defer alloc.free(rendered_hir);
+    const hir_render = try hir.render(alloc);
+    defer alloc.free(hir_render);
 
     std.debug.print("\n[::Rendered HIR::]\n\n", .{});
-    std.debug.print("{s}\n", .{rendered_hir});
+    std.debug.print("{s}\n", .{hir_render});
 
     var sema = honey.Sema.init(&hir, &str_pool);
     defer sema.deinit(alloc);
     try sema.analyze(alloc);
 
-    const rendered_mir = try sema.mir.render(alloc);
-    defer alloc.free(rendered_mir);
+    const mir_render = try sema.mir.render(alloc, &str_pool);
+    defer alloc.free(mir_render);
 
-    std.debug.print("\n[::Rendered MIR::]\n\n", .{});
-    std.debug.print("{s}\n", .{rendered_mir});
+    std.debug.print("\n[::Rendered MIR (sema)::]\n\n", .{});
+    std.debug.print("{s}\n", .{mir_render});
+
+    var opt = honey.Optimizer.init(.{ .mir = &sema.mir, .str_pool = &str_pool });
+    defer opt.deinit(alloc);
+    try opt.optimize(alloc);
+
+    const mir_opt_render = try opt.mir_post.render(alloc, &str_pool);
+    defer alloc.free(mir_opt_render);
+
+    std.debug.print("\n[::Rendered MIR (comptime)::]\n\n", .{});
+    std.debug.print("{s}\n", .{mir_opt_render});
 }

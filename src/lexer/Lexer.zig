@@ -38,7 +38,7 @@ pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     self.errors.deinit(alloc);
 }
 
-pub fn scan(self: *Self, alloc: mem.Allocator) !Tokens.Slice {
+pub fn scan(self: *Self, alloc: mem.Allocator) !void {
     while (true) {
         const tok = nextToken(self.src.contents, &self.pos);
 
@@ -58,8 +58,6 @@ pub fn scan(self: *Self, alloc: mem.Allocator) !Tokens.Slice {
         try self.tokens.append(alloc, .{ .tag = tok.tag, .start = tok.start, .str_id = str_id });
         if (tok.tag == .eof) break;
     }
-
-    return self.tokens.slice();
 }
 
 const ScannedToken = struct {

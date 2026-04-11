@@ -5,6 +5,7 @@ pub const SourceManager = @import("source/Manager.zig");
 pub const Lexer = @import("lexer/Lexer.zig");
 pub const Parser = @import("parser/Parser.zig");
 pub const Sema = @import("sema/Sema.zig");
+pub const Optimizer = @import("optimizer/Optimizer.zig");
 
 const std = @import("std");
 

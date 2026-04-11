@@ -1,7 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 
-str_pool: *const StringPool,
+str_pool: *StringPool,
 hir: *const HIR,
 mir: MIR,
 scope: Scope,
@@ -17,25 +17,31 @@ const MIR = @import("MIR.zig");
 
 const Scope = struct {
     parent: ?*Scope = null,
-    bindings: std.StringHashMapUnmanaged(MIR.Inst.Ref) = .{},
+    bindings: std.AutoHashMapUnmanaged(StringPool.ID, MIR.Inst.Ref) = .{},
 
     fn deinit(self: *Scope, alloc: mem.Allocator) void {
         self.bindings.deinit(alloc);
         if (self.parent) |p| p.deinit(alloc);
     }
 
-    fn resolve(self: *const Scope, name: []const u8) ?MIR.Inst.Ref {
+    fn bind(self: *Scope, alloc: mem.Allocator, name: StringPool.ID, ref: MIR.Inst.Ref) !void {
+        const gop = try self.bindings.getOrPut(alloc, name);
+        if (gop.found_existing) return error.DuplicateDeclaration;
+        gop.value_ptr.* = ref;
+    }
+
+    fn resolve(self: *const Scope, name: StringPool.ID) ?MIR.Inst.Ref {
         if (self.bindings.get(name)) |ref| return ref;
         if (self.parent) |p| return p.resolve(name);
         return null;
     }
 };
 
-pub fn init(hir: *const HIR, str_pool: *const StringPool) Self {
+pub fn init(hir: *const HIR, str_pool: *StringPool) Self {
     return .{
         .str_pool = str_pool,
         .hir = hir,
-        .mir = .{ .str_pool = str_pool },
+        .mir = .{},
         .scope = .{},
         .ref_map = .{},
     };
@@ -48,30 +54,40 @@ pub fn deinit(self: *Self, alloc: mem.Allocator) void {
 }
 
 pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
+    const int_str_id = try self.str_pool.intern(alloc, "int");
+    const float_str_id = try self.str_pool.intern(alloc, "float");
+    const i32_str_id = try self.str_pool.intern(alloc, "i32");
+    const f32_str_id = try self.str_pool.intern(alloc, "f32");
+    const bool_str_id = try self.str_pool.intern(alloc, "bool");
+    const void_str_id = try self.str_pool.intern(alloc, "void");
+
+    const true_str_id = try self.str_pool.intern(alloc, "true");
+    const false_str_id = try self.str_pool.intern(alloc, "false");
+
     // seed builtin types
-    try self.emitBuiltin(alloc, "i32", .builtin_type, .i32);
-    try self.emitBuiltin(alloc, "f32", .builtin_type, .f32);
-    try self.emitBuiltin(alloc, "bool", .builtin_type, .bool);
-    try self.emitBuiltin(alloc, "void", .builtin_type, .void);
+    try self.emitBuiltin(alloc, i32_str_id, .builtin_type, .i32);
+    try self.emitBuiltin(alloc, f32_str_id, .builtin_type, .f32);
+    try self.emitBuiltin(alloc, bool_str_id, .builtin_type, .bool);
+    try self.emitBuiltin(alloc, void_str_id, .builtin_type, .void);
 
     // aliases
-    const i32_ref = self.scope.resolve("i32").?;
-    const f32_ref = self.scope.resolve("f32").?;
-    try self.scope.bindings.put(alloc, "int", i32_ref); // todo: coalesce to proper anchor type
-    try self.scope.bindings.put(alloc, "float", f32_ref); // todo: coalesce to proper anchor type
+    const i32_ref = self.scope.resolve(i32_str_id).?;
+    const f32_ref = self.scope.resolve(f32_str_id).?;
+    try self.scope.bindings.put(alloc, int_str_id, i32_ref); // todo: coalesce to proper anchor type
+    try self.scope.bindings.put(alloc, float_str_id, f32_ref); // todo: coalesce to proper anchor type
 
     // seed true/false builtin values
-    try self.scope.bindings.put(alloc, "false", try self.mir.emit(alloc, .builtin_value, .{
+    try self.scope.bindings.put(alloc, true_str_id, try self.mir.emit(alloc, .builtin_value, .{
         .a = @enumFromInt(1),
     }, .bool));
-    try self.scope.bindings.put(alloc, "false", try self.mir.emit(alloc, .builtin_value, .{
+    try self.scope.bindings.put(alloc, false_str_id, try self.mir.emit(alloc, .builtin_value, .{
         .a = @enumFromInt(0),
     }, .bool));
 
     // walk hir
     for (0..self.hir.insts.len) |idx| {
         const inst = self.hir.insts.get(idx);
-        const types = self.mir.insts.items(.type);
+        const types: []MIR.Inst.Type = self.mir.insts.items(.type);
         const mir_ref = switch (inst.tag) {
             .int_literal => try self.mir.emit(alloc, .int_literal, .{
                 .a = @enumFromInt(@intFromEnum(inst.data.a)),
@@ -94,11 +110,13 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
                 }, left_type);
             },
             .ref => blk: {
-                const name = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
                 break :blk self.scope.resolve(name) orelse return error.UndefinedName;
             },
             .decl_const => blk: {
                 const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
+                if (self.scope.resolve(name) != null) return error.DuplicateDeclaration;
+
                 const decl_info = self.hir.unpackExtraData(HIR.DeclInfo, inst.data.b);
 
                 const value = self.ref_map.items[@intFromEnum(decl_info.value)];
@@ -119,11 +137,13 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
                     .b = value,
                 }, decl_type);
 
-                try self.scope.bindings.put(alloc, self.str_pool.get(name), decl_ref);
+                try self.scope.bind(alloc, name, decl_ref);
                 break :blk decl_ref;
             },
             .decl_var => blk: {
                 const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
+                if (self.scope.resolve(name) != null) return error.DuplicateDeclaration;
+
                 const decl_info = self.hir.unpackExtraData(HIR.DeclInfo, inst.data.b);
 
                 const value = self.ref_map.items[@intFromEnum(decl_info.value)];
@@ -144,16 +164,18 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
                     .b = value,
                 }, decl_type);
 
-                try self.scope.bindings.put(alloc, self.str_pool.get(name), decl_ref);
+                try self.scope.bind(alloc, name, decl_ref);
                 break :blk decl_ref;
             },
             .param => blk: {
                 const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
+                if (self.scope.resolve(name) != null) return error.DuplicateDeclaration;
+
                 const type_ref = self.ref_map.items[@intFromEnum(inst.data.b)];
                 const param_type = types[@intFromEnum(type_ref)];
 
                 const param_ref = try self.mir.emit(alloc, .param, .{ .a = @enumFromInt(@intFromEnum(name)) }, param_type);
-                try self.scope.bindings.put(alloc, self.str_pool.get(name), param_ref);
+                try self.scope.bind(alloc, name, param_ref);
                 break :blk param_ref;
             },
             .block => blk: {
@@ -173,6 +195,8 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
             },
             .decl_func => blk: {
                 const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
+                if (self.scope.resolve(name) != null) return error.DuplicateDeclaration;
+
                 const func_info = self.hir.unpackExtraData(HIR.FuncInfo, inst.data.b);
 
                 // remap params range
@@ -204,7 +228,7 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
                     .b = extra_idx,
                 }, .void);
 
-                try self.scope.bindings.put(alloc, self.str_pool.get(name), func_ref);
+                try self.scope.bind(alloc, name, func_ref);
                 break :blk func_ref;
             },
             .ret => blk: {
@@ -220,7 +244,7 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
     }
 }
 
-fn emitBuiltin(self: *Self, alloc: mem.Allocator, name: []const u8, tag: MIR.Inst.Tag, @"type": MIR.Inst.Type) !void {
+fn emitBuiltin(self: *Self, alloc: mem.Allocator, name: StringPool.ID, tag: MIR.Inst.Tag, @"type": MIR.Inst.Type) !void {
     const ref = try self.mir.emit(alloc, tag, .{}, @"type");
     try self.scope.bindings.put(alloc, name, ref);
 }
