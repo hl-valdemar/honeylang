@@ -16,7 +16,7 @@ const Token = @import("../lexer/Token.zig");
 const Lexer = @import("../lexer/Lexer.zig");
 
 pub const Nodes = std.MultiArrayList(Node);
-pub const Refs = std.ArrayListUnmanaged(BaseRef);
+pub const Refs = std.ArrayList(BaseRef);
 pub const Errors = std.MultiArrayList(Error);
 
 pub const Node = struct {
@@ -48,23 +48,17 @@ pub const Node = struct {
         /// b: value expression (Ref)
         var_decl,
 
-        /// `if <expr> { [body] }`
-        /// main_token: if
-        /// a: condition (Ref)
-        /// b: body (Ref)
-        if_simple,
-
-        /// `if <expr> { [body] } else { [body] }`
-        /// main_token: if
-        /// a: condition (Ref)
-        /// b: extra-data index (BaseRef) → { body, else_node }
-        if_else,
-
         /// `<name> :: [cc] func([params]) <type> { [body] }`
         /// main_token: identifier
         /// a: extra-data index (BaseRef) → FuncDecl
         /// b: unused
         func_decl,
+
+        /// `<name> { [body] }`
+        /// main_token: identifier
+        /// a: extra-data index (BaseRef) → Block
+        /// b: unused
+        namespace_decl,
 
         /// <name> <type> (e.g. a int)
         /// main_token: identifier (param name)
@@ -126,6 +120,18 @@ pub const Node = struct {
         /// a: value expression (Ref), .none for bare return
         /// b: unused
         return_val,
+
+        /// `if <expr> { [body] }`
+        /// main_token: if
+        /// a: condition (Ref)
+        /// b: body (Ref)
+        if_simple,
+
+        /// `if <expr> { [body] } else { [body] }`
+        /// main_token: if
+        /// a: condition (Ref)
+        /// b: extra-data index (BaseRef) → { body, else_node }
+        if_else,
 
         /// node representing a parse error. downstream passes insert traps.
         /// main_token: token where error was detected
@@ -218,18 +224,22 @@ pub fn tokenSlice(self: *const Self, tok: Token.Ref, src: []const u8) []const u8
     return src[scanned.start..scanned.end];
 }
 
-const Writer = std.ArrayListUnmanaged(u8).Writer;
+const Writer = std.Io.Writer;
+
+fn writeByteNTimes(w: *Writer, byte: u8, n: u32) Writer.Error!void {
+    for (0..n) |_| try w.writeByte(byte);
+}
 
 /// render ast as raw honey code.
 pub fn render(self: *const Self, alloc: mem.Allocator, src: []const u8, str_pool: *const StringPool) ![]const u8 {
-    var buf = std.ArrayListUnmanaged(u8){};
-    const w = buf.writer(alloc);
+    var aw: std.Io.Writer.Allocating = .init(alloc);
     const root: Node.Ref = @enumFromInt(0);
-    try self.renderNode(w, root, src, str_pool, 0);
-    return buf.toOwnedSlice(alloc);
+    try self.renderNode(&aw.writer, root, src, str_pool, 0);
+    return aw.toOwnedSlice();
 }
 
-fn renderNode(self: *const Self, w: Writer, node: Node.Ref, src: []const u8, str_pool: *const StringPool, indent: u32) Writer.Error!void {
+fn renderNode(self: *const Self, w: *Writer, node: Node.Ref, src: []const u8, str_pool: *const StringPool, indent: u32) Writer.Error!void {
+    const indent_size = 4;
     const data = self.nodeData(node);
     switch (self.nodeTag(node)) {
         .root => {
@@ -237,7 +247,7 @@ fn renderNode(self: *const Self, w: Writer, node: Node.Ref, src: []const u8, str
         },
         .const_decl => {
             const tok = self.nodeMainToken(node);
-            try w.writeByteNTimes(' ', indent);
+            try writeByteNTimes(w, ' ', indent);
             try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
             if (data.a != .none) {
                 try w.writeByte(' ');
@@ -249,7 +259,7 @@ fn renderNode(self: *const Self, w: Writer, node: Node.Ref, src: []const u8, str
         },
         .var_decl => {
             const tok = self.nodeMainToken(node);
-            try w.writeByteNTimes(' ', indent);
+            try writeByteNTimes(w, ' ', indent);
             try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
             if (data.a != .none) {
                 try w.writeByte(' ');
@@ -259,36 +269,11 @@ fn renderNode(self: *const Self, w: Writer, node: Node.Ref, src: []const u8, str
             try self.renderNode(w, data.b, src, str_pool, 0);
             try w.writeByte('\n');
         },
-        .if_simple => {
-            const tok = self.nodeMainToken(node);
-            try w.writeByteNTimes(' ', indent);
-            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
-            try w.writeByte(' ');
-            try self.renderNode(w, data.a, src, str_pool, 0);
-            try w.writeByte(' ');
-            try self.renderNode(w, data.b, src, str_pool, indent);
-            try w.writeByte('\n');
-        },
-        .if_else => {
-            const tok = self.nodeMainToken(node);
-            const info = self.unpackExtraData(ElseIfInfo, data.b);
-            try w.writeByteNTimes(' ', indent);
-            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
-            try w.writeByte(' ');
-            try self.renderNode(w, data.a, src, str_pool, 0);
-            try w.writeByte(' ');
-            try self.renderNode(w, info.body, src, str_pool, indent);
-            if (info.else_node != .none) {
-                try w.writeAll(" else ");
-                try self.renderNode(w, info.else_node, src, str_pool, indent);
-            }
-            try w.writeByte('\n');
-        },
         .func_decl => {
             const tok = self.nodeMainToken(node);
             const func = self.unpackExtraData(FuncDecl, data.a);
             const params = self.extraSlice(func.params_start, func.params_end);
-            try w.writeByteNTimes(' ', indent);
+            try writeByteNTimes(w, ' ', indent);
             try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
             try w.writeAll(" :: ");
             switch ((func.flags & FuncDecl.Flag.cc_mask) >> FuncDecl.Flag.cc_shift) {
@@ -307,6 +292,14 @@ fn renderNode(self: *const Self, w: Writer, node: Node.Ref, src: []const u8, str
             try self.renderNode(w, func.body, src, str_pool, indent);
             try w.writeByte('\n');
         },
+        .namespace_decl => {
+            const tok = self.nodeMainToken(node);
+            try writeByteNTimes(w, ' ', indent);
+            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
+            try w.writeByte(' ');
+            try self.renderNode(w, data.a, src, str_pool, indent);
+            try w.writeByte('\n');
+        },
         .param => {
             const tok = self.nodeMainToken(node);
             try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
@@ -315,12 +308,12 @@ fn renderNode(self: *const Self, w: Writer, node: Node.Ref, src: []const u8, str
         },
         .block => {
             try w.writeAll("{\n");
-            try self.renderDeclList(w, self.extraSlice(data.a, data.b), src, str_pool, indent + 4);
-            try w.writeByteNTimes(' ', indent);
+            try self.renderDeclList(w, self.extraSlice(data.a, data.b), src, str_pool, indent + indent_size);
+            try writeByteNTimes(w, ' ', indent);
             try w.writeByte('}');
         },
         .return_val => {
-            try w.writeByteNTimes(' ', indent);
+            try writeByteNTimes(w, ' ', indent);
             try w.writeAll("return");
             if (data.a != .none) {
                 try w.writeByte(' ');
@@ -328,9 +321,34 @@ fn renderNode(self: *const Self, w: Writer, node: Node.Ref, src: []const u8, str
             }
             try w.writeByte('\n');
         },
+        .if_simple => {
+            const tok = self.nodeMainToken(node);
+            try writeByteNTimes(w, ' ', indent);
+            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
+            try w.writeByte(' ');
+            try self.renderNode(w, data.a, src, str_pool, 0);
+            try w.writeByte(' ');
+            try self.renderNode(w, data.b, src, str_pool, indent);
+            try w.writeByte('\n');
+        },
+        .if_else => {
+            const tok = self.nodeMainToken(node);
+            const info = self.unpackExtraData(ElseIfInfo, data.b);
+            try writeByteNTimes(w, ' ', indent);
+            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
+            try w.writeByte(' ');
+            try self.renderNode(w, data.a, src, str_pool, 0);
+            try w.writeByte(' ');
+            try self.renderNode(w, info.body, src, str_pool, indent);
+            if (info.else_node != .none) {
+                try w.writeAll(" else ");
+                try self.renderNode(w, info.else_node, src, str_pool, indent);
+            }
+            try w.writeByte('\n');
+        },
         .binary_op => {
             const op_str = self.tokenSlice(self.nodeMainToken(node), src);
-            try w.writeByteNTimes(' ', indent);
+            try writeByteNTimes(w, ' ', indent);
             try self.renderNode(w, data.a, src, str_pool, 0);
             try w.print(" {s} ", .{op_str});
             try self.renderNode(w, data.b, src, str_pool, 0);
@@ -341,7 +359,7 @@ fn renderNode(self: *const Self, w: Writer, node: Node.Ref, src: []const u8, str
             try w.writeByte(')');
         },
         .expr_statement => {
-            try w.writeByteNTimes(' ', indent);
+            try writeByteNTimes(w, ' ', indent);
             try self.renderNode(w, data.a, src, str_pool, 0);
             try w.writeByte('\n');
         },
@@ -355,9 +373,9 @@ fn renderNode(self: *const Self, w: Writer, node: Node.Ref, src: []const u8, str
 }
 
 /// render a list of declarations and insert blank lines before func_decl nodes.
-fn renderDeclList(self: *const Self, w: Writer, decls: []const BaseRef, src: []const u8, str_pool: *const StringPool, indent: u32) Writer.Error!void {
+fn renderDeclList(self: *const Self, w: *Writer, decls: []const BaseRef, src: []const u8, str_pool: *const StringPool, indent: u32) Writer.Error!void {
     for (decls, 0..) |decl, i| {
-        if (i > 0 and self.nodeTag(decl) == .func_decl)
+        if (i > 0 and (self.nodeTag(decl) == .func_decl or self.nodeTag(decl) == .namespace_decl))
             try w.writeByte('\n');
         try self.renderNode(w, decl, src, str_pool, indent);
     }

@@ -1,8 +1,8 @@
 const std = @import("std");
 const mem = std.mem;
 
-buffer: std.ArrayListUnmanaged(u8),
-entries: std.ArrayListUnmanaged(Entry),
+buffer: std.ArrayList(u8),
+entries: std.ArrayList(Entry),
 map: std.HashMapUnmanaged(ID, void, MapCtx, std.hash_map.default_max_load_percentage),
 
 const Self = @This();
@@ -51,8 +51,8 @@ const SliceAdapter = struct {
 
 pub fn init() Self {
     return .{
-        .buffer = .{},
-        .entries = .{},
+        .buffer = .empty,
+        .entries = .empty,
         .map = .{},
     };
 }

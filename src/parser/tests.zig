@@ -18,7 +18,8 @@ fn parse(alloc: mem.Allocator, src_str: []const u8) ![]const u8 {
     var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool });
     defer lexer.deinit(alloc);
 
-    const tokens = try lexer.scan(alloc);
+    try lexer.scan(alloc);
+    const tokens = lexer.tokens.slice();
 
     var parser = Parser.init(.{ .src = &src, .tokens = tokens });
     defer parser.deinit(alloc);
@@ -116,18 +117,19 @@ fn lowerToTags(alloc: mem.Allocator, src_str: []const u8) ![]const HIR.Inst.Tag 
     var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool });
     defer lexer.deinit(alloc);
 
-    const tokens = try lexer.scan(alloc);
+    try lexer.scan(alloc);
+    const tokens = lexer.tokens.slice();
 
     var parser = Parser.init(.{ .src = &src, .tokens = tokens });
     defer parser.deinit(alloc);
 
     const ast = try parser.parse(alloc);
 
-    var hir = HIR.init();
+    var hir = HIR.init(.{ .ast = &ast, .str_pool = &str_pool });
     defer hir.deinit(alloc);
 
     const root: HIR.Inst.Ref = @enumFromInt(0);
-    _ = try hir.lower(alloc, root, &ast, &str_pool);
+    _ = try hir.lower(alloc, root);
 
     return try alloc.dupe(HIR.Inst.Tag, hir.insts.items(.tag));
 }
@@ -161,5 +163,36 @@ test "lower arithmetic" {
         .int_literal,
         .add,
         .decl_const,
+    }, tags);
+}
+
+test "parse namespace decl" {
+    const alloc = std.testing.allocator;
+    const src_str =
+        \\person {
+        \\    x :: 1
+        \\}
+        \\
+    ;
+    const rendered_str = try parse(alloc, src_str);
+    defer alloc.free(rendered_str);
+    try std.testing.expectEqualStrings(src_str, rendered_str);
+}
+
+test "lower namespace decl" {
+    const alloc = std.testing.allocator;
+    const tags = try lowerToTags(alloc,
+        \\person {
+        \\    x :: 1
+        \\}
+        \\
+    );
+    defer alloc.free(tags);
+
+    try std.testing.expectEqualSlices(HIR.Inst.Tag, &.{
+        .int_literal,
+        .decl_const,
+        .block,
+        .decl_namespace,
     }, tags);
 }

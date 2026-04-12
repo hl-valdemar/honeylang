@@ -7,6 +7,15 @@ z float :: 3.14
 a = 0xf0f1
 b int = 0xf0f1
 
+person {
+    c = 0b1010
+    d float :: 2.71
+
+    do_like_human :: func() void {
+        # do something
+    }
+}
+
 # func decls
 main :: func() int {
     do_arithmetic :: false

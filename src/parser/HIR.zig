@@ -5,7 +5,9 @@ ast: *const AST,
 str_pool: *const StringPool,
 /// indexed by Inst.Ref.
 insts: std.MultiArrayList(Inst),
-extra_data: std.ArrayListUnmanaged(Inst.Ref),
+extra_data: std.ArrayList(Inst.Ref),
+root_start: BaseRef,
+root_end: BaseRef,
 
 const Self = @This();
 
@@ -87,6 +89,11 @@ pub const Inst = struct {
         /// * b: extra_data index → DeclInfo
         decl_var,
 
+        /// extra-data:
+        /// * a: string id (name)
+        /// * b: Ref to block
+        decl_namespace,
+
         // functions
 
         /// extra-data:
@@ -139,7 +146,9 @@ pub fn init(ctx: Context) Self {
         .ast = ctx.ast,
         .str_pool = ctx.str_pool,
         .insts = .{},
-        .extra_data = .{},
+        .extra_data = .empty,
+        .root_start = @enumFromInt(0),
+        .root_end = @enumFromInt(0),
     };
 }
 
@@ -148,16 +157,21 @@ pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     self.extra_data.deinit(alloc);
 }
 
-pub fn lower(
-    self: *Self,
-    alloc: mem.Allocator,
-    node: AST.Node.Ref,
-) !Inst.Ref {
+pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
     const data = self.ast.nodeData(node);
     switch (self.ast.nodeTag(node)) {
         .root => {
-            for (self.ast.extraSlice(data.a, data.b)) |decl_ref|
-                _ = try self.lower(alloc, decl_ref);
+            var decl_refs: std.ArrayList(BaseRef) = .empty;
+            defer decl_refs.deinit(alloc);
+
+            for (self.ast.extraSlice(data.a, data.b)) |decl_ref| {
+                const ref = try self.lower(alloc, decl_ref);
+                try decl_refs.append(alloc, ref);
+            }
+
+            self.root_start = @enumFromInt(self.extra_data.items.len);
+            try self.extra_data.appendSlice(alloc, decl_refs.items);
+            self.root_end = @enumFromInt(self.extra_data.items.len);
             return .none;
         },
         .const_decl => {
@@ -201,9 +215,16 @@ pub fn lower(
             const func_decl = self.ast.unpackExtraData(AST.FuncDecl, data.a);
 
             const params = self.ast.extraSlice(func_decl.params_start, func_decl.params_end);
-            const params_start: BaseRef = @enumFromInt(self.insts.len);
-            for (params) |param| _ = try self.lower(alloc, param);
-            const params_end: BaseRef = @enumFromInt(self.insts.len);
+            var param_refs: std.ArrayList(BaseRef) = .empty;
+            defer param_refs.deinit(alloc);
+            for (params) |param| {
+                const ref = try self.lower(alloc, param);
+                try param_refs.append(alloc, ref);
+            }
+
+            const params_start: BaseRef = @enumFromInt(self.extra_data.items.len);
+            try self.extra_data.appendSlice(alloc, param_refs.items);
+            const params_end: BaseRef = @enumFromInt(self.extra_data.items.len);
 
             const ret_type = try self.lower(alloc, func_decl.ret_type);
             const body = try self.lower(alloc, func_decl.body);
@@ -219,6 +240,18 @@ pub fn lower(
             return self.emit(alloc, .decl_func, .{
                 .a = @enumFromInt(@intFromEnum(name)),
                 .b = extra_idx,
+            });
+        },
+        .namespace_decl => {
+            const name_tok = self.ast.nodeMainToken(node);
+            const name = self.ast.tokens.items(.str_id)[name_tok];
+
+            const block_ref: AST.Node.Ref = @enumFromInt(@intFromEnum(data.a));
+            const block = try self.lower(alloc, block_ref);
+
+            return self.emit(alloc, .decl_namespace, .{
+                .a = @enumFromInt(@intFromEnum(name)),
+                .b = block,
             });
         },
         .if_simple => {
@@ -238,7 +271,7 @@ pub fn lower(
         .block => {
             const statements = self.ast.extraSlice(data.a, data.b);
 
-            var stmt_refs = std.ArrayListUnmanaged(BaseRef){};
+            var stmt_refs: std.ArrayList(BaseRef) = .empty;
             defer stmt_refs.deinit(alloc);
             for (statements) |stmt| {
                 const node_ref: AST.Node.Ref = @enumFromInt(@intFromEnum(stmt));
@@ -254,7 +287,7 @@ pub fn lower(
         },
         .expr_statement => return self.lower(alloc, data.a),
         .return_val => {
-            const expr = try self.lower(alloc, data.a);
+            const expr = if (data.a != .none) try self.lower(alloc, data.a) else .none;
             return self.emit(alloc, .ret, .{ .a = expr });
         },
         .unary_op => {
@@ -348,9 +381,13 @@ pub fn extraSlice(self: *const Self, start: BaseRef, end: BaseRef) []const BaseR
     return self.extra_data.items[@intFromEnum(start)..@intFromEnum(end)];
 }
 
+pub fn rootDecls(self: *const Self) []const BaseRef {
+    return self.extraSlice(self.root_start, self.root_end);
+}
+
 pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
-    var buf = std.ArrayListUnmanaged(u8){};
-    const w = buf.writer(alloc);
+    var aw: std.Io.Writer.Allocating = .init(alloc);
+    const w = &aw.writer;
 
     for (0..self.insts.len) |idx| {
         const inst = self.insts.get(idx);
@@ -396,11 +433,17 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
 
                 try w.print(", value=%{d})\n", .{@intFromEnum(info.value)});
             },
+            .decl_namespace => {
+                const tag_name = @tagName(inst.tag);
+                const name = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                try w.print("%{d: <3} {s}(\"{s}\", body=%{d})\n", .{ idx, tag_name, name, @intFromEnum(inst.data.b) });
+            },
             .param => {
                 const name = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const hir_type = @intFromEnum(inst.data.b);
                 try w.print(
                     "%{d: <3} param(\"{s}\", type=%{d})\n",
-                    .{ idx, name, @intFromEnum(inst.data.b) },
+                    .{ idx, name, hir_type },
                 );
             },
             .ret => {
@@ -409,10 +452,15 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
                 else
                     try w.print("%{d: <3} ret()\n", .{idx});
             },
-            .block => try w.print(
-                "%{d: <3} block(%{d}..%{d})\n",
-                .{ idx, @intFromEnum(inst.data.a), @intFromEnum(inst.data.b) },
-            ),
+            .block => {
+                try w.print("%{d: <3} block(", .{idx});
+                const refs = self.extraSlice(inst.data.a, inst.data.b);
+                for (refs, 0..) |r, j| {
+                    if (j > 0) try w.writeAll(", ");
+                    try w.print("%{d}", .{@intFromEnum(r)});
+                }
+                try w.writeAll(")\n");
+            },
             .decl_func => {
                 const tag_name = @tagName(inst.tag);
                 const name = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
@@ -441,5 +489,5 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
         }
     }
 
-    return buf.toOwnedSlice(alloc);
+    return aw.toOwnedSlice();
 }

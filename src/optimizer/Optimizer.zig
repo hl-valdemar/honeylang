@@ -6,9 +6,9 @@ mir: *const MIR,
 mir_folded: MIR,
 mir_dce: MIR,
 /// evaluated values.
-values: std.ArrayListUnmanaged(Value),
+values: std.ArrayList(Value),
 /// maps MIR Inst.Ref (pre) → MIR Inst.Ref (post).
-ref_map: std.ArrayListUnmanaged(BaseRef),
+ref_map: std.ArrayList(BaseRef),
 
 const Self = @This();
 
@@ -37,8 +37,8 @@ pub fn init(ctx: Context) Self {
         .mir = ctx.mir,
         .mir_folded = .{},
         .mir_dce = .{},
-        .values = .{},
-        .ref_map = .{},
+        .values = .empty,
+        .ref_map = .empty,
     };
 }
 

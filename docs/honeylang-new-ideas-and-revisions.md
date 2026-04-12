@@ -175,9 +175,11 @@ p :: person.Data{
 
 # using a function from a namespace
 person.walk(&p, 2.7)
+```
 
-# IMPORTS
+# Imports
 
+```honey
 # importing honey files
 import "path/to/file.hon"  # wrapped in namespace implicitly named after file (i.e., "file" in this case)
 
@@ -200,9 +202,11 @@ some_name :: import c {
     define "PI 3.14"  # set's a constant on the namespace (access with `some_name.PI`)
     define "DEBUG"    # flag could toggle debug declarations in header files
 }
+```
 
-# CONTROL FLOW
+# Control Flow
 
+```honey
 # if statements
 if stmt {
     # do something

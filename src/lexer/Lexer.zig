@@ -118,6 +118,7 @@ pub fn nextToken(source: []const u8, pos: *Token.Ref) ScannedToken {
         '-' => .from(.minus, start, pos.*),
         '*' => .from(.star, start, pos.*),
         '/' => .from(.slash, start, pos.*),
+        '!' => .from(.bang, start, pos.*),
 
         // paren-type
         '(' => .from(.left_paren, start, pos.*),

@@ -49,8 +49,8 @@ pub fn init(ctx: Context) Self {
         .tokens = ctx.tokens,
         .pos = 0,
         .nodes = .{},
-        .extra_data = .{},
-        .scratch = .{},
+        .extra_data = .empty,
+        .scratch = .empty,
         .errors = .{},
     };
 }
@@ -107,6 +107,7 @@ fn parseTopLevelDecl(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
     switch (self.tokenTag(self.pos)) {
         .double_colon => return try self.parseConstOrFunc(alloc, name_tok, .none),
         .equal => return try self.parseVarDecl(alloc, name_tok, .none),
+        .left_curly => return try self.parseNamespace(alloc, name_tok),
         else => {
             // type annotation → parse `name type :: value` or `name type = value`
             const type_expr = try self.parseExpr(alloc, 0);
@@ -119,6 +120,15 @@ fn parseTopLevelDecl(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
     }
 }
 
+fn parseNamespace(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref) mem.Allocator.Error!AST.Node.Ref {
+    const block = try self.parseDeclBlock(alloc);
+    return self.addNode(alloc, .{
+        .tag = .namespace_decl,
+        .main_tok = name_tok,
+        .data = .{ .a = block },
+    });
+}
+
 fn parseConstOrFunc(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_expr: AST.Node.Ref) !AST.Node.Ref {
     if (self.tokenTag(self.pos + 1) == .func or self.tokenTag(self.pos + 1) == .cc_c)
         return try self.parseFuncDecl(alloc, name_tok);
@@ -126,7 +136,7 @@ fn parseConstOrFunc(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type
 }
 
 fn parseConstDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_expr: AST.Node.Ref) !AST.Node.Ref {
-    self.advance(); // skip `::`
+    try self.expect(alloc, .double_colon);
     const value = try self.parseExpr(alloc, 0);
     try self.expect(alloc, .newline);
 
@@ -138,7 +148,7 @@ fn parseConstDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_e
 }
 
 fn parseVarDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_expr: AST.Node.Ref) !AST.Node.Ref {
-    self.advance(); // skip `=`
+    try self.expect(alloc, .equal);
     const value = try self.parseExpr(alloc, 0);
     try self.expect(alloc, .newline);
 
@@ -150,7 +160,7 @@ fn parseVarDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_exp
 }
 
 fn parseFuncDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref) !AST.Node.Ref {
-    self.advance(); // skip `::`
+    try self.expect(alloc, .double_colon);
 
     // optional calling convention
     var flags: u32 = 0;
@@ -239,6 +249,34 @@ fn parseBlock(self: *Self, alloc: mem.Allocator) mem.Allocator.Error!AST.Node.Re
     });
 }
 
+fn parseDeclBlock(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
+    const lbrace = self.pos;
+    try self.expect(alloc, .left_curly);
+
+    const scratch_top = self.scratch.items.len;
+    while (self.tokenTag(self.pos) != .right_curly and self.tokenTag(self.pos) != .eof) {
+        self.skipNewlines();
+        if (self.tokenTag(self.pos) == .right_curly or self.tokenTag(self.pos) == .eof) break;
+
+        const decl = try self.parseTopLevelDecl(alloc);
+        try self.scratch.append(alloc, decl);
+    }
+
+    try self.expect(alloc, .right_curly);
+
+    const stmts = self.scratch.items[scratch_top..];
+    const start: BaseRef = @enumFromInt(@as(u32, @intCast(self.extra_data.items.len)));
+    try self.extra_data.appendSlice(alloc, stmts);
+    const end: BaseRef = @enumFromInt(@as(u32, @intCast(self.extra_data.items.len)));
+    self.scratch.items.len = scratch_top;
+
+    return self.addNode(alloc, .{
+        .tag = .block,
+        .main_tok = lbrace,
+        .data = .{ .a = start, .b = end },
+    });
+}
+
 fn parseStatement(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
     switch (self.tokenTag(self.pos)) {
         .identifier => {
@@ -288,7 +326,7 @@ fn parseExprStatement(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
 
 fn parseIfStatement(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
     const tok = self.pos;
-    self.advance(); // skip `if`
+    try self.expect(alloc, .@"if");
 
     const condition = try self.parseExpr(alloc, 0); // note: optional parentheses
     const body = try self.parseBlock(alloc);
@@ -323,7 +361,7 @@ fn parseIfStatement(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
 
 fn parseReturnStatement(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
     const tok = self.pos;
-    self.advance(); // skip `return`
+    try self.expect(alloc, .@"return");
 
     // parse value unless immediately terminated
     const value: AST.Node.Ref = if (self.tokenTag(self.pos) != .newline and
@@ -426,6 +464,7 @@ fn skipNewlines(self: *Self) void {
     while (self.tokenTag(self.pos) == .newline) self.advance();
 }
 
+/// advance through matching tag or fail.
 fn expect(self: *Self, alloc: mem.Allocator, tag: Token.Tag) !void {
     if (self.tokenTag(self.pos) == tag) {
         self.advance();

@@ -16,7 +16,8 @@ test "scan const decl" {
     var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool });
     defer lexer.deinit(alloc);
 
-    const tokens = try lexer.scan(alloc);
+    try lexer.scan(alloc);
+    const tokens = lexer.tokens.slice();
 
     try std.testing.expectEqual(tokens.items(.tag)[0], .identifier);
     try std.testing.expectEqual(tokens.items(.tag)[1], .double_colon);
@@ -35,7 +36,8 @@ test "scan arithmetic expression" {
     var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool });
     defer lexer.deinit(alloc);
 
-    const tokens = try lexer.scan(alloc);
+    try lexer.scan(alloc);
+    const tokens = lexer.tokens.slice();
 
     try std.testing.expectEqual(tokens.items(.tag)[0], .identifier);
     try std.testing.expectEqual(tokens.items(.tag)[1], .plus);

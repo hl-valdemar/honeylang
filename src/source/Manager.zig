@@ -1,6 +1,5 @@
 const std = @import("std");
 const mem = std.mem;
-const fs = std.fs;
 
 const Self = @This();
 
@@ -18,14 +17,8 @@ pub const init = struct {
         };
     }
 
-    pub fn fromFile(alloc: mem.Allocator, path: []const u8) !Source {
-        const file = try fs.cwd().openFile(path, .{ .mode = .read_only });
-        defer file.close();
-
-        const file_size = try file.getEndPos();
-        const contents = try alloc.alloc(u8, file_size);
-
-        _ = try file.readAll(contents);
+    pub fn fromFile(alloc: mem.Allocator, io: std.Io, path: []const u8) !Source {
+        const contents = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .limited(std.math.maxInt(usize)));
 
         next_id += 1;
         return .{

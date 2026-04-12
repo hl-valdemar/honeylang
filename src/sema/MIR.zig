@@ -3,7 +3,7 @@ const mem = std.mem;
 
 /// instructions. Indexed by Inst.Ref.
 insts: std.MultiArrayList(Inst) = .{},
-extra_data: std.ArrayListUnmanaged(Inst.Ref) = .{},
+extra_data: std.ArrayList(Inst.Ref) = .empty,
 
 const Self = @This();
 
@@ -187,8 +187,8 @@ pub fn extraSlice(self: *const Self, start: BaseRef, end: BaseRef) []const BaseR
 }
 
 pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPool) ![]const u8 {
-    var buf = std.ArrayListUnmanaged(u8){};
-    const w = buf.writer(alloc);
+    var aw: std.Io.Writer.Allocating = .init(alloc);
+    const w = &aw.writer;
 
     for (0..self.insts.len) |idx| {
         const inst = self.insts.get(idx);
@@ -282,5 +282,5 @@ pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPo
         }
     }
 
-    return buf.toOwnedSlice(alloc);
+    return aw.toOwnedSlice();
 }
