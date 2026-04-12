@@ -5,6 +5,9 @@ str_pool: *StringPool,
 hir: *const HIR,
 mir: MIR,
 scope: Scope,
+type_map: std.AutoHashMapUnmanaged(StringPool.ID, MIR.Inst.Type),
+/// resolved type per MIR inst (parallel to mir.insts). sema-only.
+inst_types: std.ArrayListUnmanaged(MIR.Inst.Type),
 /// maps HIR Inst.Ref → MIR Inst.Ref.
 ref_map: std.ArrayListUnmanaged(BaseRef),
 
@@ -43,6 +46,8 @@ pub fn init(hir: *const HIR, str_pool: *StringPool) Self {
         .hir = hir,
         .mir = .{},
         .scope = .{},
+        .type_map = .{},
+        .inst_types = .{},
         .ref_map = .{},
     };
 }
@@ -50,6 +55,8 @@ pub fn init(hir: *const HIR, str_pool: *StringPool) Self {
 pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     self.mir.deinit(alloc);
     self.scope.deinit(alloc);
+    self.type_map.deinit(alloc);
+    self.inst_types.deinit(alloc);
     self.ref_map.deinit(alloc);
 }
 
@@ -65,103 +72,92 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
     const false_str_id = try self.str_pool.intern(alloc, "false");
 
     // seed builtin types
-    try self.emitBuiltin(alloc, i32_str_id, .builtin_type, .i32);
-    try self.emitBuiltin(alloc, f32_str_id, .builtin_type, .f32);
-    try self.emitBuiltin(alloc, bool_str_id, .builtin_type, .bool);
-    try self.emitBuiltin(alloc, void_str_id, .builtin_type, .void);
+    try self.type_map.put(alloc, i32_str_id, .i32);
+    try self.type_map.put(alloc, f32_str_id, .f32);
+    try self.type_map.put(alloc, bool_str_id, .bool);
+    try self.type_map.put(alloc, void_str_id, .void);
+    try self.type_map.put(alloc, int_str_id, .i32);
+    try self.type_map.put(alloc, float_str_id, .f32);
 
-    // aliases
-    const i32_ref = self.scope.resolve(i32_str_id).?;
-    const f32_ref = self.scope.resolve(f32_str_id).?;
-    try self.scope.bindings.put(alloc, int_str_id, i32_ref); // todo: coalesce to proper anchor type
-    try self.scope.bindings.put(alloc, float_str_id, f32_ref); // todo: coalesce to proper anchor type
-
-    // seed true/false builtin values
-    try self.scope.bindings.put(alloc, true_str_id, try self.mir.emit(alloc, .builtin_value, .{
+    // seed true/false as bool literals
+    try self.scope.bindings.put(alloc, true_str_id, try self.emitTyped(alloc, .bool_literal, .{
         .a = @enumFromInt(1),
     }, .bool));
-    try self.scope.bindings.put(alloc, false_str_id, try self.mir.emit(alloc, .builtin_value, .{
+    try self.scope.bindings.put(alloc, false_str_id, try self.emitTyped(alloc, .bool_literal, .{
         .a = @enumFromInt(0),
     }, .bool));
 
     // walk hir
     for (0..self.hir.insts.len) |idx| {
         const inst = self.hir.insts.get(idx);
-        const types: []MIR.Inst.Type = self.mir.insts.items(.type);
         const mir_ref = switch (inst.tag) {
-            .int_literal => try self.mir.emit(alloc, .int_literal, .{
-                .a = @enumFromInt(@intFromEnum(inst.data.a)),
-            }, .i32),
-            .float_literal => try self.mir.emit(alloc, .float_literal, .{
-                .a = @enumFromInt(@intFromEnum(inst.data.a)),
-            }, .f32),
+            .int_literal, .float_literal => blk: {
+                const mir_tag: MIR.Inst.Tag, const mir_type: MIR.Inst.Type = switch (inst.tag) {
+                    .int_literal => .{ .int_literal, .i32 },
+                    .float_literal => .{ .float_literal, .f32 },
+                    else => unreachable,
+                };
+                break :blk try self.emitTyped(alloc, mir_tag, .{
+                    .a = @enumFromInt(@intFromEnum(inst.data.a)),
+                }, mir_type);
+            },
             .add, .sub, .mul, .div => blk: {
                 const left = self.ref_map.items[@intFromEnum(inst.data.a)];
                 const right = self.ref_map.items[@intFromEnum(inst.data.b)];
 
                 // type check
-                const left_type = types[@intFromEnum(left)];
-                const right_type = types[@intFromEnum(right)];
+                const left_type = self.inst_types.items[@intFromEnum(left)];
+                const right_type = self.inst_types.items[@intFromEnum(right)];
                 if (left_type != right_type) return error.TypeMismatch;
 
-                break :blk try self.mir.emit(alloc, @enumFromInt(@intFromEnum(inst.tag)), .{
+                const mir_tag: MIR.Inst.Tag = switch (inst.tag) {
+                    .add => .add,
+                    .sub => .sub,
+                    .mul => .mul,
+                    .div => .div,
+                    else => unreachable,
+                };
+                break :blk try self.emitTyped(alloc, mir_tag, .{
                     .a = left,
                     .b = right,
                 }, left_type);
             },
             .ref => blk: {
                 const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
+                // type refs don't produce insts
+                if (self.type_map.contains(name)) break :blk @as(MIR.Inst.Ref, .none);
                 break :blk self.scope.resolve(name) orelse return error.UndefinedName;
             },
-            .decl_const => blk: {
+            .decl_const, .decl_var => blk: {
                 const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
                 if (self.scope.resolve(name) != null) return error.DuplicateDeclaration;
 
-                const decl_info = self.hir.unpackExtraData(HIR.DeclInfo, inst.data.b);
+                const hir_decl = self.hir.unpackExtraData(HIR.DeclInfo, inst.data.b);
 
-                const value = self.ref_map.items[@intFromEnum(decl_info.value)];
-                const value_type = types[@intFromEnum(value)];
+                const value = self.ref_map.items[@intFromEnum(hir_decl.value)];
+                const value_type = self.inst_types.items[@intFromEnum(value)];
 
                 // resolve type
-                const decl_type = if (decl_info.type != .none) t: {
-                    const type_ref = self.ref_map.items[@intFromEnum(decl_info.type)];
-                    break :t types[@intFromEnum(type_ref)];
+                const decl_type = if (hir_decl.type != .none) t: {
+                    break :t self.resolveType(hir_decl.type) orelse return error.UndefinedType;
                 } else value_type;
 
                 // check
-                if (decl_info.type != .none and decl_type != value_type)
+                if (hir_decl.type != .none and decl_type != value_type)
                     return error.TypeMismatch;
 
-                const decl_ref = try self.mir.emit(alloc, .decl_const, .{
+                const mir_tag: MIR.Inst.Tag = switch (inst.tag) {
+                    .decl_const => .decl_const,
+                    .decl_var => .decl_var,
+                    else => unreachable,
+                };
+                const extra_idx = try self.mir.packExtraData(alloc, MIR.DeclInfo, .{
+                    .value = value,
+                    .type = decl_type,
+                });
+                const decl_ref = try self.emitTyped(alloc, mir_tag, .{
                     .a = @enumFromInt(@intFromEnum(name)),
-                    .b = value,
-                }, decl_type);
-
-                try self.scope.bind(alloc, name, decl_ref);
-                break :blk decl_ref;
-            },
-            .decl_var => blk: {
-                const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
-                if (self.scope.resolve(name) != null) return error.DuplicateDeclaration;
-
-                const decl_info = self.hir.unpackExtraData(HIR.DeclInfo, inst.data.b);
-
-                const value = self.ref_map.items[@intFromEnum(decl_info.value)];
-                const value_type = types[@intFromEnum(value)];
-
-                // resolve type
-                const decl_type = if (decl_info.type != .none) t: {
-                    const type_ref = self.ref_map.items[@intFromEnum(decl_info.type)];
-                    break :t types[@intFromEnum(type_ref)];
-                } else value_type;
-
-                // check
-                if (decl_info.type != .none and decl_type != value_type)
-                    return error.TypeMismatch;
-
-                const decl_ref = try self.mir.emit(alloc, .decl_var, .{
-                    .a = @enumFromInt(@intFromEnum(name)),
-                    .b = value,
+                    .b = extra_idx,
                 }, decl_type);
 
                 try self.scope.bind(alloc, name, decl_ref);
@@ -171,10 +167,12 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
                 const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
                 if (self.scope.resolve(name) != null) return error.DuplicateDeclaration;
 
-                const type_ref = self.ref_map.items[@intFromEnum(inst.data.b)];
-                const param_type = types[@intFromEnum(type_ref)];
+                const param_type = self.resolveType(inst.data.b) orelse return error.UndefinedType;
 
-                const param_ref = try self.mir.emit(alloc, .param, .{ .a = @enumFromInt(@intFromEnum(name)) }, param_type);
+                const param_ref = try self.emitTyped(alloc, .param, .{
+                    .a = @enumFromInt(@intFromEnum(name)),
+                    .b = @enumFromInt(@intFromEnum(param_type)),
+                }, param_type);
                 try self.scope.bind(alloc, name, param_ref);
                 break :blk param_ref;
             },
@@ -188,7 +186,7 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
                 }
                 const extra_end: BaseRef = @enumFromInt(self.mir.extra_data.items.len);
 
-                break :blk try self.mir.emit(alloc, .block, .{
+                break :blk try self.emitTyped(alloc, .block, .{
                     .a = extra_start,
                     .b = extra_end,
                 }, .void);
@@ -212,8 +210,7 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
                 const body = self.ref_map.items[@intFromEnum(func_info.body)];
 
                 // resolve return type
-                const ret_type_ref = self.ref_map.items[@intFromEnum(func_info.ret_type)];
-                const ret_type = types[@intFromEnum(ret_type_ref)];
+                const ret_type = self.resolveType(func_info.ret_type) orelse return error.UndefinedType;
 
                 const extra_idx = try self.mir.packExtraData(alloc, MIR.FuncInfo, .{
                     .params_start = extra_start,
@@ -223,7 +220,7 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
                     .flags = func_info.flags,
                 });
 
-                const func_ref = try self.mir.emit(alloc, .decl_func, .{
+                const func_ref = try self.emitTyped(alloc, .decl_func, .{
                     .a = @enumFromInt(@intFromEnum(name)),
                     .b = extra_idx,
                 }, .void);
@@ -233,7 +230,7 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
             },
             .ret => blk: {
                 const val = self.ref_map.items[@intFromEnum(inst.data.a)];
-                break :blk try self.mir.emit(alloc, .ret, .{ .a = val }, .void);
+                break :blk try self.emitTyped(alloc, .ret, .{ .a = val }, .void);
             },
             else => {
                 std.debug.print("[TODO]: unsupported HIR instruction in sema: {any}\n", .{inst.tag});
@@ -244,7 +241,16 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
     }
 }
 
-fn emitBuiltin(self: *Self, alloc: mem.Allocator, name: StringPool.ID, tag: MIR.Inst.Tag, @"type": MIR.Inst.Type) !void {
-    const ref = try self.mir.emit(alloc, tag, .{}, @"type");
-    try self.scope.bindings.put(alloc, name, ref);
+fn resolveType(self: *const Self, hir_type_ref: BaseRef) ?MIR.Inst.Type {
+    if (hir_type_ref == .none) return null;
+    const hir_inst = self.hir.insts.get(@intFromEnum(hir_type_ref));
+    std.debug.assert(hir_inst.tag == .ref);
+    const name: StringPool.ID = @enumFromInt(@intFromEnum(hir_inst.data.a));
+    return self.type_map.get(name);
+}
+
+fn emitTyped(self: *Self, alloc: mem.Allocator, tag: MIR.Inst.Tag, data: MIR.Inst.Data, resolved_type: MIR.Inst.Type) !MIR.Inst.Ref {
+    const ref = try self.mir.emit(alloc, tag, data);
+    try self.inst_types.append(alloc, resolved_type);
+    return ref;
 }

@@ -1,7 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 
-/// instructions. parallel to types. Indexed by Inst.Ref.
+/// instructions. Indexed by Inst.Ref.
 insts: std.MultiArrayList(Inst) = .{},
 extra_data: std.ArrayListUnmanaged(Inst.Ref) = .{},
 
@@ -15,11 +15,10 @@ const HIR = @import("../parser/HIR.zig");
 pub const Inst = struct {
     tag: Tag,
     data: Data,
-    type: Type,
 
     pub const Ref = BaseRef;
 
-    const Data = struct {
+    pub const Data = struct {
         a: BaseRef = @enumFromInt(0),
         b: BaseRef = @enumFromInt(0),
     };
@@ -34,6 +33,10 @@ pub const Inst = struct {
         /// extra-data:
         /// * a: string pool id (value)
         float_literal,
+
+        /// extra-data:
+        /// * a: immediate value (0 = false, 1 = true)
+        bool_literal,
 
         /// extra-data:
         /// * a: string pool id (value)
@@ -79,18 +82,19 @@ pub const Inst = struct {
 
         /// extra-data:
         /// * a: string id (name)
-        /// * b: Ref (value)
+        /// * b: extra_data index → DeclInfo
         decl_const,
 
         /// extra-data:
         /// * a: string id (name)
-        /// * b: Ref (value)
+        /// * b: extra_data index → DeclInfo
         decl_var,
 
         // functions
 
         /// extra-data:
         /// * a: string id (name)
+        /// * b: Type (encoded)
         param,
 
         /// extra-data:
@@ -112,11 +116,6 @@ pub const Inst = struct {
         /// * a: condition (Ref)
         /// * b: body (Ref)
         if_simple,
-
-        // builtin types
-
-        builtin_type,
-        builtin_value,
     };
 
     pub const Type = enum {
@@ -125,6 +124,11 @@ pub const Inst = struct {
         bool,
         void,
     };
+};
+
+pub const DeclInfo = struct {
+    value: BaseRef, // Inst.Ref to the value
+    type: Inst.Type,
 };
 
 pub const FuncInfo = struct {
@@ -140,8 +144,8 @@ pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     self.extra_data.deinit(alloc);
 }
 
-pub fn emit(self: *Self, alloc: mem.Allocator, tag: Inst.Tag, data: Inst.Data, @"type": Inst.Type) !Inst.Ref {
-    try self.insts.append(alloc, .{ .tag = tag, .data = data, .type = @"type" });
+pub fn emit(self: *Self, alloc: mem.Allocator, tag: Inst.Tag, data: Inst.Data) !Inst.Ref {
+    try self.insts.append(alloc, .{ .tag = tag, .data = data });
     return @enumFromInt(self.insts.len - 1);
 }
 
@@ -189,8 +193,7 @@ pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPo
     for (0..self.insts.len) |idx| {
         const inst = self.insts.get(idx);
         switch (inst.tag) {
-            .builtin_type => try w.print("%{d: <3} type({s})\n", .{ idx, @tagName(inst.type) }),
-            .builtin_value => try w.print("%{d: <3} {s}({d})\n", .{ idx, @tagName(inst.type), @intFromEnum(inst.data.a) }),
+            .bool_literal => try w.print("%{d: <3} bool({d})\n", .{ idx, @intFromEnum(inst.data.a) }),
             .int_literal => {
                 const val = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
                 try w.print("%{d: <3} int({s})\n", .{ idx, val });
@@ -221,16 +224,18 @@ pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPo
             .decl_const, .decl_var => {
                 const tag_name = @tagName(inst.tag);
                 const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const info = self.unpackExtraData(DeclInfo, inst.data.b);
 
                 try w.print("%{d: <3} {s}(\"{s}\"", .{ idx, tag_name, name });
-                try w.print(", type={s}", .{@tagName(inst.type)});
-                try w.print(", value=%{d})\n", .{@intFromEnum(inst.data.b)});
+                try w.print(", type={s}", .{@tagName(info.type)});
+                try w.print(", value=%{d})\n", .{@intFromEnum(info.value)});
             },
             .param => {
                 const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const param_type: Inst.Type = @enumFromInt(@intFromEnum(inst.data.b));
                 try w.print(
-                    "%{d: <3} param(\"{s}\", type=%{d})\n",
-                    .{ idx, name, @intFromEnum(inst.data.b) },
+                    "%{d: <3} param(\"{s}\", type={s})\n",
+                    .{ idx, name, @tagName(param_type) },
                 );
             },
             .ret => {

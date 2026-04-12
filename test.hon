@@ -10,6 +10,7 @@ b int = 0xf0f1
 # func decls
 main :: func() int {
     do_arithmetic :: false
+    c = 42
 
     #if do_arithmetic {
     #    return 0xff + 2 * 3

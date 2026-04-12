@@ -60,16 +60,16 @@ pub fn main() !void {
     const mir_render = try sema.mir.render(alloc, &str_pool);
     defer alloc.free(mir_render);
 
-    std.debug.print("\n[::Rendered MIR (sema)::]\n\n", .{});
+    std.debug.print("\n[::Rendered MIR (unoptimized)::]\n\n", .{});
     std.debug.print("{s}\n", .{mir_render});
 
     var opt = honey.Optimizer.init(.{ .mir = &sema.mir, .str_pool = &str_pool });
     defer opt.deinit(alloc);
     try opt.optimize(alloc);
 
-    const mir_opt_render = try opt.mir_post.render(alloc, &str_pool);
+    const mir_opt_render = try opt.mir_dce.render(alloc, &str_pool);
     defer alloc.free(mir_opt_render);
 
-    std.debug.print("\n[::Rendered MIR (comptime)::]\n\n", .{});
+    std.debug.print("\n[::Rendered MIR (optimized)::]\n\n", .{});
     std.debug.print("{s}\n", .{mir_opt_render});
 }
