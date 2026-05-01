@@ -42,6 +42,10 @@ pub const Inst = struct {
         /// * a: string pool id (value)
         str_literal,
 
+        /// extra-data:
+        /// * a: diagnostic ref
+        trap,
+
         // binary ops
 
         /// extra-data:
@@ -116,6 +120,11 @@ pub const Inst = struct {
         /// * a: condition (Ref)
         /// * b: body (Ref)
         if_simple,
+
+        /// extra-data:
+        /// * a: condition (Ref)
+        /// * b: extra_data index → IfElseInfo
+        if_else,
     };
 
     pub const Type = enum {
@@ -123,6 +132,7 @@ pub const Inst = struct {
         f32,
         bool,
         void,
+        err,
     };
 };
 
@@ -137,6 +147,11 @@ pub const FuncInfo = struct {
     body: Inst.Ref, // ref to block instruction
     ret_type: Inst.Type,
     flags: u32,
+};
+
+pub const IfElseInfo = struct {
+    body: Inst.Ref,
+    else_node: Inst.Ref,
 };
 
 pub fn deinit(self: *Self, alloc: mem.Allocator) void {
@@ -206,6 +221,7 @@ pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPo
                 const val = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
                 try w.print("%{d: <3} str(\"{s}\")\n", .{ idx, val });
             },
+            .trap => try w.print("%{d: <3} trap(D{d})\n", .{ idx, @intFromEnum(inst.data.a) }),
             .not, .negate => {
                 const tag_name = @tagName(inst.tag);
                 try w.print("%{d: <3} {s}(%{d})\n", .{ idx, tag_name, @intFromEnum(inst.data.a) });
@@ -273,12 +289,22 @@ pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPo
                     try w.print("%{d}", .{@intFromEnum(ref)});
                 }
                 try w.print("), ret={s}", .{@tagName(info.ret_type)});
-                try w.print(", body=%{d})\n", .{@intFromEnum(info.body)});
+                if (info.body != .none)
+                    try w.print(", body=%{d})\n", .{@intFromEnum(info.body)})
+                else
+                    try w.print(", body=<extern>)\n", .{});
             },
             .if_simple => try w.print(
                 "%{d: <3} if_simple(cond=%{d}, body=%{d})\n",
                 .{ idx, @intFromEnum(inst.data.a), @intFromEnum(inst.data.b) },
             ),
+            .if_else => {
+                const info = self.unpackExtraData(IfElseInfo, inst.data.b);
+                try w.print(
+                    "%{d: <3} if_else(cond=%{d}, body=%{d}, else=%{d})\n",
+                    .{ idx, @intFromEnum(inst.data.a), @intFromEnum(info.body), @intFromEnum(info.else_node) },
+                );
+            },
         }
     }
 

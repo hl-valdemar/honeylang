@@ -288,8 +288,10 @@ fn renderNode(self: *const Self, w: *Writer, node: Node.Ref, src: []const u8, st
             }
             try w.writeAll(") ");
             try self.renderNode(w, func.ret_type, src, str_pool, 0);
-            try w.writeByte(' ');
-            try self.renderNode(w, func.body, src, str_pool, indent);
+            if (func.body != .none) {
+                try w.writeByte(' ');
+                try self.renderNode(w, func.body, src, str_pool, indent);
+            }
             try w.writeByte('\n');
         },
         .namespace_decl => {

@@ -4,52 +4,65 @@ const ascii = std.ascii;
 
 src: *const Source,
 str_pool: *StringPool,
+diagnostics: ?*Diagnostic,
 pos: Token.Ref,
 tokens: Tokens,
-errors: Errors,
 
 const Self = @This();
 
 const StringPool = @import("../root.zig").StringPool;
 const Source = @import("../source/Source.zig");
+const Diagnostic = @import("../diagnostic/Store.zig");
 const Token = @import("Token.zig");
 const Error = @import("Error.zig");
 
 pub const Tokens = std.MultiArrayList(Token);
-const Errors = std.MultiArrayList(Error);
 
 pub const Context = struct {
     src: *const Source,
     str_pool: *StringPool,
+    diagnostics: ?*Diagnostic = null,
 };
 
 pub fn init(ctx: Context) Self {
     return .{
         .src = ctx.src,
         .str_pool = ctx.str_pool,
+        .diagnostics = ctx.diagnostics,
         .pos = 0,
         .tokens = .{},
-        .errors = .{},
     };
 }
 
 pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     self.tokens.deinit(alloc);
-    self.errors.deinit(alloc);
 }
 
 pub fn scan(self: *Self, alloc: mem.Allocator) !void {
     while (true) {
-        const tok = nextToken(self.src.contents, &self.pos);
+        var tok = nextToken(self.src.contents, &self.pos);
 
         if (tok.err) |err_tag| {
-            try self.errors.append(alloc, .{ .tag = err_tag, .start = tok.start, .end = tok.end });
+            if (self.diagnostics) |diagnostics| {
+                _ = try diagnostics.add(alloc, .{
+                    .stage = .lexer,
+                    .severity = .err,
+                    .tag = diagnosticTag(err_tag),
+                    .span = .{ .start = tok.start, .end = tok.end },
+                });
+            }
         }
 
         if (tok.tag == .invalid) continue;
 
+        if (tok.tag == .identifier and mem.eql(u8, self.src.contents[tok.start..tok.end], "c")) {
+            var lookahead = tok.end;
+            const next = nextToken(self.src.contents, &lookahead);
+            if (next.tag == .func) tok.tag = .cc_c;
+        }
+
         const str_id = str_id: switch (tok.tag) {
-            .identifier, .int, .float, .mut, .@"if", .@"else", .@"return", .func => {
+            .identifier, .int, .float, .mut, .@"if", .@"else", .@"return", .func, .cc_c => {
                 break :str_id try self.str_pool.intern(alloc, self.src.contents[tok.start..tok.end]);
             },
             else => break :str_id StringPool.ID.none,
@@ -58,6 +71,15 @@ pub fn scan(self: *Self, alloc: mem.Allocator) !void {
         try self.tokens.append(alloc, .{ .tag = tok.tag, .start = tok.start, .str_id = str_id });
         if (tok.tag == .eof) break;
     }
+}
+
+fn diagnosticTag(tag: Error.Tag) Diagnostic.Tag {
+    return switch (tag) {
+        .unrecognized_character => .lexer_unrecognized_character,
+        .multiple_decimal_points => .lexer_multiple_decimal_points,
+        .empty_hex_literal => .lexer_empty_hex_literal,
+        .empty_bin_literal => .lexer_empty_bin_literal,
+    };
 }
 
 const ScannedToken = struct {

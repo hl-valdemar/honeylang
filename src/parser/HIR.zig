@@ -3,6 +3,7 @@ const mem = std.mem;
 
 ast: *const AST,
 str_pool: *const StringPool,
+diagnostics: ?*Diagnostic,
 /// indexed by Inst.Ref.
 insts: std.MultiArrayList(Inst),
 extra_data: std.ArrayList(Inst.Ref),
@@ -13,6 +14,7 @@ const Self = @This();
 
 const BaseRef = @import("../root.zig").BaseRef;
 const StringPool = @import("../util/StringPool.zig");
+const Diagnostic = @import("../diagnostic/Store.zig");
 const AST = @import("../parser/AST.zig");
 
 pub const Inst = struct {
@@ -40,6 +42,10 @@ pub const Inst = struct {
         /// extra-data:
         /// * a: string pool id (value)
         str_literal,
+
+        /// extra-data:
+        /// * a: diagnostic ref
+        trap,
 
         // binary ops
 
@@ -120,6 +126,11 @@ pub const Inst = struct {
         /// * a: condition (Ref)
         /// * b: body (Ref)
         if_simple,
+
+        /// extra-data:
+        /// * a: condition (Ref)
+        /// * b: extra_data index → IfElseInfo
+        if_else,
     };
 };
 
@@ -136,15 +147,22 @@ pub const FuncInfo = struct {
     flags: u32,
 };
 
+pub const IfElseInfo = struct {
+    body: Inst.Ref,
+    else_node: Inst.Ref,
+};
+
 pub const Context = struct {
     ast: *const AST,
     str_pool: *const StringPool,
+    diagnostics: ?*Diagnostic = null,
 };
 
 pub fn init(ctx: Context) Self {
     return .{
         .ast = ctx.ast,
         .str_pool = ctx.str_pool,
+        .diagnostics = ctx.diagnostics,
         .insts = .{},
         .extra_data = .empty,
         .root_start = @enumFromInt(0),
@@ -158,6 +176,8 @@ pub fn deinit(self: *Self, alloc: mem.Allocator) void {
 }
 
 pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
+    if (node == .none) return .none;
+
     const data = self.ast.nodeData(node);
     switch (self.ast.nodeTag(node)) {
         .root => {
@@ -227,7 +247,7 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
             const params_end: BaseRef = @enumFromInt(self.extra_data.items.len);
 
             const ret_type = try self.lower(alloc, func_decl.ret_type);
-            const body = try self.lower(alloc, func_decl.body);
+            const body = if (func_decl.body != .none) try self.lower(alloc, func_decl.body) else .none;
 
             const extra_idx = try self.packExtraData(alloc, FuncInfo, .{
                 .params_start = params_start,
@@ -258,6 +278,17 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
             const condition = try self.lower(alloc, data.a);
             const body = try self.lower(alloc, data.b);
             return self.emit(alloc, .if_simple, .{ .a = condition, .b = body });
+        },
+        .if_else => {
+            const condition = try self.lower(alloc, data.a);
+            const ast_info = self.ast.unpackExtraData(AST.ElseIfInfo, data.b);
+            const body = try self.lower(alloc, ast_info.body);
+            const else_node = try self.lower(alloc, ast_info.else_node);
+            const extra_idx = try self.packExtraData(alloc, IfElseInfo, .{
+                .body = body,
+                .else_node = else_node,
+            });
+            return self.emit(alloc, .if_else, .{ .a = condition, .b = extra_idx });
         },
         .param => {
             const name_tok = self.ast.nodeMainToken(node);
@@ -334,11 +365,24 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
                 .a = @enumFromInt(@intFromEnum(name)),
             });
         },
+        .@"error" => return self.emit(alloc, .trap, .{ .a = data.a }),
         else => {
-            std.debug.print("[TODO]: unsupported node in lowering: {any}\n", .{self.ast.nodeTag(node)});
-            unreachable;
+            const diag_ref = try self.addDiagnostic(alloc, .lowering_unsupported_node);
+            return self.emit(alloc, .trap, .{ .a = @enumFromInt(@intFromEnum(diag_ref)) });
         },
     }
+}
+
+fn addDiagnostic(self: *Self, alloc: mem.Allocator, tag: Diagnostic.Tag) !Diagnostic.Ref {
+    if (self.diagnostics) |diagnostics| {
+        return diagnostics.add(alloc, .{
+            .stage = .lowering,
+            .severity = .err,
+            .tag = tag,
+            .span = null,
+        });
+    }
+    return .none;
 }
 
 fn emit(self: *Self, alloc: mem.Allocator, tag: Inst.Tag, data: Inst.Data) !Inst.Ref {
@@ -404,6 +448,7 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
                 const val = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
                 try w.print("%{d: <3} str(\"{s}\")\n", .{ idx, val });
             },
+            .trap => try w.print("%{d: <3} trap(D{d})\n", .{ idx, @intFromEnum(inst.data.a) }),
             .not, .negate => {
                 const tag_name = @tagName(inst.tag);
                 try w.print("%{d: <3} {s}(%{d})\n", .{ idx, tag_name, @intFromEnum(inst.data.a) });
@@ -480,12 +525,22 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
                 if (info.ret_type != .none)
                     try w.print(", ret=%{d}", .{@intFromEnum(info.ret_type)});
 
-                try w.print(", body=%{d})\n", .{@intFromEnum(info.body)});
+                if (info.body != .none)
+                    try w.print(", body=%{d})\n", .{@intFromEnum(info.body)})
+                else
+                    try w.print(", body=<extern>)\n", .{});
             },
             .if_simple => try w.print(
                 "%{d: <3} if_simple(cond=%{d}, body=%{d})\n",
                 .{ idx, @intFromEnum(inst.data.a), @intFromEnum(inst.data.b) },
             ),
+            .if_else => {
+                const info = self.unpackExtraData(IfElseInfo, inst.data.b);
+                try w.print(
+                    "%{d: <3} if_else(cond=%{d}, body=%{d}, else=%{d})\n",
+                    .{ idx, @intFromEnum(inst.data.a), @intFromEnum(info.body), @intFromEnum(info.else_node) },
+                );
+            },
         }
     }
 

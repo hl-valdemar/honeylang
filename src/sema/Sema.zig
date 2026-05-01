@@ -3,6 +3,7 @@ const mem = std.mem;
 
 str_pool: *StringPool,
 hir: *const HIR,
+diagnostics: ?*Diagnostic,
 mir: MIR,
 scope: Scope,
 type_map: std.AutoHashMapUnmanaged(StringPool.ID, MIR.Inst.Type),
@@ -18,6 +19,7 @@ const Self = @This();
 
 const StringPool = @import("../util/StringPool.zig");
 const BaseRef = @import("../root.zig").BaseRef;
+const Diagnostic = @import("../diagnostic/Store.zig");
 const HIR = @import("../parser/HIR.zig");
 const MIR = @import("MIR.zig");
 
@@ -46,10 +48,22 @@ const ResolvedBinding = struct {
     binding: *Binding,
 };
 
+const TypeResolution = struct {
+    type: MIR.Inst.Type,
+    diagnostic: Diagnostic.Ref = .none,
+};
+
 pub fn init(hir: *const HIR, str_pool: *StringPool) Self {
+    return initWithDiagnostics(hir, str_pool, null);
+}
+
+/// initialize sema with access to the shared diagnostic store. the compiler
+/// pipeline uses this entry point; `init` is retained for no-diagnostic callers.
+pub fn initWithDiagnostics(hir: *const HIR, str_pool: *StringPool, diagnostics: ?*Diagnostic) Self {
     return .{
         .str_pool = str_pool,
         .hir = hir,
+        .diagnostics = diagnostics,
         .mir = .{},
         .scope = .{},
         .type_map = .{},
@@ -112,11 +126,13 @@ fn predeclareDecls(self: *Self, alloc: mem.Allocator, scope: *Scope, refs: []con
         switch (inst.tag) {
             .decl_const, .decl_var, .decl_func => {
                 const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
-                try self.bind(scope, alloc, name, .{ .pending_decl = ref });
+                if (!try self.bind(scope, alloc, name, .{ .pending_decl = ref }))
+                    _ = try self.emitTrap(alloc, .sema_duplicate_declaration);
             },
             .decl_namespace => {
                 const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
-                try self.bind(scope, alloc, name, .namespace);
+                if (!try self.bind(scope, alloc, name, .namespace))
+                    _ = try self.emitTrap(alloc, .sema_duplicate_declaration);
             },
             else => {},
         }
@@ -141,7 +157,7 @@ fn analyzeDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
         return .none;
     }
 
-    const binding = scope.localBinding(name) orelse return error.InternalMissingDeclarationBinding;
+    const binding = scope.localBinding(name) orelse return self.emitTrap(alloc, .sema_duplicate_declaration);
     switch (binding.*) {
         .value => |mir_ref| {
             self.ref_map.items[@intFromEnum(ref)] = mir_ref;
@@ -149,10 +165,10 @@ fn analyzeDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
             return mir_ref;
         },
         .pending_decl => |pending_ref| {
-            if (pending_ref != ref) return error.InternalDeclarationBindingMismatch;
+            if (pending_ref != ref) return self.emitTrap(alloc, .sema_duplicate_declaration);
         },
-        .analyzing_decl => return error.DeclarationCycle,
-        .namespace => return error.NamespaceNotValue,
+        .analyzing_decl => return self.emitTrap(alloc, .sema_declaration_cycle),
+        .namespace => return self.emitTrap(alloc, .sema_namespace_not_value),
     }
 
     binding.* = .{ .analyzing_decl = ref };
@@ -191,16 +207,22 @@ fn analyzeValueDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.I
     const inst = self.hir.insts.get(@intFromEnum(ref));
     const hir_decl = self.hir.unpackExtraData(HIR.DeclInfo, inst.data.b);
 
-    const value = try self.analyzeInst(alloc, scope, hir_decl.value);
-    if (value == .none) return error.NotAValue;
+    var value = try self.analyzeInst(alloc, scope, hir_decl.value);
+    if (value == .none) value = try self.emitTrap(alloc, .sema_not_a_value);
 
     const value_type = self.inst_types.items[@intFromEnum(value)];
-    const decl_type = if (hir_decl.type != .none)
-        try self.resolveType(hir_decl.type)
+    const type_resolution: TypeResolution = if (hir_decl.type != .none)
+        try self.resolveType(alloc, hir_decl.type)
     else
-        value_type;
+        .{ .type = value_type };
+    var decl_type = type_resolution.type;
 
-    if (hir_decl.type != .none and decl_type != value_type) return error.TypeMismatch;
+    if (hir_decl.type != .none and decl_type != .err and value_type != .err and decl_type != value_type) {
+        value = try self.emitTrap(alloc, .sema_type_mismatch);
+        decl_type = .err;
+    }
+    if (type_resolution.diagnostic != .none and value_type != .err)
+        value = try self.emitTrapRef(alloc, type_resolution.diagnostic);
 
     const extra_idx = try self.mir.packExtraData(alloc, MIR.DeclInfo, .{
         .value = value,
@@ -233,12 +255,15 @@ fn analyzeFuncDecl(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.I
     }
     const extra_end: BaseRef = @enumFromInt(self.mir.extra_data.items.len);
 
-    const ret_type = try self.resolveType(func_info.ret_type);
+    const ret_type = (try self.resolveType(alloc, func_info.ret_type)).type;
     const outer_ret_type = self.current_ret_type;
     self.current_ret_type = ret_type;
     defer self.current_ret_type = outer_ret_type;
 
-    const body = try self.analyzeInst(alloc, &func_scope, func_info.body);
+    const body: MIR.Inst.Ref = if (func_info.body != .none)
+        try self.analyzeInst(alloc, &func_scope, func_info.body)
+    else
+        .none;
 
     const extra_idx = try self.mir.packExtraData(alloc, MIR.FuncInfo, .{
         .params_start = extra_start,
@@ -261,13 +286,14 @@ fn analyzeParam(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.
     std.debug.assert(inst.tag == .param);
 
     const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
-    const param_type = try self.resolveType(inst.data.b);
+    const param_type = (try self.resolveType(alloc, inst.data.b)).type;
     const param_ref = try self.emitTyped(alloc, .param, .{
         .a = inst.data.a,
         .b = @enumFromInt(@intFromEnum(param_type)),
     }, param_type);
 
-    try self.bind(scope, alloc, name, .{ .value = param_ref });
+    if (!try self.bind(scope, alloc, name, .{ .value = param_ref }))
+        return self.emitTrap(alloc, .sema_duplicate_declaration);
     self.ref_map.items[@intFromEnum(ref)] = param_ref;
     self.analyzed.set(@intFromEnum(ref));
     return param_ref;
@@ -289,13 +315,16 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
                 .a = @enumFromInt(@intFromEnum(inst.data.a)),
             }, mir_type);
         },
+        .trap => try self.emitTyped(alloc, .trap, .{ .a = inst.data.a }, .err),
         .add, .sub, .mul, .div => blk: {
-            const left = try self.requireValue(try self.analyzeInst(alloc, scope, inst.data.a));
-            const right = try self.requireValue(try self.analyzeInst(alloc, scope, inst.data.b));
+            const left = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, scope, inst.data.a));
+            const right = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, scope, inst.data.b));
 
             const left_type = self.inst_types.items[@intFromEnum(left)];
             const right_type = self.inst_types.items[@intFromEnum(right)];
-            if (left_type != right_type) return error.TypeMismatch;
+            if (left_type == .err) break :blk left;
+            if (right_type == .err) break :blk right;
+            if (left_type != right_type) break :blk try self.emitTrap(alloc, .sema_type_mismatch);
 
             const mir_tag: MIR.Inst.Tag = switch (inst.tag) {
                 .add => .add,
@@ -341,33 +370,57 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
             }, .void);
         },
         .ret => blk: {
-            const ret_type = self.current_ret_type orelse return error.ReturnOutsideFunction;
+            const ret_type = self.current_ret_type orelse {
+                const trap = try self.emitTrap(alloc, .sema_return_outside_function);
+                break :blk try self.emitTyped(alloc, .ret, .{ .a = trap }, .void);
+            };
             const val = if (inst.data.a != .none)
-                try self.requireValue(try self.analyzeInst(alloc, scope, inst.data.a))
+                try self.valueOrTrap(alloc, try self.analyzeInst(alloc, scope, inst.data.a))
             else
                 .none;
-            try self.checkReturnType(ret_type, val);
-            break :blk try self.emitTyped(alloc, .ret, .{ .a = val }, .void);
+            const ret_val = try self.checkReturnType(alloc, ret_type, val);
+            break :blk try self.emitTyped(alloc, .ret, .{ .a = ret_val }, .void);
         },
         .if_simple => blk: {
-            const condition = try self.requireValue(try self.analyzeInst(alloc, scope, inst.data.a));
-            try self.expectType(condition, .bool);
+            var condition = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, scope, inst.data.a));
+            const condition_type = self.inst_types.items[@intFromEnum(condition)];
+            if (condition_type != .err and condition_type != .bool)
+                condition = try self.emitTrap(alloc, .sema_type_mismatch);
             const body = try self.analyzeInst(alloc, scope, inst.data.b);
             break :blk try self.emitTyped(alloc, .if_simple, .{
                 .a = condition,
                 .b = body,
             }, .void);
         },
+        .if_else => blk: {
+            var condition = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, scope, inst.data.a));
+            const condition_type = self.inst_types.items[@intFromEnum(condition)];
+            if (condition_type != .err and condition_type != .bool)
+                condition = try self.emitTrap(alloc, .sema_type_mismatch);
+
+            const hir_info = self.hir.unpackExtraData(HIR.IfElseInfo, inst.data.b);
+            const body = try self.analyzeInst(alloc, scope, hir_info.body);
+            const else_node = try self.analyzeInst(alloc, scope, hir_info.else_node);
+            const extra_idx = try self.mir.packExtraData(alloc, MIR.IfElseInfo, .{
+                .body = body,
+                .else_node = else_node,
+            });
+            break :blk try self.emitTyped(alloc, .if_else, .{
+                .a = condition,
+                .b = extra_idx,
+            }, .void);
+        },
         .not, .negate => blk: {
-            const operand = try self.requireValue(try self.analyzeInst(alloc, scope, inst.data.a));
+            const operand = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, scope, inst.data.a));
             const operand_type = self.inst_types.items[@intFromEnum(operand)];
+            if (operand_type == .err) break :blk operand;
             const mir_tag: MIR.Inst.Tag = switch (inst.tag) {
                 .not => tag: {
-                    if (operand_type != .bool) return error.TypeMismatch;
+                    if (operand_type != .bool) break :blk try self.emitTrap(alloc, .sema_type_mismatch);
                     break :tag .not;
                 },
                 .negate => tag: {
-                    if (!isNumericType(operand_type)) return error.TypeMismatch;
+                    if (!isNumericType(operand_type)) break :blk try self.emitTrap(alloc, .sema_type_mismatch);
                     break :tag .negate;
                 },
                 else => unreachable,
@@ -375,7 +428,7 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
             break :blk try self.emitTyped(alloc, mir_tag, .{ .a = operand }, operand_type);
         },
         .param => try self.analyzeParam(alloc, scope, ref),
-        .str_literal => return error.UnsupportedStringLiteral,
+        .str_literal => try self.emitTrap(alloc, .sema_unsupported_string_literal),
     };
 
     self.ref_map.items[@intFromEnum(ref)] = mir_ref;
@@ -390,11 +443,12 @@ fn analyzeLocalOrPredeclaredDecl(self: *Self, alloc: mem.Allocator, scope: *Scop
     if (scope.localBinding(name)) |binding| {
         switch (binding.*) {
             .pending_decl, .analyzing_decl, .value => return self.analyzeDecl(alloc, scope, ref),
-            .namespace => return error.NamespaceNotValue,
+            .namespace => return self.emitTrap(alloc, .sema_namespace_not_value),
         }
     }
 
-    try self.bind(scope, alloc, name, .{ .analyzing_decl = ref });
+    if (!try self.bind(scope, alloc, name, .{ .analyzing_decl = ref }))
+        return self.emitTrap(alloc, .sema_duplicate_declaration);
     const mir_ref = switch (inst.tag) {
         .decl_const, .decl_var => try self.analyzeValueDecl(alloc, scope, ref),
         .decl_func => try self.analyzeFuncDecl(alloc, scope, ref),
@@ -405,28 +459,38 @@ fn analyzeLocalOrPredeclaredDecl(self: *Self, alloc: mem.Allocator, scope: *Scop
     return mir_ref;
 }
 
-fn bind(self: *Self, scope: *Scope, alloc: mem.Allocator, name: StringPool.ID, binding: Binding) anyerror!void {
-    if (self.type_map.contains(name)) return error.DuplicateDeclaration;
-    if (scope.bindings.contains(name)) return error.DuplicateDeclaration;
+fn bind(self: *Self, scope: *Scope, alloc: mem.Allocator, name: StringPool.ID, binding: Binding) anyerror!bool {
+    if (self.type_map.contains(name)) {
+        _ = try self.addDiagnostic(alloc, .sema_duplicate_declaration);
+        return false;
+    }
+    if (scope.bindings.contains(name)) {
+        _ = try self.addDiagnostic(alloc, .sema_duplicate_declaration);
+        return false;
+    }
 
     var ancestor = scope.parent;
     while (ancestor) |parent| {
-        if (parent.bindings.contains(name)) return error.DuplicateDeclaration;
+        if (parent.bindings.contains(name)) {
+            _ = try self.addDiagnostic(alloc, .sema_duplicate_declaration);
+            return false;
+        }
         ancestor = parent.parent;
     }
 
     try scope.bindings.put(alloc, name, binding);
+    return true;
 }
 
 fn resolveValue(self: *Self, alloc: mem.Allocator, scope: *Scope, name: StringPool.ID) anyerror!MIR.Inst.Ref {
-    if (self.type_map.contains(name)) return error.TypeNotValue;
+    if (self.type_map.contains(name)) return self.emitTrap(alloc, .sema_type_not_value);
 
-    const resolved = self.resolveBinding(scope, name) orelse return error.UndefinedName;
+    const resolved = self.resolveBinding(scope, name) orelse return self.emitTrap(alloc, .sema_undefined_name);
     return switch (resolved.binding.*) {
         .value => |mir_ref| mir_ref,
         .pending_decl => |ref| try self.analyzeDecl(alloc, resolved.scope, ref),
-        .analyzing_decl => error.DeclarationCycle,
-        .namespace => error.NamespaceNotValue,
+        .analyzing_decl => try self.emitTrap(alloc, .sema_declaration_cycle),
+        .namespace => try self.emitTrap(alloc, .sema_namespace_not_value),
     };
 }
 
@@ -439,39 +503,53 @@ fn resolveBinding(_: *Self, scope: *Scope, name: StringPool.ID) ?ResolvedBinding
     return null;
 }
 
-fn resolveType(self: *const Self, hir_type_ref: BaseRef) anyerror!MIR.Inst.Type {
-    if (hir_type_ref == .none) return .void;
+fn resolveType(self: *Self, alloc: mem.Allocator, hir_type_ref: BaseRef) anyerror!TypeResolution {
+    if (hir_type_ref == .none) return .{ .type = .void };
 
     const hir_inst = self.hir.insts.get(@intFromEnum(hir_type_ref));
-    if (hir_inst.tag != .ref) return error.UndefinedType;
+    if (hir_inst.tag == .trap) return .{
+        .type = .err,
+        .diagnostic = @enumFromInt(@intFromEnum(hir_inst.data.a)),
+    };
+    if (hir_inst.tag != .ref) {
+        const diagnostic = try self.addDiagnostic(alloc, .sema_undefined_type);
+        return .{ .type = .err, .diagnostic = diagnostic };
+    }
 
     const name: StringPool.ID = @enumFromInt(@intFromEnum(hir_inst.data.a));
-    return self.type_map.get(name) orelse error.UndefinedType;
+    if (self.type_map.get(name)) |resolved_type|
+        return .{ .type = resolved_type };
+
+    const diagnostic = try self.addDiagnostic(alloc, .sema_undefined_type);
+    return .{ .type = .err, .diagnostic = diagnostic };
 }
 
-fn requireValue(_: *Self, ref: MIR.Inst.Ref) anyerror!MIR.Inst.Ref {
-    if (ref == .none) return error.NotAValue;
+fn valueOrTrap(self: *Self, alloc: mem.Allocator, ref: MIR.Inst.Ref) anyerror!MIR.Inst.Ref {
+    if (ref == .none) return self.emitTrap(alloc, .sema_not_a_value);
     return ref;
 }
 
-fn expectType(self: *Self, ref: MIR.Inst.Ref, expected: MIR.Inst.Type) anyerror!void {
-    if (self.inst_types.items[@intFromEnum(ref)] != expected) return error.TypeMismatch;
-}
-
-fn checkReturnType(self: *Self, expected: MIR.Inst.Type, val: MIR.Inst.Ref) anyerror!void {
+fn checkReturnType(self: *Self, alloc: mem.Allocator, expected: MIR.Inst.Type, val: MIR.Inst.Ref) anyerror!MIR.Inst.Ref {
     if (expected == .void) {
-        if (val != .none) return error.TypeMismatch;
-        return;
+        if (val != .none) {
+            const val_type = self.inst_types.items[@intFromEnum(val)];
+            if (val_type != .err) return self.emitTrap(alloc, .sema_type_mismatch);
+        }
+        return val;
     }
 
-    if (val == .none) return error.TypeMismatch;
-    try self.expectType(val, expected);
+    if (expected == .err) return val;
+    if (val == .none) return self.emitTrap(alloc, .sema_type_mismatch);
+    const val_type = self.inst_types.items[@intFromEnum(val)];
+    if (expected != .err and val_type != .err and val_type != expected)
+        return self.emitTrap(alloc, .sema_type_mismatch);
+    return val;
 }
 
 fn isNumericType(@"type": MIR.Inst.Type) bool {
     return switch (@"type") {
         .i32, .f32 => true,
-        .bool, .void => false,
+        .bool, .void, .err => false,
     };
 }
 
@@ -479,4 +557,25 @@ fn emitTyped(self: *Self, alloc: mem.Allocator, tag: MIR.Inst.Tag, data: MIR.Ins
     const ref = try self.mir.emit(alloc, tag, data);
     try self.inst_types.append(alloc, resolved_type);
     return ref;
+}
+
+fn emitTrap(self: *Self, alloc: mem.Allocator, tag: Diagnostic.Tag) anyerror!MIR.Inst.Ref {
+    const diag_ref = try self.addDiagnostic(alloc, tag);
+    return self.emitTrapRef(alloc, diag_ref);
+}
+
+fn emitTrapRef(self: *Self, alloc: mem.Allocator, diag_ref: Diagnostic.Ref) anyerror!MIR.Inst.Ref {
+    return self.emitTyped(alloc, .trap, .{ .a = @enumFromInt(@intFromEnum(diag_ref)) }, .err);
+}
+
+fn addDiagnostic(self: *Self, alloc: mem.Allocator, tag: Diagnostic.Tag) !Diagnostic.Ref {
+    if (self.diagnostics) |diagnostics| {
+        return diagnostics.add(alloc, .{
+            .stage = .sema,
+            .severity = .err,
+            .tag = tag,
+            .span = null,
+        });
+    }
+    return .none;
 }

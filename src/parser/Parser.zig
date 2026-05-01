@@ -3,6 +3,7 @@ const mem = std.mem;
 
 src: *const Source,
 tokens: Lexer.Tokens.Slice,
+diagnostics: ?*Diagnostic,
 pos: Token.Ref,
 nodes: AST.Nodes,
 extra_data: AST.Refs,
@@ -14,6 +15,7 @@ const Self = @This();
 const BaseRef = @import("../root.zig").BaseRef;
 const StringPool = @import("../util/StringPool.zig");
 const Source = @import("../source/Source.zig");
+const Diagnostic = @import("../diagnostic/Store.zig");
 const Lexer = @import("../lexer/Lexer.zig");
 const Token = @import("../lexer/Token.zig");
 const AST = @import("AST.zig");
@@ -41,12 +43,14 @@ const BindingPower = struct {
 pub const Context = struct {
     src: *const Source,
     tokens: Lexer.Tokens.Slice,
+    diagnostics: ?*Diagnostic = null,
 };
 
 pub fn init(ctx: Context) Self {
     return .{
         .src = ctx.src,
         .tokens = ctx.tokens,
+        .diagnostics = ctx.diagnostics,
         .pos = 0,
         .nodes = .{},
         .extra_data = .empty,
@@ -190,7 +194,12 @@ fn parseFuncDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref) !AST.No
     self.scratch.items.len = scratch_top;
 
     const ret_type = try self.parseExpr(alloc, 0);
-    const body = try self.parseBlock(alloc);
+    const body: AST.Node.Ref = if (self.tokenTag(self.pos) == .left_curly)
+        try self.parseBlock(alloc)
+    else body: {
+        try self.expect(alloc, .newline);
+        break :body .none;
+    };
 
     // pack func decl into extra_data
     const extra_idx = try self.packExtraData(alloc, AST.FuncDecl, .{
@@ -468,28 +477,27 @@ fn skipNewlines(self: *Self) void {
 fn expect(self: *Self, alloc: mem.Allocator, tag: Token.Tag) !void {
     if (self.tokenTag(self.pos) == tag) {
         self.advance();
-    } else if (self.tokenTag(self.pos) != .eof) {
+    } else {
         try self.errors.append(alloc, .{
             .tag = .expected_token,
             .token = self.pos,
             .expected = tag,
         });
+        _ = try self.addDiagnostic(alloc, .parser_expected_token, self.pos);
     }
 }
 
 fn advance(self: *Self) void {
-    self.pos += 1;
+    if (self.tokenTag(self.pos) != .eof) self.pos += 1;
 }
 
 fn advanceN(self: *Self, offset: Token.Ref) void {
     self.pos += offset;
 }
 
-/// get the tag for a token at the given position.
-/// pre: position is in bounds of the token arrays.
+/// get the tag for a token, treating out-of-bounds recovery lookahead as eof.
 fn tokenTag(self: *const Self, pos: Token.Ref) Token.Tag {
-    // note: we should never reach a state where the index is out of bounds.
-    // in case we do, just crash the program.
+    if (pos >= self.tokens.len) return .eof;
     return self.tokens.items(.tag)[pos];
 }
 
@@ -515,17 +523,53 @@ fn addNode(self: *Self, alloc: mem.Allocator, node: AST.Node) !AST.Node.Ref {
 
 fn addError(self: *Self, alloc: mem.Allocator, tag: AST.Error.Tag) !AST.Node.Ref {
     try self.errors.append(alloc, .{ .tag = tag, .token = self.pos });
-    self.advance(); // skip offending token
+    const err_tok = self.pos;
+    const diag_ref = try self.addDiagnostic(alloc, switch (tag) {
+        .expected_expression => .parser_expected_expression,
+        .expected_declaration => .parser_expected_declaration,
+        .expected_token => .parser_expected_token,
+    }, err_tok);
+    self.advance(); // skip offending token unless already at EOF
 
     return self.addNode(alloc, .{
         .tag = .@"error",
-        .main_tok = self.pos -| 1,
-        .data = .{},
+        .main_tok = err_tok,
+        .data = .{ .a = @enumFromInt(@intFromEnum(diag_ref)) },
     });
 }
 
+fn addDiagnostic(self: *Self, alloc: mem.Allocator, tag: Diagnostic.Tag, token: Token.Ref) !Diagnostic.Ref {
+    if (self.diagnostics) |diagnostics| {
+        return diagnostics.add(alloc, .{
+            .stage = .parser,
+            .severity = .err,
+            .tag = tag,
+            .span = self.tokenSpan(token),
+        });
+    }
+    return .none;
+}
+
+fn tokenSpan(self: *const Self, token: Token.Ref) ?Diagnostic.Span {
+    if (token >= self.tokens.len) return null;
+    const start = self.tokens.items(.start)[token];
+    var end = start;
+    if (token + 1 < self.tokens.len) {
+        end = self.tokens.items(.start)[token + 1];
+    } else {
+        end = @intCast(self.src.contents.len);
+    }
+    return .{ .start = start, .end = end };
+}
+
 pub fn lower(alloc: mem.Allocator, ast: *const AST, str_pool: *const StringPool) !HIR {
-    var hir = HIR.init(.{ .ast = ast, .str_pool = str_pool });
+    return lowerWithDiagnostics(alloc, ast, str_pool, null);
+}
+
+/// lower with access to the shared diagnostic store. the compiler pipeline uses
+/// this entry point; `lower` is retained for tests and older no-diagnostic callers.
+pub fn lowerWithDiagnostics(alloc: mem.Allocator, ast: *const AST, str_pool: *const StringPool, diagnostics: ?*Diagnostic) !HIR {
+    var hir = HIR.init(.{ .ast = ast, .str_pool = str_pool, .diagnostics = diagnostics });
     const root: HIR.Inst.Ref = @enumFromInt(0);
     _ = try hir.lower(alloc, root);
     return hir;
