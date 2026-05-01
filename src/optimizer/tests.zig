@@ -39,7 +39,7 @@ fn optimizedMirRender(alloc: mem.Allocator, src_str: []const u8) ![]const u8 {
     defer opt.deinit(alloc);
     try opt.optimize(alloc);
 
-    return try opt.mir_dce.render(alloc, &str_pool);
+    return try opt.mir_optimized.render(alloc, &str_pool);
 }
 
 fn expectOptimizedContains(src: []const u8, expected: []const u8) !void {

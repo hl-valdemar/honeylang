@@ -72,7 +72,7 @@ pub fn main(init: std.process.Init) !void {
     defer opt.deinit(alloc);
     try opt.optimize(alloc);
 
-    const mir_opt_render = try opt.mir_dce.render(alloc, &str_pool);
+    const mir_opt_render = try opt.mir_optimized.render(alloc, &str_pool);
     defer alloc.free(mir_opt_render);
 
     std.debug.print("\n[::Rendered MIR (optimized)::]\n\n", .{});
