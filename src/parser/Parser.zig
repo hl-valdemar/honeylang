@@ -565,12 +565,6 @@ fn tokenSpan(self: *const Self, token: Token.Ref) ?Diagnostic.Span {
 }
 
 pub fn lower(alloc: mem.Allocator, ast: *const AST, str_pool: *const StringPool, diagnostics: *Diagnostic, diagnostic_alloc: mem.Allocator) !HIR {
-    return lowerWithDiagnostics(alloc, ast, str_pool, diagnostics, diagnostic_alloc);
-}
-
-/// lower with access to the shared diagnostic store. the compiler pipeline uses
-/// this entry point; `lower` is retained for tests and older no-diagnostic callers.
-pub fn lowerWithDiagnostics(alloc: mem.Allocator, ast: *const AST, str_pool: *const StringPool, diagnostics: *Diagnostic, diagnostic_alloc: mem.Allocator) !HIR {
     var hir = HIR.init(.{ .ast = ast, .str_pool = str_pool, .diagnostics = diagnostics, .diagnostic_alloc = diagnostic_alloc });
     const root: HIR.Inst.Ref = @enumFromInt(0);
     _ = try hir.lower(alloc, root);

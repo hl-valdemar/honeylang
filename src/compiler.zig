@@ -142,7 +142,7 @@ fn buildHir(ctx: Context, render: *Renderer) !HirStage {
         render.printRendered("Rendered AST", ast_render);
     }
 
-    const hir = try Parser.lowerWithDiagnostics(hir_alloc, &ast, ctx.str_pool, ctx.diagnostics, ctx.alloc);
+    const hir = try Parser.lower(hir_alloc, &ast, ctx.str_pool, ctx.diagnostics, ctx.alloc);
     return .{ .arena = hir_arena, .hir = hir };
 }
 

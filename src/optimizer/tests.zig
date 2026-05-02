@@ -27,7 +27,7 @@ fn optimizedMirRender(alloc: mem.Allocator, src_str: []const u8) ![]const u8 {
     defer parser.deinit(alloc);
     const ast = try parser.parse(alloc);
 
-    var hir = try Parser.lowerWithDiagnostics(alloc, &ast, &str_pool, &diagnostics, alloc);
+    var hir = try Parser.lower(alloc, &ast, &str_pool, &diagnostics, alloc);
     defer hir.deinit(alloc);
 
     var sema = Sema.init(&hir, &str_pool, &diagnostics, alloc);

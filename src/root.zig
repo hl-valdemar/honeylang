@@ -1,4 +1,7 @@
 // packages
+pub const compiler = @import("compiler.zig");
+
+// types
 pub const Args = @import("util/Args.zig");
 pub const StringPool = @import("util/StringPool.zig");
 pub const SourceManager = @import("source/Manager.zig");
@@ -7,7 +10,6 @@ pub const Lexer = @import("lexer/Lexer.zig");
 pub const Parser = @import("parser/Parser.zig");
 pub const Sema = @import("sema/Sema.zig");
 pub const Optimizer = @import("optimizer/Optimizer.zig");
-pub const Compiler = @import("Compiler.zig");
 
 const std = @import("std");
 
@@ -33,7 +35,6 @@ pub const ErrorInfo = struct {
 test {
     _ = @import("util/Args.zig");
     _ = @import("util/StringPool.zig");
-    _ = @import("diagnostic/Store.zig");
     _ = @import("lexer/tests.zig");
     _ = @import("parser/tests.zig");
     _ = @import("sema/tests.zig");

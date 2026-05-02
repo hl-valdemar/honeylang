@@ -30,7 +30,7 @@ pub fn main(init: std.process.Init) !void {
     var diagnostics = honey.Diagnostic.init();
     defer diagnostics.deinit(alloc);
 
-    try honey.Compiler.run(.{
+    try honey.compiler.run(.{
         .alloc = alloc,
         .src = &src,
         .str_pool = &str_pool,

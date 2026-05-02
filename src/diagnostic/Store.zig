@@ -125,8 +125,7 @@ pub fn add(self: *Self, alloc: mem.Allocator, diagnostic: Diagnostic) !Ref {
 pub fn hasErrors(self: *const Self) bool {
     for (self.arr.items(.severity)) |severity| {
         switch (severity) {
-            .fatal, .err => return true,
-            .warning => {},
+            .fatal, .err, .warning => return true,
         }
     }
     return false;
