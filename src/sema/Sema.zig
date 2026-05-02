@@ -190,7 +190,7 @@ fn analyzeNamespace(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.
 
     const block = self.hir.insts.get(@intFromEnum(inst.data.b));
     std.debug.assert(block.tag == .block);
-    const members = self.hir.extraSlice(block.data.a, block.data.b);
+    const members = self.hir.refSlice(block.data.a, block.data.b);
 
     try self.predeclareDecls(alloc, &scope, members);
     try self.analyzeDecls(alloc, &scope, members);
@@ -201,7 +201,7 @@ fn analyzeNamespace(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.
 
 fn analyzeValueDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
     const inst = self.hir.insts.get(@intFromEnum(ref));
-    const hir_decl = self.hir.unpackExtraData(HIR.DeclInfo, inst.data.b);
+    const hir_decl = self.hir.declInfo(HIR.asDeclRef(inst.data.b));
 
     var value = try self.analyzeInst(alloc, scope, hir_decl.value);
     if (value == .none) value = try self.emitTrap(alloc, .sema_not_a_value);
@@ -238,12 +238,12 @@ fn analyzeValueDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.I
 
 fn analyzeFuncDecl(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
     const inst = self.hir.insts.get(@intFromEnum(ref));
-    const func_info = self.hir.unpackExtraData(HIR.FuncInfo, inst.data.b);
+    const func_info = self.hir.funcInfo(HIR.asFuncRef(inst.data.b));
 
     var func_scope: Scope = .{ .parent = parent };
     defer func_scope.deinit(alloc);
 
-    const hir_params = self.hir.extraSlice(func_info.params_start, func_info.params_end);
+    const hir_params = self.hir.refSlice(func_info.params_start, func_info.params_end);
     const params_start = self.mir.refListStart();
     for (hir_params) |hir_ref| {
         const mir_ref = try self.analyzeParam(alloc, &func_scope, hir_ref);
@@ -347,7 +347,7 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
             var block_scope: Scope = .{ .parent = scope };
             defer block_scope.deinit(alloc);
 
-            const hir_stmts = self.hir.extraSlice(inst.data.a, inst.data.b);
+            const hir_stmts = self.hir.refSlice(inst.data.a, inst.data.b);
             var stmt_refs: std.ArrayList(BaseRef) = .empty;
             defer stmt_refs.deinit(alloc);
 
@@ -392,7 +392,7 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
             if (condition_type != .err and condition_type != .bool)
                 condition = try self.emitTrap(alloc, .sema_type_mismatch);
 
-            const hir_info = self.hir.unpackExtraData(HIR.IfElseInfo, inst.data.b);
+            const hir_info = self.hir.branchInfo(HIR.asBranchRef(inst.data.b));
             const body = try self.analyzeInst(alloc, scope, hir_info.body);
             const else_node = try self.analyzeInst(alloc, scope, hir_info.else_node);
             const branch_ref = try self.mir.emitBranchInfo(alloc, .{

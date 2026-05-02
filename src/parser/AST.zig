@@ -2,7 +2,9 @@ const std = @import("std");
 const mem = std.mem;
 
 nodes: Nodes.Slice,
-extra_data: []const BaseRef,
+funcs: Funcs.Slice,
+branches: Branches.Slice,
+ref_lists: []const BaseRef,
 errors: Errors.Slice,
 tokens: Lexer.Tokens.Slice,
 
@@ -16,6 +18,8 @@ const Token = @import("../lexer/Token.zig");
 const Lexer = @import("../lexer/Lexer.zig");
 
 pub const Nodes = std.MultiArrayList(Node);
+pub const Funcs = std.MultiArrayList(FuncDecl);
+pub const Branches = std.MultiArrayList(ElseIfInfo);
 pub const Refs = std.ArrayList(BaseRef);
 pub const Errors = std.MultiArrayList(Error);
 
@@ -33,31 +37,29 @@ pub const Node = struct {
 
     pub const Tag = enum {
         /// main_token: unused
-        /// extra_data[a..b] contains top-level node indices
+        /// ref_lists[a..b] contains top-level node indices
         root,
 
         /// <name> [type] :: <value>
         /// main_token: identifier
-        /// a: type expression (Ref)
-        /// b: value expression (Ref)
+        /// a: type expression (ref)
+        /// b: value expression (ref)
         const_decl,
 
         /// <name> [type] = <value>
         /// main_token: identifier
-        /// a: type expression (Ref)
-        /// b: value expression (Ref)
+        /// a: type expression (ref)
+        /// b: value expression (ref)
         var_decl,
 
         /// `<name> :: [cc] func([params]) <type> { [body] }`
         /// main_token: identifier
-        /// a: extra-data index (BaseRef) → FuncDecl
-        /// b: unused
+        /// b: func ref
         func_decl,
 
         /// `<name> { [body] }`
         /// main_token: identifier
-        /// a: extra-data index (BaseRef) → Block
-        /// b: unused
+        /// a: block ref
         namespace_decl,
 
         /// <name> <type> (e.g. a int)
@@ -68,14 +70,14 @@ pub const Node = struct {
 
         /// `-a`, `!a`
         /// main_token: operator token
-        /// a: operand (Ref)
+        /// a: operand (ref)
         /// b: unused
         unary_op,
 
         /// `a + b`, `a * b`, etc.
         /// main_token: operator token
-        /// a: left operand (Ref)
-        /// b: right operand (Ref)
+        /// a: left operand (ref)
+        /// b: right operand (ref)
         binary_op,
 
         /// a bare identifier.
@@ -100,7 +102,7 @@ pub const Node = struct {
 
         /// `(<expr>)`
         /// main_token: `(` token
-        /// a: inner expression (Ref)
+        /// a: inner expression (ref)
         /// b: unused
         grouped_expr,
 
@@ -112,25 +114,25 @@ pub const Node = struct {
 
         /// `{ [body] }`
         /// main_token: `{` token
-        /// extra_data[a..b] contains statement node indices
+        /// ref_lists[a..b] contains statement node indices
         block,
 
         /// `<return> [expr]`
         /// main_token: `return` token
-        /// a: value expression (Ref), .none for bare return
+        /// a: value expression (ref), .none for bare return
         /// b: unused
         return_val,
 
         /// `if <expr> { [body] }`
         /// main_token: if
-        /// a: condition (Ref)
-        /// b: body (Ref)
+        /// a: condition (ref)
+        /// b: body (ref)
         if_simple,
 
         /// `if <expr> { [body] } else { [body] }`
         /// main_token: if
-        /// a: condition (Ref)
-        /// b: extra-data index (BaseRef) → { body, else_node }
+        /// a: condition (ref)
+        /// b: branch ref
         if_else,
 
         /// node representing a parse error. downstream passes insert traps.
@@ -140,21 +142,21 @@ pub const Node = struct {
     };
 };
 
-/// extra data for func_decl. packed into extra-data as consecutive integers.
+pub const FuncRef = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+};
+
+pub const BranchRef = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+};
+
 pub const FuncDecl = struct {
-    /// index into extra_data
     params_start: BaseRef,
-
-    /// index into extra_data
     params_end: BaseRef,
-
-    /// .none for void
     ret_type: Node.Ref, // .none for void
-
-    /// .none for extern declarations
     body: Node.Ref,
-
-    /// packed: bits[0] = is_variadic, bits[1..3] for calling convention
     flags: u32,
 
     pub const Flag = struct {
@@ -169,7 +171,6 @@ pub const FuncDecl = struct {
     };
 };
 
-/// extra data for if_else. packed into extra-data as consecutive integers. (condition in parent node.)
 pub const ElseIfInfo = struct {
     body: Node.Ref,
     else_node: Node.Ref,
@@ -199,23 +200,31 @@ pub fn nodeMainToken(self: *const Self, node: Node.Ref) Token.Ref {
     return self.nodes.items(.main_tok)[@intFromEnum(node)];
 }
 
-/// read a packed struct from extra_data starting from idx.
-pub fn unpackExtraData(self: *const Self, comptime T: type, ref: BaseRef) T {
-    const fields = @typeInfo(T).@"struct".fields;
-    var result: T = undefined;
-    inline for (fields, 0..) |field, i| {
-        const val = self.extra_data[@intFromEnum(ref) + i];
-        @field(result, field.name) = switch (field.type) {
-            BaseRef => val,
-            u32 => @intFromEnum(val),
-            else => @compileError("unsupported extra_data field type"),
-        };
-    }
-    return result;
+pub fn funcInfo(self: *const Self, ref: FuncRef) FuncDecl {
+    return self.funcs.get(@intFromEnum(ref));
 }
 
-pub fn extraSlice(self: *const Self, start: BaseRef, end: BaseRef) []const BaseRef {
-    return self.extra_data[@intFromEnum(start)..@intFromEnum(end)];
+pub fn branchInfo(self: *const Self, ref: BranchRef) ElseIfInfo {
+    return self.branches.get(@intFromEnum(ref));
+}
+
+pub fn refSlice(self: *const Self, start: BaseRef, end: BaseRef) []const BaseRef {
+    return self.ref_lists[@intFromEnum(start)..@intFromEnum(end)];
+}
+
+pub fn asBaseRef(ref: anytype) BaseRef {
+    const Ref = @TypeOf(ref);
+    if (Ref != FuncRef and Ref != BranchRef)
+        @compileError("expected a typed ast payload ref");
+    return @enumFromInt(@intFromEnum(ref));
+}
+
+pub fn asFuncRef(ref: BaseRef) FuncRef {
+    return @enumFromInt(@intFromEnum(ref));
+}
+
+pub fn asBranchRef(ref: BaseRef) BranchRef {
+    return @enumFromInt(@intFromEnum(ref));
 }
 
 pub fn tokenSlice(self: *const Self, tok: Token.Ref, src: []const u8) []const u8 {
@@ -243,7 +252,7 @@ fn renderNode(self: *const Self, w: *Writer, node: Node.Ref, src: []const u8, st
     const data = self.nodeData(node);
     switch (self.nodeTag(node)) {
         .root => {
-            try self.renderDeclList(w, self.extraSlice(data.a, data.b), src, str_pool, indent);
+            try self.renderDeclList(w, self.refSlice(data.a, data.b), src, str_pool, indent);
         },
         .const_decl => {
             const tok = self.nodeMainToken(node);
@@ -271,8 +280,8 @@ fn renderNode(self: *const Self, w: *Writer, node: Node.Ref, src: []const u8, st
         },
         .func_decl => {
             const tok = self.nodeMainToken(node);
-            const func = self.unpackExtraData(FuncDecl, data.a);
-            const params = self.extraSlice(func.params_start, func.params_end);
+            const func = self.funcInfo(asFuncRef(data.b));
+            const params = self.refSlice(func.params_start, func.params_end);
             try writeByteNTimes(w, ' ', indent);
             try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
             try w.writeAll(" :: ");
@@ -310,7 +319,7 @@ fn renderNode(self: *const Self, w: *Writer, node: Node.Ref, src: []const u8, st
         },
         .block => {
             try w.writeAll("{\n");
-            try self.renderDeclList(w, self.extraSlice(data.a, data.b), src, str_pool, indent + indent_size);
+            try self.renderDeclList(w, self.refSlice(data.a, data.b), src, str_pool, indent + indent_size);
             try writeByteNTimes(w, ' ', indent);
             try w.writeByte('}');
         },
@@ -335,7 +344,7 @@ fn renderNode(self: *const Self, w: *Writer, node: Node.Ref, src: []const u8, st
         },
         .if_else => {
             const tok = self.nodeMainToken(node);
-            const info = self.unpackExtraData(ElseIfInfo, data.b);
+            const info = self.branchInfo(asBranchRef(data.b));
             try writeByteNTimes(w, ' ', indent);
             try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
             try w.writeByte(' ');

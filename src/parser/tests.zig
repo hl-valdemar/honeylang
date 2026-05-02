@@ -6,6 +6,7 @@ const Source = @import("../source/Source.zig");
 const Diagnostic = @import("../diagnostic/Store.zig");
 const Lexer = @import("../lexer/Lexer.zig");
 const Token = @import("../lexer/Token.zig");
+const AST = @import("AST.zig");
 const Parser = @import("Parser.zig");
 
 /// helper: parse source code and return ast render.
@@ -108,6 +109,50 @@ test "parse simple if statement with non-grouped condition" {
     try std.testing.expectEqualStrings(src_str, rendered_str);
 }
 
+test "ast typed payload accessors cover funcs branches and ref lists" {
+    const alloc = std.testing.allocator;
+    var src = try Source.init.fromStr(alloc,
+        \\main :: func(a int) void {
+        \\    if true {
+        \\        return
+        \\    } else {
+        \\        return
+        \\    }
+        \\}
+        \\
+    , 0);
+    defer src.deinit(alloc);
+
+    var str_pool = StringPool.init();
+    defer str_pool.deinit(alloc);
+
+    var diagnostics = Diagnostic.init();
+    defer diagnostics.deinit(alloc);
+
+    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool, .shared_alloc = alloc, .diagnostics = &diagnostics });
+    defer lexer.deinit(alloc);
+    try lexer.scan(alloc);
+
+    var parser = Parser.init(.{ .src = &src, .tokens = lexer.tokens.slice(), .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
+    defer parser.deinit(alloc);
+    const ast = try parser.parse(alloc);
+
+    const root_data = ast.nodeData(@enumFromInt(0));
+    const root_refs = ast.refSlice(root_data.a, root_data.b);
+    try std.testing.expectEqual(@as(usize, 1), root_refs.len);
+
+    const func_ref = root_refs[0];
+    try std.testing.expectEqual(AST.Node.Tag.func_decl, ast.nodeTag(func_ref));
+    const func = ast.funcInfo(AST.asFuncRef(ast.nodeData(func_ref).b));
+    try std.testing.expectEqual(@as(usize, 1), ast.refSlice(func.params_start, func.params_end).len);
+
+    const body_refs = ast.refSlice(ast.nodeData(func.body).a, ast.nodeData(func.body).b);
+    try std.testing.expectEqual(@as(usize, 1), body_refs.len);
+    const branch = ast.branchInfo(AST.asBranchRef(ast.nodeData(body_refs[0]).b));
+    try std.testing.expect(ast.nodeTag(branch.body) == .block);
+    try std.testing.expect(ast.nodeTag(branch.else_node) == .block);
+}
+
 const HIR = @import("HIR.zig");
 
 /// helper: parse source and lower to HIR, return instruction tags.
@@ -202,4 +247,60 @@ test "lower namespace decl" {
         .block,
         .decl_namespace,
     }, tags);
+}
+
+test "hir typed payload accessors cover decls funcs branches and ref lists" {
+    const alloc = std.testing.allocator;
+    var src = try Source.init.fromStr(alloc,
+        \\x :: 1
+        \\main :: func(a int) void {
+        \\    if true {
+        \\        return
+        \\    } else {
+        \\        return
+        \\    }
+        \\}
+        \\
+    , 0);
+    defer src.deinit(alloc);
+
+    var str_pool = StringPool.init();
+    defer str_pool.deinit(alloc);
+
+    var diagnostics = Diagnostic.init();
+    defer diagnostics.deinit(alloc);
+
+    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool, .shared_alloc = alloc, .diagnostics = &diagnostics });
+    defer lexer.deinit(alloc);
+    try lexer.scan(alloc);
+
+    var parser = Parser.init(.{ .src = &src, .tokens = lexer.tokens.slice(), .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
+    defer parser.deinit(alloc);
+    const ast = try parser.parse(alloc);
+
+    var hir = HIR.init(.{ .ast = &ast, .str_pool = &str_pool, .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
+    defer hir.deinit(alloc);
+    const root: HIR.Inst.Ref = @enumFromInt(0);
+    _ = try hir.lower(alloc, root);
+
+    const root_refs = hir.rootDecls();
+    try std.testing.expectEqual(@as(usize, 2), root_refs.len);
+
+    const decl_inst = hir.insts.get(@intFromEnum(root_refs[0]));
+    try std.testing.expectEqual(HIR.Inst.Tag.decl_const, decl_inst.tag);
+    const decl = hir.declInfo(HIR.asDeclRef(decl_inst.data.b));
+    try std.testing.expect(decl.value != .none);
+
+    const func_inst = hir.insts.get(@intFromEnum(root_refs[1]));
+    try std.testing.expectEqual(HIR.Inst.Tag.decl_func, func_inst.tag);
+    const func = hir.funcInfo(HIR.asFuncRef(func_inst.data.b));
+    try std.testing.expectEqual(@as(usize, 1), hir.refSlice(func.params_start, func.params_end).len);
+
+    const body_inst = hir.insts.get(@intFromEnum(func.body));
+    const body_refs = hir.refSlice(body_inst.data.a, body_inst.data.b);
+    try std.testing.expectEqual(@as(usize, 1), body_refs.len);
+    const if_inst = hir.insts.get(@intFromEnum(body_refs[0]));
+    const branch = hir.branchInfo(HIR.asBranchRef(if_inst.data.b));
+    try std.testing.expect(branch.body != .none);
+    try std.testing.expect(branch.else_node != .none);
 }
