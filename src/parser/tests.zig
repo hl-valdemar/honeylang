@@ -231,6 +231,39 @@ test "parse namespace decl" {
     try std.testing.expectEqualStrings(src_str, rendered_str);
 }
 
+test "parse implicit import decl" {
+    const alloc = std.testing.allocator;
+    const src_str =
+        \\import "math.hon"
+        \\
+    ;
+    const rendered_str = try parse(alloc, src_str);
+    defer alloc.free(rendered_str);
+    try std.testing.expectEqualStrings(src_str, rendered_str);
+}
+
+test "parse explicit import decl" {
+    const alloc = std.testing.allocator;
+    const src_str =
+        \\math_alias :: import "math.hon"
+        \\
+    ;
+    const rendered_str = try parse(alloc, src_str);
+    defer alloc.free(rendered_str);
+    try std.testing.expectEqualStrings(src_str, rendered_str);
+}
+
+test "parse qualified reference" {
+    const alloc = std.testing.allocator;
+    const src_str =
+        \\x :: math.value
+        \\
+    ;
+    const rendered_str = try parse(alloc, src_str);
+    defer alloc.free(rendered_str);
+    try std.testing.expectEqualStrings(src_str, rendered_str);
+}
+
 test "lower namespace decl" {
     const alloc = std.testing.allocator;
     const tags = try lowerToTags(alloc,
@@ -246,6 +279,19 @@ test "lower namespace decl" {
         .decl_const,
         .block,
         .decl_namespace,
+    }, tags);
+}
+
+test "lower import decl" {
+    const alloc = std.testing.allocator;
+    const tags = try lowerToTags(alloc,
+        \\import "math.hon"
+        \\
+    );
+    defer alloc.free(tags);
+
+    try std.testing.expectEqualSlices(HIR.Inst.Tag, &.{
+        .import_decl,
     }, tags);
 }
 

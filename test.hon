@@ -1,3 +1,5 @@
+other :: import "other_file.hon"
+
 # constants (`::`)
 x :: 0xff + 1
 y int :: 32
@@ -25,5 +27,5 @@ main :: func() int {
     #    return 0xff + 2 * 3
     #}
 
-    return x + y
+    return person.c + x + y + other.some_value
 }

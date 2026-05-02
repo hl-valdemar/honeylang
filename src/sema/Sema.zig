@@ -14,6 +14,7 @@ inst_types: std.ArrayList(MIR.Inst.Type),
 ref_map: std.ArrayList(Payload),
 /// tracks hir instructions already analyzed, including instructions that map to .none.
 analyzed: std.DynamicBitSetUnmanaged,
+namespaces: NamespaceInfos,
 current_ret_type: ?MIR.Inst.Type,
 
 const Self = @This();
@@ -28,7 +29,19 @@ const Binding = union(enum) {
     pending_decl: HIR.Inst.Ref,
     analyzing_decl: HIR.Inst.Ref,
     value: MIR.Inst.Ref,
-    namespace,
+    namespace: NamespaceRef,
+};
+
+const NamespaceRef = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+};
+
+const NamespaceInfos = std.MultiArrayList(NamespaceInfo);
+
+const NamespaceInfo = struct {
+    ref: HIR.Inst.Ref,
+    scope: *Scope,
 };
 
 const Scope = struct {
@@ -66,6 +79,7 @@ pub fn init(hir: *const HIR, str_pool: *StringPool, diagnostics: *Diagnostic, sh
         .inst_types = .empty,
         .ref_map = .empty,
         .analyzed = .{},
+        .namespaces = .{},
         .current_ret_type = null,
     };
 }
@@ -77,6 +91,11 @@ pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     self.inst_types.deinit(alloc);
     self.ref_map.deinit(alloc);
     self.analyzed.deinit(alloc);
+    for (self.namespaces.items(.scope)) |scope| {
+        scope.deinit(alloc);
+        alloc.destroy(scope);
+    }
+    self.namespaces.deinit(alloc);
 }
 
 pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
@@ -127,9 +146,11 @@ fn predeclareDecls(self: *Self, alloc: mem.Allocator, scope: *Scope, refs: []con
             },
             .decl_namespace => {
                 const name = inst.data.a.to(StringPool.ID);
-                if (!try self.bind(scope, alloc, name, .namespace))
+                const namespace_ref = try self.createNamespace(alloc, scope, ref);
+                if (!try self.bind(scope, alloc, name, .{ .namespace = namespace_ref }))
                     _ = try self.emitTrap(alloc, .sema_duplicate_declaration);
             },
+            .import_decl => _ = try self.emitTrap(alloc, .sema_unexpanded_import),
             else => {},
         }
     }
@@ -185,18 +206,37 @@ fn analyzeNamespace(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.
     const inst = self.hir.insts.get(@intFromEnum(ref));
     std.debug.assert(inst.tag == .decl_namespace);
 
-    var scope: Scope = .{ .parent = parent };
-    defer scope.deinit(alloc);
+    const name = inst.data.a.to(StringPool.ID);
+    const namespace_scope = if (parent.localBinding(name)) |binding| switch (binding.*) {
+        .namespace => |namespace| self.namespaceScope(namespace),
+        else => return,
+    } else self.namespaceScope(try self.createNamespace(alloc, parent, ref));
 
     const block = self.hir.insts.get(@intFromEnum(inst.data.b));
     std.debug.assert(block.tag == .block);
     const members = self.hir.refSlice(block.data.a, block.data.b);
 
-    try self.predeclareDecls(alloc, &scope, members);
-    try self.analyzeDecls(alloc, &scope, members);
-
     self.ref_map.items[@intFromEnum(ref)] = .none;
     self.analyzed.set(@intFromEnum(ref));
+
+    try self.predeclareDecls(alloc, namespace_scope, members);
+    try self.analyzeDecls(alloc, namespace_scope, members);
+}
+
+fn createNamespace(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.Inst.Ref) !NamespaceRef {
+    const scope = try alloc.create(Scope);
+    scope.* = .{ .parent = parent };
+    const namespace_ref: NamespaceRef = Payload.fromIndex(self.namespaces.len).to(NamespaceRef);
+    try self.namespaces.append(alloc, .{ .ref = ref, .scope = scope });
+    return namespace_ref;
+}
+
+fn namespaceScope(self: *Self, namespace: NamespaceRef) *Scope {
+    return self.namespaces.items(.scope)[@intFromEnum(namespace)];
+}
+
+fn namespaceInfo(self: *Self, namespace: NamespaceRef) NamespaceInfo {
+    return self.namespaces.get(@intFromEnum(namespace));
 }
 
 fn analyzeValueDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
@@ -338,11 +378,13 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
             const name = inst.data.a.to(StringPool.ID);
             break :blk try self.resolveValue(alloc, scope, name);
         },
+        .qualified_ref => try self.resolveQualifiedValue(alloc, scope, ref),
         .decl_const, .decl_var, .decl_func => try self.analyzeLocalOrPredeclaredDecl(alloc, scope, ref),
         .decl_namespace => blk: {
             try self.analyzeNamespace(alloc, scope, ref);
             break :blk .none;
         },
+        .import_decl => try self.emitTrap(alloc, .sema_unexpanded_import),
         .block => blk: {
             var block_scope: Scope = .{ .parent = scope };
             defer block_scope.deinit(alloc);
@@ -485,6 +527,54 @@ fn resolveValue(self: *Self, alloc: mem.Allocator, scope: *Scope, name: StringPo
         .pending_decl => |ref| try self.analyzeDecl(alloc, resolved.scope, ref),
         .analyzing_decl => try self.emitTrap(alloc, .sema_declaration_cycle),
         .namespace => try self.emitTrap(alloc, .sema_namespace_not_value),
+    };
+}
+
+fn resolveQualifiedValue(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
+    const inst = self.hir.insts.get(@intFromEnum(ref));
+    std.debug.assert(inst.tag == .qualified_ref);
+
+    const namespace_scope = try self.resolveNamespaceRef(alloc, scope, inst.data.a);
+    if (namespace_scope == null) return self.emitTrap(alloc, .sema_expected_namespace);
+    const name = inst.data.b.to(StringPool.ID);
+    const binding = namespace_scope.?.localBinding(name) orelse return self.emitTrap(alloc, .sema_undefined_name);
+
+    return switch (binding.*) {
+        .value => |mir_ref| mir_ref,
+        .pending_decl => |pending_ref| try self.analyzeDecl(alloc, namespace_scope.?, pending_ref),
+        .analyzing_decl => try self.emitTrap(alloc, .sema_declaration_cycle),
+        .namespace => try self.emitTrap(alloc, .sema_namespace_not_value),
+    };
+}
+
+fn resolveNamespaceRef(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!?*Scope {
+    if (ref == .none) return null;
+
+    const inst = self.hir.insts.get(@intFromEnum(ref));
+    switch (inst.tag) {
+        .ref => {
+            const name = inst.data.a.to(StringPool.ID);
+            const resolved = self.resolveBinding(scope, name) orelse return null;
+            return try self.namespaceScopeFromBinding(alloc, resolved.binding);
+        },
+        .qualified_ref => {
+            const parent_scope = try self.resolveNamespaceRef(alloc, scope, inst.data.a) orelse return null;
+            const name = inst.data.b.to(StringPool.ID);
+            const binding = parent_scope.localBinding(name) orelse return null;
+            return try self.namespaceScopeFromBinding(alloc, binding);
+        },
+        else => return null,
+    }
+}
+
+fn namespaceScopeFromBinding(self: *Self, alloc: mem.Allocator, binding: *Binding) anyerror!?*Scope {
+    return switch (binding.*) {
+        .namespace => |namespace| blk: {
+            const info = self.namespaceInfo(namespace);
+            try self.analyzeNamespace(alloc, info.scope.parent orelse &self.scope, info.ref);
+            break :blk info.scope;
+        },
+        else => null,
     };
 }
 

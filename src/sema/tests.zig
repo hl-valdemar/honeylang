@@ -132,6 +132,17 @@ test "namespace member can reference parent declaration" {
     );
 }
 
+test "namespace member can be used through qualified access" {
+    try analyze(std.testing.allocator,
+        \\x :: math.value + 1
+        \\
+        \\math {
+        \\    value :: 1
+        \\}
+        \\
+    );
+}
+
 test "duplicate declaration in namespace fails" {
     try expectDiagnostic(
         \\a {
@@ -173,6 +184,13 @@ test "namespace cannot be used as expression value" {
         \\x :: a
         \\
     , .sema_namespace_not_value);
+}
+
+test "qualified access requires namespace" {
+    try expectDiagnostic(
+        \\x :: "str".c
+        \\
+    , .sema_expected_namespace);
 }
 
 test "namespace cannot be used as type" {

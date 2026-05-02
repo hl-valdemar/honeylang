@@ -63,8 +63,12 @@ pub fn scan(self: *Self, alloc: mem.Allocator) !void {
         }
 
         const str_id = str_id: switch (tok.tag) {
-            .identifier, .int, .float, .mut, .@"if", .@"else", .@"return", .func, .cc_c => {
+            .identifier, .int, .float, .mut, .@"if", .@"else", .import, .@"return", .func, .cc_c => {
                 break :str_id try self.str_pool.intern(self.shared_alloc, self.src.contents[tok.start..tok.end]);
+            },
+            .string => {
+                const end = if (tok.end > tok.start and self.src.contents[tok.end - 1] == '"') tok.end - 1 else tok.end;
+                break :str_id try self.str_pool.intern(self.shared_alloc, self.src.contents[tok.start + 1 .. end]);
             },
             else => break :str_id StringPool.ID.none,
         };
@@ -80,6 +84,7 @@ fn diagnosticTag(tag: Error.Tag) Diagnostic.Tag {
         .multiple_decimal_points => .lexer_multiple_decimal_points,
         .empty_hex_literal => .lexer_empty_hex_literal,
         .empty_bin_literal => .lexer_empty_bin_literal,
+        .unterminated_string_literal => .lexer_unterminated_string_literal,
     };
 }
 
@@ -133,6 +138,8 @@ pub fn nextToken(source: []const u8, pos: *Token.Index) ScannedToken {
     // numbers
     if (ascii.isDigit(c)) return scanNumber(source, pos);
 
+    if (c == '"') return scanString(source, pos);
+
     // single and double char tokens
     pos.* += 1;
     return switch (c) {
@@ -153,6 +160,7 @@ pub fn nextToken(source: []const u8, pos: *Token.Index) ScannedToken {
 
         // other
         ',' => .from(.comma, start, pos.*),
+        '.' => .from(.dot, start, pos.*),
         '=' => .from(.equal, start, pos.*),
         '\n' => .from(.newline, start, pos.*),
 
@@ -166,6 +174,20 @@ pub fn nextToken(source: []const u8, pos: *Token.Index) ScannedToken {
         },
         else => .fromErr(.invalid, start, pos.*, .unrecognized_character),
     };
+}
+
+fn scanString(source: []const u8, pos: *Token.Index) ScannedToken {
+    const start = pos.*;
+    pos.* += 1; // skip opening quote
+
+    while (pos.* < source.len and source[pos.*] != '"' and source[pos.*] != '\n')
+        pos.* += 1;
+
+    if (pos.* >= source.len or source[pos.*] == '\n')
+        return .fromErr(.string, start, pos.*, .unterminated_string_literal);
+
+    pos.* += 1; // include closing quote
+    return .from(.string, start, pos.*);
 }
 
 fn scanNumber(source: []const u8, pos: *Token.Index) ScannedToken {

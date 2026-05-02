@@ -111,13 +111,17 @@ pub fn parse(self: *Self, alloc: mem.Allocator) !AST {
 }
 
 fn parseTopLevelDecl(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
+    if (self.tokenTag(self.pos) == .import) return self.parseImportDecl(alloc, null);
     if (self.tokenTag(self.pos) != .identifier) return self.addError(alloc, .expected_declaration);
 
     const name_tok = self.pos;
     self.advance();
 
     switch (self.tokenTag(self.pos)) {
-        .double_colon => return try self.parseConstOrFunc(alloc, name_tok, .none),
+        .double_colon => {
+            if (self.tokenTag(self.pos + 1) == .import) return try self.parseImportDecl(alloc, name_tok);
+            return try self.parseConstOrFunc(alloc, name_tok, .none);
+        },
         .equal => return try self.parseVarDecl(alloc, name_tok, .none),
         .left_curly => return try self.parseNamespace(alloc, name_tok),
         else => {
@@ -130,6 +134,25 @@ fn parseTopLevelDecl(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
             };
         },
     }
+}
+
+fn parseImportDecl(self: *Self, alloc: mem.Allocator, name_tok: ?Token.Index) !AST.Node.Ref {
+    const explicit = name_tok != null;
+    const main_tok: Token.Index = if (name_tok) |tok| tok else self.pos;
+
+    if (explicit) try self.expect(alloc, .double_colon);
+    try self.expect(alloc, .import);
+    const path = try self.parsePrimary(alloc);
+    try self.expect(alloc, .newline);
+
+    return self.addNode(alloc, .{
+        .tag = .import_decl,
+        .main_tok = main_tok,
+        .data = .{
+            .a = path,
+            .b = Payload.fromIndex(if (explicit) 1 else 0),
+        },
+    });
 }
 
 fn parseNamespace(self: *Self, alloc: mem.Allocator, name_tok: Token.Index) mem.Allocator.Error!AST.Node.Ref {
@@ -416,11 +439,11 @@ fn parseExpr(self: *Self, alloc: mem.Allocator, min_bp: BindingPower.Type) mem.A
 }
 
 fn parsePrimary(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
-    switch (self.tokenTag(self.pos)) {
+    var left: AST.Node.Ref = blk: switch (self.tokenTag(self.pos)) {
         .int => {
             const tok = self.pos;
             self.advance(); // skip int
-            return self.addNode(alloc, .{
+            break :blk try self.addNode(alloc, .{
                 .tag = .int_literal,
                 .main_tok = tok,
                 .data = .{},
@@ -429,8 +452,17 @@ fn parsePrimary(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
         .float => {
             const tok = self.pos;
             self.advance(); // skip float
-            return self.addNode(alloc, .{
+            break :blk try self.addNode(alloc, .{
                 .tag = .float_literal,
+                .main_tok = tok,
+                .data = .{},
+            });
+        },
+        .string => {
+            const tok = self.pos;
+            self.advance(); // skip string
+            break :blk try self.addNode(alloc, .{
+                .tag = .string_literal,
                 .main_tok = tok,
                 .data = .{},
             });
@@ -438,7 +470,7 @@ fn parsePrimary(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
         .identifier => {
             const tok = self.pos;
             self.advance(); // skip identifier
-            return self.addNode(alloc, .{
+            break :blk try self.addNode(alloc, .{
                 .tag = .identifier,
                 .main_tok = tok,
                 .data = .{},
@@ -448,7 +480,7 @@ fn parsePrimary(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
             const tok = self.pos;
             self.advance(); // skip '-'
             const expr = try self.parseExpr(alloc, BindingPower.prefix_bp);
-            return self.addNode(alloc, .{
+            break :blk try self.addNode(alloc, .{
                 .tag = .unary_op,
                 .main_tok = tok,
                 .data = .{ .a = expr },
@@ -459,14 +491,34 @@ fn parsePrimary(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
             self.advance(); // skip `(`
             const expr = try self.parseExpr(alloc, 0);
             try self.expect(alloc, .right_paren);
-            return self.addNode(alloc, .{
+            break :blk try self.addNode(alloc, .{
                 .tag = .grouped_expr,
                 .main_tok = tok,
                 .data = .{ .a = expr },
             });
         },
-        else => return self.addError(alloc, .expected_expression),
+        else => break :blk try self.addError(alloc, .expected_expression),
+    };
+
+    while (self.tokenTag(self.pos) == .dot) {
+        const dot_tok = self.pos;
+        self.advance();
+
+        const right_tok = self.pos;
+        try self.expect(alloc, .identifier);
+        const right = try self.addNode(alloc, .{
+            .tag = .identifier,
+            .main_tok = right_tok,
+            .data = .{},
+        });
+        left = try self.addNode(alloc, .{
+            .tag = .qualified_ref,
+            .main_tok = dot_tok,
+            .data = .{ .a = left, .b = right },
+        });
     }
+
+    return left;
 }
 
 fn skipNewlines(self: *Self) void {

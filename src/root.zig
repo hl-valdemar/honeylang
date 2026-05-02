@@ -45,6 +45,7 @@ pub const ErrorInfo = struct {
 };
 
 test {
+    _ = @import("compiler.zig");
     _ = @import("util/Args.zig");
     _ = @import("util/StringPool.zig");
     _ = @import("lexer/tests.zig");

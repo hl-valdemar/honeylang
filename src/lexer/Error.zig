@@ -31,6 +31,12 @@ pub const info = std.EnumArray(Tag, ErrorInfo).init(.{
         .help = "binary notation should be followed by a binary value",
         .severity = .err,
     },
+    .unterminated_string_literal = .{
+        .code = "L005",
+        .message = "unterminated string literal",
+        .help = "string literals must end before the line ends",
+        .severity = .err,
+    },
 });
 
 const Token = @import("Token.zig");
@@ -40,4 +46,5 @@ pub const Tag = enum {
     multiple_decimal_points,
     empty_hex_literal,
     empty_bin_literal,
+    unterminated_string_literal,
 };

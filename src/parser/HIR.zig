@@ -87,6 +87,11 @@ pub const Inst = struct {
         /// * a: ref to the decl/param instruction
         ref,
 
+        /// data:
+        /// * a: namespace ref
+        /// * b: string id (member name)
+        qualified_ref,
+
         // decls
 
         /// data:
@@ -103,6 +108,11 @@ pub const Inst = struct {
         /// * a: string id (name)
         /// * b: ref to block
         decl_namespace,
+
+        /// data:
+        /// * a: string id (explicit namespace name) or .none for implicit file-stem name
+        /// * b: string id (path)
+        import_decl,
 
         // functions
 
@@ -299,6 +309,24 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
                 .b = block,
             });
         },
+        .import_decl => {
+            const path_node = data.a.to(AST.Node.Ref);
+            const path_tok = self.ast.nodeMainToken(path_node);
+            const path = if (self.ast.nodeTag(path_node) == .string_literal)
+                self.ast.tokens.items(.str_id)[path_tok]
+            else
+                StringPool.ID.none;
+            const explicit = @intFromEnum(data.b) != 0;
+            const name = if (explicit)
+                self.ast.tokens.items(.str_id)[self.ast.nodeMainToken(node)]
+            else
+                StringPool.ID.none;
+
+            return self.emit(alloc, .import_decl, .{
+                .a = Payload.from(name),
+                .b = Payload.from(path),
+            });
+        },
         .if_simple => {
             const condition = try self.lower(alloc, data.a);
             const body = try self.lower(alloc, data.b);
@@ -373,6 +401,16 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
                 .a = Payload.from(name),
             });
         },
+        .qualified_ref => {
+            const left = try self.lower(alloc, data.a);
+            const right_node = data.b.to(AST.Node.Ref);
+            const right_tok = self.ast.nodeMainToken(right_node);
+            const name = self.ast.tokens.items(.str_id)[right_tok];
+            return try self.emit(alloc, .qualified_ref, .{
+                .a = left,
+                .b = Payload.from(name),
+            });
+        },
         .int_literal => {
             const tok = self.ast.nodeMainToken(node);
             const name = self.ast.tokens.items(.str_id)[tok];
@@ -384,6 +422,13 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
             const tok = self.ast.nodeMainToken(node);
             const name = self.ast.tokens.items(.str_id)[tok];
             return try self.emit(alloc, .float_literal, .{
+                .a = Payload.from(name),
+            });
+        },
+        .string_literal => {
+            const tok = self.ast.nodeMainToken(node);
+            const name = self.ast.tokens.items(.str_id)[tok];
+            return try self.emit(alloc, .str_literal, .{
                 .a = Payload.from(name),
             });
         },
@@ -508,6 +553,10 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
                 const name = self.str_pool.get(inst.data.a.to(StringPool.ID));
                 try w.print("%{d: <3} ref(\"{s}\")\n", .{ idx, name });
             },
+            .qualified_ref => {
+                const name = self.str_pool.get(inst.data.b.to(StringPool.ID));
+                try w.print("%{d: <3} qualified_ref(%{d}, \"{s}\")\n", .{ idx, @intFromEnum(inst.data.a), name });
+            },
             .decl_const, .decl_var => {
                 const tag_name = @tagName(inst.tag);
                 const name = self.str_pool.get(inst.data.a.to(StringPool.ID));
@@ -526,6 +575,18 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
                 const tag_name = @tagName(inst.tag);
                 const name = self.str_pool.get(inst.data.a.to(StringPool.ID));
                 try w.print("%{d: <3} {s}(\"{s}\", body=%{d})\n", .{ idx, tag_name, name, @intFromEnum(inst.data.b) });
+            },
+            .import_decl => {
+                const path = if (inst.data.b.to(StringPool.ID) != .none)
+                    self.str_pool.get(inst.data.b.to(StringPool.ID))
+                else
+                    "<invalid>";
+                if (inst.data.a.to(StringPool.ID) != .none) {
+                    const name = self.str_pool.get(inst.data.a.to(StringPool.ID));
+                    try w.print("%{d: <3} import(\"{s}\" as \"{s}\")\n", .{ idx, path, name });
+                } else {
+                    try w.print("%{d: <3} import(\"{s}\")\n", .{ idx, path });
+                }
             },
             .param => {
                 const name = self.str_pool.get(inst.data.a.to(StringPool.ID));

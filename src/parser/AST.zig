@@ -62,6 +62,12 @@ pub const Node = struct {
         /// a: block ref
         namespace_decl,
 
+        /// `import "<path>"` or `<name> :: import "<path>"`
+        /// main_token: import token for implicit import, identifier token for explicit import
+        /// a: string literal path expression (ref)
+        /// b: 1 for explicit import, 0 for implicit import
+        import_decl,
+
         /// <name> <type> (e.g. a int)
         /// main_token: identifier (param name)
         /// a: type expression (Ref)
@@ -99,6 +105,12 @@ pub const Node = struct {
         /// main_token: the string token
         /// a, b: unused
         string_literal,
+
+        /// `a.b`
+        /// main_token: `.` token
+        /// a: left expression (ref)
+        /// b: right identifier (ref)
+        qualified_ref,
 
         /// `(<expr>)`
         /// main_token: `(` token
@@ -311,6 +323,17 @@ fn renderNode(self: *const Self, w: *Writer, node: Node.Ref, src: []const u8, st
             try self.renderNode(w, data.a, src, str_pool, indent);
             try w.writeByte('\n');
         },
+        .import_decl => {
+            try writeByteNTimes(w, ' ', indent);
+            if (@intFromEnum(data.b) != 0) {
+                const tok = self.nodeMainToken(node);
+                try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
+                try w.writeAll(" :: ");
+            }
+            try w.writeAll("import ");
+            try self.renderNode(w, data.a, src, str_pool, 0);
+            try w.writeByte('\n');
+        },
         .param => {
             const tok = self.nodeMainToken(node);
             try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
@@ -377,6 +400,17 @@ fn renderNode(self: *const Self, w: *Writer, node: Node.Ref, src: []const u8, st
         .identifier, .int_literal, .float_literal => {
             const tok = self.nodeMainToken(node);
             try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
+        },
+        .string_literal => {
+            const tok = self.nodeMainToken(node);
+            try w.writeByte('"');
+            try w.writeAll(str_pool.get(self.tokens.items(.str_id)[tok]));
+            try w.writeByte('"');
+        },
+        .qualified_ref => {
+            try self.renderNode(w, data.a, src, str_pool, 0);
+            try w.writeByte('.');
+            try self.renderNode(w, data.b, src, str_pool, 0);
         },
         .@"error" => try w.writeAll("<error>"),
         else => try w.writeAll("<?>"),

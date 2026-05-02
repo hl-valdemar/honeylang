@@ -6,6 +6,7 @@ pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "if", .@"if" },
     .{ "else", .@"else" },
     .{ "func", .func },
+    .{ "import", .import },
     .{ "return", .@"return" },
 });
 
@@ -20,6 +21,7 @@ pub const Tag = enum {
     identifier,
     int,
     float,
+    string,
 
     // keywords
     mut,
@@ -28,6 +30,7 @@ pub const Tag = enum {
     @"and",
     @"or",
     func,
+    import,
     @"return",
 
     // single-char tokens
@@ -38,6 +41,7 @@ pub const Tag = enum {
     bang,
     colon,
     comma,
+    dot,
     equal,
     left_paren,
     right_paren,

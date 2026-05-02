@@ -32,6 +32,7 @@ pub fn main(init: std.process.Init) !void {
 
     try honey.compiler.run(.{
         .alloc = alloc,
+        .io = init.io,
         .src = &src,
         .str_pool = &str_pool,
         .diagnostics = &diagnostics,
