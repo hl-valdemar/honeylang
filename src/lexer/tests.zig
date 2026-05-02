@@ -2,6 +2,7 @@ const std = @import("std");
 
 const StringPool = @import("../util/StringPool.zig");
 const Source = @import("../source/Source.zig");
+const Diagnostic = @import("../diagnostic/Store.zig");
 const Lexer = @import("Lexer.zig");
 
 test "scan const decl" {
@@ -13,7 +14,10 @@ test "scan const decl" {
     var str_pool = StringPool.init();
     defer str_pool.deinit(alloc);
 
-    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool });
+    var diagnostics = Diagnostic.init();
+    defer diagnostics.deinit(alloc);
+
+    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool, .shared_alloc = alloc, .diagnostics = &diagnostics });
     defer lexer.deinit(alloc);
 
     try lexer.scan(alloc);
@@ -33,7 +37,10 @@ test "scan arithmetic expression" {
     var str_pool = StringPool.init();
     defer str_pool.deinit(alloc);
 
-    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool });
+    var diagnostics = Diagnostic.init();
+    defer diagnostics.deinit(alloc);
+
+    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool, .shared_alloc = alloc, .diagnostics = &diagnostics });
     defer lexer.deinit(alloc);
 
     try lexer.scan(alloc);

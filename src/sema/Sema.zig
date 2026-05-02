@@ -3,7 +3,8 @@ const mem = std.mem;
 
 str_pool: *StringPool,
 hir: *const HIR,
-diagnostics: ?*Diagnostic,
+diagnostics: *Diagnostic,
+shared_alloc: mem.Allocator,
 mir: MIR,
 scope: Scope,
 type_map: std.AutoHashMapUnmanaged(StringPool.ID, MIR.Inst.Type),
@@ -53,17 +54,12 @@ const TypeResolution = struct {
     diagnostic: Diagnostic.Ref = .none,
 };
 
-pub fn init(hir: *const HIR, str_pool: *StringPool) Self {
-    return initWithDiagnostics(hir, str_pool, null);
-}
-
-/// initialize sema with access to the shared diagnostic store. the compiler
-/// pipeline uses this entry point; `init` is retained for no-diagnostic callers.
-pub fn initWithDiagnostics(hir: *const HIR, str_pool: *StringPool, diagnostics: ?*Diagnostic) Self {
+pub fn init(hir: *const HIR, str_pool: *StringPool, diagnostics: *Diagnostic, shared_alloc: mem.Allocator) Self {
     return .{
         .str_pool = str_pool,
         .hir = hir,
         .diagnostics = diagnostics,
+        .shared_alloc = shared_alloc,
         .mir = .{},
         .scope = .{},
         .type_map = .{},
@@ -96,15 +92,15 @@ pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
 }
 
 fn seedBuiltins(self: *Self, alloc: mem.Allocator) !void {
-    const int_str_id = try self.str_pool.intern(alloc, "int");
-    const float_str_id = try self.str_pool.intern(alloc, "float");
-    const i32_str_id = try self.str_pool.intern(alloc, "i32");
-    const f32_str_id = try self.str_pool.intern(alloc, "f32");
-    const bool_str_id = try self.str_pool.intern(alloc, "bool");
-    const void_str_id = try self.str_pool.intern(alloc, "void");
+    const int_str_id = try self.str_pool.intern(self.shared_alloc, "int");
+    const float_str_id = try self.str_pool.intern(self.shared_alloc, "float");
+    const i32_str_id = try self.str_pool.intern(self.shared_alloc, "i32");
+    const f32_str_id = try self.str_pool.intern(self.shared_alloc, "f32");
+    const bool_str_id = try self.str_pool.intern(self.shared_alloc, "bool");
+    const void_str_id = try self.str_pool.intern(self.shared_alloc, "void");
 
-    const true_str_id = try self.str_pool.intern(alloc, "true");
-    const false_str_id = try self.str_pool.intern(alloc, "false");
+    const true_str_id = try self.str_pool.intern(self.shared_alloc, "true");
+    const false_str_id = try self.str_pool.intern(self.shared_alloc, "false");
 
     try self.type_map.put(alloc, i32_str_id, .i32);
     try self.type_map.put(alloc, f32_str_id, .f32);
@@ -212,7 +208,7 @@ fn analyzeValueDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.I
 
     const value_type = self.inst_types.items[@intFromEnum(value)];
     const type_resolution: TypeResolution = if (hir_decl.type != .none)
-        try self.resolveType(alloc, hir_decl.type)
+        try self.resolveType(hir_decl.type)
     else
         .{ .type = value_type };
     var decl_type = type_resolution.type;
@@ -255,7 +251,7 @@ fn analyzeFuncDecl(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.I
     }
     const params_end = self.mir.refListEnd();
 
-    const ret_type = (try self.resolveType(alloc, func_info.ret_type)).type;
+    const ret_type = (try self.resolveType(func_info.ret_type)).type;
     const outer_ret_type = self.current_ret_type;
     self.current_ret_type = ret_type;
     defer self.current_ret_type = outer_ret_type;
@@ -286,7 +282,7 @@ fn analyzeParam(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.
     std.debug.assert(inst.tag == .param);
 
     const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
-    const param_type = (try self.resolveType(alloc, inst.data.b)).type;
+    const param_type = (try self.resolveType(inst.data.b)).type;
     const param_ref = try self.emitTyped(alloc, .param, .{
         .a = inst.data.a,
         .b = @enumFromInt(@intFromEnum(param_type)),
@@ -459,18 +455,18 @@ fn analyzeLocalOrPredeclaredDecl(self: *Self, alloc: mem.Allocator, scope: *Scop
 
 fn bind(self: *Self, scope: *Scope, alloc: mem.Allocator, name: StringPool.ID, binding: Binding) anyerror!bool {
     if (self.type_map.contains(name)) {
-        _ = try self.addDiagnostic(alloc, .sema_duplicate_declaration);
+        _ = try self.addDiagnostic(.sema_duplicate_declaration);
         return false;
     }
     if (scope.bindings.contains(name)) {
-        _ = try self.addDiagnostic(alloc, .sema_duplicate_declaration);
+        _ = try self.addDiagnostic(.sema_duplicate_declaration);
         return false;
     }
 
     var ancestor = scope.parent;
     while (ancestor) |parent| {
         if (parent.bindings.contains(name)) {
-            _ = try self.addDiagnostic(alloc, .sema_duplicate_declaration);
+            _ = try self.addDiagnostic(.sema_duplicate_declaration);
             return false;
         }
         ancestor = parent.parent;
@@ -501,7 +497,7 @@ fn resolveBinding(_: *Self, scope: *Scope, name: StringPool.ID) ?ResolvedBinding
     return null;
 }
 
-fn resolveType(self: *Self, alloc: mem.Allocator, hir_type_ref: BaseRef) anyerror!TypeResolution {
+fn resolveType(self: *Self, hir_type_ref: BaseRef) anyerror!TypeResolution {
     if (hir_type_ref == .none) return .{ .type = .void };
 
     const hir_inst = self.hir.insts.get(@intFromEnum(hir_type_ref));
@@ -510,7 +506,7 @@ fn resolveType(self: *Self, alloc: mem.Allocator, hir_type_ref: BaseRef) anyerro
         .diagnostic = @enumFromInt(@intFromEnum(hir_inst.data.a)),
     };
     if (hir_inst.tag != .ref) {
-        const diagnostic = try self.addDiagnostic(alloc, .sema_undefined_type);
+        const diagnostic = try self.addDiagnostic(.sema_undefined_type);
         return .{ .type = .err, .diagnostic = diagnostic };
     }
 
@@ -518,7 +514,7 @@ fn resolveType(self: *Self, alloc: mem.Allocator, hir_type_ref: BaseRef) anyerro
     if (self.type_map.get(name)) |resolved_type|
         return .{ .type = resolved_type };
 
-    const diagnostic = try self.addDiagnostic(alloc, .sema_undefined_type);
+    const diagnostic = try self.addDiagnostic(.sema_undefined_type);
     return .{ .type = .err, .diagnostic = diagnostic };
 }
 
@@ -558,7 +554,7 @@ fn emitTyped(self: *Self, alloc: mem.Allocator, tag: MIR.Inst.Tag, data: MIR.Ins
 }
 
 fn emitTrap(self: *Self, alloc: mem.Allocator, tag: Diagnostic.Tag) anyerror!MIR.Inst.Ref {
-    const diag_ref = try self.addDiagnostic(alloc, tag);
+    const diag_ref = try self.addDiagnostic(tag);
     return self.emitTrapRef(alloc, diag_ref);
 }
 
@@ -566,14 +562,11 @@ fn emitTrapRef(self: *Self, alloc: mem.Allocator, diag_ref: Diagnostic.Ref) anye
     return self.emitTyped(alloc, .trap, .{ .a = @enumFromInt(@intFromEnum(diag_ref)) }, .err);
 }
 
-fn addDiagnostic(self: *Self, alloc: mem.Allocator, tag: Diagnostic.Tag) !Diagnostic.Ref {
-    if (self.diagnostics) |diagnostics| {
-        return diagnostics.add(alloc, .{
-            .stage = .sema,
-            .severity = .err,
-            .tag = tag,
-            .span = null,
-        });
-    }
-    return .none;
+fn addDiagnostic(self: *Self, tag: Diagnostic.Tag) !Diagnostic.Ref {
+    return self.diagnostics.add(self.shared_alloc, .{
+        .stage = .sema,
+        .severity = .err,
+        .tag = tag,
+        .span = null,
+    });
 }

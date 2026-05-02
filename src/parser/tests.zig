@@ -3,6 +3,7 @@ const mem = std.mem;
 
 const StringPool = @import("../util/StringPool.zig");
 const Source = @import("../source/Source.zig");
+const Diagnostic = @import("../diagnostic/Store.zig");
 const Lexer = @import("../lexer/Lexer.zig");
 const Token = @import("../lexer/Token.zig");
 const Parser = @import("Parser.zig");
@@ -15,13 +16,16 @@ fn parse(alloc: mem.Allocator, src_str: []const u8) ![]const u8 {
     var str_pool = StringPool.init();
     defer str_pool.deinit(alloc);
 
-    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool });
+    var diagnostics = Diagnostic.init();
+    defer diagnostics.deinit(alloc);
+
+    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool, .shared_alloc = alloc, .diagnostics = &diagnostics });
     defer lexer.deinit(alloc);
 
     try lexer.scan(alloc);
     const tokens = lexer.tokens.slice();
 
-    var parser = Parser.init(.{ .src = &src, .tokens = tokens });
+    var parser = Parser.init(.{ .src = &src, .tokens = tokens, .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
     defer parser.deinit(alloc);
 
     const ast = try parser.parse(alloc);
@@ -114,18 +118,21 @@ fn lowerToTags(alloc: mem.Allocator, src_str: []const u8) ![]const HIR.Inst.Tag 
     var str_pool = StringPool.init();
     defer str_pool.deinit(alloc);
 
-    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool });
+    var diagnostics = Diagnostic.init();
+    defer diagnostics.deinit(alloc);
+
+    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool, .shared_alloc = alloc, .diagnostics = &diagnostics });
     defer lexer.deinit(alloc);
 
     try lexer.scan(alloc);
     const tokens = lexer.tokens.slice();
 
-    var parser = Parser.init(.{ .src = &src, .tokens = tokens });
+    var parser = Parser.init(.{ .src = &src, .tokens = tokens, .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
     defer parser.deinit(alloc);
 
     const ast = try parser.parse(alloc);
 
-    var hir = HIR.init(.{ .ast = &ast, .str_pool = &str_pool });
+    var hir = HIR.init(.{ .ast = &ast, .str_pool = &str_pool, .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
     defer hir.deinit(alloc);
 
     const root: HIR.Inst.Ref = @enumFromInt(0);

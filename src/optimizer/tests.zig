@@ -19,23 +19,23 @@ fn optimizedMirRender(alloc: mem.Allocator, src_str: []const u8) ![]const u8 {
     var diagnostics = Diagnostic.init();
     defer diagnostics.deinit(alloc);
 
-    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool, .diagnostics = &diagnostics });
+    var lexer = Lexer.init(.{ .src = &src, .str_pool = &str_pool, .diagnostics = &diagnostics, .shared_alloc = alloc });
     defer lexer.deinit(alloc);
     try lexer.scan(alloc);
 
-    var parser = Parser.init(.{ .src = &src, .tokens = lexer.tokens.slice(), .diagnostics = &diagnostics });
+    var parser = Parser.init(.{ .src = &src, .tokens = lexer.tokens.slice(), .diagnostics = &diagnostics, .diagnostic_alloc = alloc });
     defer parser.deinit(alloc);
     const ast = try parser.parse(alloc);
 
-    var hir = try Parser.lowerWithDiagnostics(alloc, &ast, &str_pool, &diagnostics);
+    var hir = try Parser.lowerWithDiagnostics(alloc, &ast, &str_pool, &diagnostics, alloc);
     defer hir.deinit(alloc);
 
-    var sema = Sema.initWithDiagnostics(&hir, &str_pool, &diagnostics);
+    var sema = Sema.init(&hir, &str_pool, &diagnostics, alloc);
     defer sema.deinit(alloc);
     try sema.analyze(alloc);
     try std.testing.expect(!diagnostics.hasErrors());
 
-    var opt = Optimizer.init(.{ .mir = &sema.mir, .str_pool = &str_pool, .diagnostics = &diagnostics });
+    var opt = Optimizer.init(.{ .mir = &sema.mir, .str_pool = &str_pool, .diagnostics = &diagnostics, .shared_alloc = alloc });
     defer opt.deinit(alloc);
     try opt.optimize(alloc);
 

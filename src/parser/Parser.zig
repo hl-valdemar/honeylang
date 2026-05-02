@@ -3,7 +3,8 @@ const mem = std.mem;
 
 src: *const Source,
 tokens: Lexer.Tokens.Slice,
-diagnostics: ?*Diagnostic,
+diagnostics: *Diagnostic,
+diagnostic_alloc: mem.Allocator,
 pos: Token.Ref,
 nodes: AST.Nodes,
 extra_data: AST.Refs,
@@ -43,7 +44,8 @@ const BindingPower = struct {
 pub const Context = struct {
     src: *const Source,
     tokens: Lexer.Tokens.Slice,
-    diagnostics: ?*Diagnostic = null,
+    diagnostic_alloc: mem.Allocator,
+    diagnostics: *Diagnostic,
 };
 
 pub fn init(ctx: Context) Self {
@@ -51,6 +53,7 @@ pub fn init(ctx: Context) Self {
         .src = ctx.src,
         .tokens = ctx.tokens,
         .diagnostics = ctx.diagnostics,
+        .diagnostic_alloc = ctx.diagnostic_alloc,
         .pos = 0,
         .nodes = .{},
         .extra_data = .empty,
@@ -483,7 +486,7 @@ fn expect(self: *Self, alloc: mem.Allocator, tag: Token.Tag) !void {
             .token = self.pos,
             .expected = tag,
         });
-        _ = try self.addDiagnostic(alloc, .parser_expected_token, self.pos);
+        _ = try self.addDiagnostic(.parser_expected_token, self.pos);
     }
 }
 
@@ -524,12 +527,12 @@ fn addNode(self: *Self, alloc: mem.Allocator, node: AST.Node) !AST.Node.Ref {
 fn addError(self: *Self, alloc: mem.Allocator, tag: AST.Error.Tag) !AST.Node.Ref {
     try self.errors.append(alloc, .{ .tag = tag, .token = self.pos });
     const err_tok = self.pos;
-    const diag_ref = try self.addDiagnostic(alloc, switch (tag) {
+    const diag_ref = try self.addDiagnostic(switch (tag) {
         .expected_expression => .parser_expected_expression,
         .expected_declaration => .parser_expected_declaration,
         .expected_token => .parser_expected_token,
     }, err_tok);
-    self.advance(); // skip offending token unless already at EOF
+    self.advance(); // skip offending token unless already at eof
 
     return self.addNode(alloc, .{
         .tag = .@"error",
@@ -538,16 +541,13 @@ fn addError(self: *Self, alloc: mem.Allocator, tag: AST.Error.Tag) !AST.Node.Ref
     });
 }
 
-fn addDiagnostic(self: *Self, alloc: mem.Allocator, tag: Diagnostic.Tag, token: Token.Ref) !Diagnostic.Ref {
-    if (self.diagnostics) |diagnostics| {
-        return diagnostics.add(alloc, .{
-            .stage = .parser,
-            .severity = .err,
-            .tag = tag,
-            .span = self.tokenSpan(token),
-        });
-    }
-    return .none;
+fn addDiagnostic(self: *Self, tag: Diagnostic.Tag, token: Token.Ref) !Diagnostic.Ref {
+    return self.diagnostics.add(self.diagnostic_alloc, .{
+        .stage = .parser,
+        .severity = .err,
+        .tag = tag,
+        .span = self.tokenSpan(token),
+    });
 }
 
 fn tokenSpan(self: *const Self, token: Token.Ref) ?Diagnostic.Span {
@@ -562,14 +562,14 @@ fn tokenSpan(self: *const Self, token: Token.Ref) ?Diagnostic.Span {
     return .{ .start = start, .end = end };
 }
 
-pub fn lower(alloc: mem.Allocator, ast: *const AST, str_pool: *const StringPool) !HIR {
-    return lowerWithDiagnostics(alloc, ast, str_pool, null);
+pub fn lower(alloc: mem.Allocator, ast: *const AST, str_pool: *const StringPool, diagnostics: *Diagnostic, diagnostic_alloc: mem.Allocator) !HIR {
+    return lowerWithDiagnostics(alloc, ast, str_pool, diagnostics, diagnostic_alloc);
 }
 
 /// lower with access to the shared diagnostic store. the compiler pipeline uses
 /// this entry point; `lower` is retained for tests and older no-diagnostic callers.
-pub fn lowerWithDiagnostics(alloc: mem.Allocator, ast: *const AST, str_pool: *const StringPool, diagnostics: ?*Diagnostic) !HIR {
-    var hir = HIR.init(.{ .ast = ast, .str_pool = str_pool, .diagnostics = diagnostics });
+pub fn lowerWithDiagnostics(alloc: mem.Allocator, ast: *const AST, str_pool: *const StringPool, diagnostics: *Diagnostic, diagnostic_alloc: mem.Allocator) !HIR {
+    var hir = HIR.init(.{ .ast = ast, .str_pool = str_pool, .diagnostics = diagnostics, .diagnostic_alloc = diagnostic_alloc });
     const root: HIR.Inst.Ref = @enumFromInt(0);
     _ = try hir.lower(alloc, root);
     return hir;

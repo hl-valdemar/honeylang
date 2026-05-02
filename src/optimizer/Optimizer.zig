@@ -3,7 +3,8 @@ const mem = std.mem;
 
 str_pool: *StringPool,
 mir: *const MIR,
-diagnostics: ?*Diagnostic,
+diagnostics: *Diagnostic,
+shared_alloc: mem.Allocator,
 mir_optimized: MIR,
 /// evaluated values keyed by original mir ref.
 values: std.ArrayList(Value),
@@ -22,7 +23,8 @@ const MIR = @import("../sema/MIR.zig");
 pub const Context = struct {
     str_pool: *StringPool,
     mir: *const MIR,
-    diagnostics: ?*Diagnostic = null,
+    shared_alloc: mem.Allocator,
+    diagnostics: *Diagnostic,
 };
 
 const Value = union(enum) {
@@ -39,6 +41,7 @@ pub fn init(ctx: Context) Self {
         .str_pool = ctx.str_pool,
         .mir = ctx.mir,
         .diagnostics = ctx.diagnostics,
+        .shared_alloc = ctx.shared_alloc,
         .mir_optimized = .{},
         .values = .empty,
         .rewritten_tags = .empty,
@@ -102,7 +105,7 @@ fn analyzeRewrites(self: *Self, alloc: mem.Allocator) !void {
 
                 if (inst.tag == .div and isZero(right)) {
                     tag = .trap;
-                    data = try self.trapData(alloc, .optimizer_division_by_zero);
+                    data = try self.trapData(.optimizer_division_by_zero);
                     break :blk .unknown;
                 }
 
@@ -364,7 +367,7 @@ fn literalInst(self: *Self, alloc: mem.Allocator, value: Value) !InstRewrite {
         .i32 => |v| blk: {
             const result_str = try std.fmt.allocPrint(alloc, "{d}", .{v});
             defer alloc.free(result_str);
-            const result_str_id = try self.str_pool.intern(alloc, result_str);
+            const result_str_id = try self.str_pool.intern(self.shared_alloc, result_str);
             break :blk .{
                 .tag = .int_literal,
                 .data = .{ .a = @enumFromInt(@intFromEnum(result_str_id)) },
@@ -373,7 +376,7 @@ fn literalInst(self: *Self, alloc: mem.Allocator, value: Value) !InstRewrite {
         .f32 => |v| blk: {
             const result_str = try std.fmt.allocPrint(alloc, "{d}", .{v});
             defer alloc.free(result_str);
-            const result_str_id = try self.str_pool.intern(alloc, result_str);
+            const result_str_id = try self.str_pool.intern(self.shared_alloc, result_str);
             break :blk .{
                 .tag = .float_literal,
                 .data = .{ .a = @enumFromInt(@intFromEnum(result_str_id)) },
@@ -383,17 +386,13 @@ fn literalInst(self: *Self, alloc: mem.Allocator, value: Value) !InstRewrite {
     };
 }
 
-fn trapData(self: *Self, alloc: mem.Allocator, tag: Diagnostic.Tag) !MIR.Inst.Data {
-    const diag_ref = if (self.diagnostics) |diagnostics|
-        try diagnostics.add(alloc, .{
-            .stage = .optimizer,
-            .severity = .err,
-            .tag = tag,
-            .span = null,
-        })
-    else
-        Diagnostic.Ref.none;
-
+fn trapData(self: *Self, tag: Diagnostic.Tag) !MIR.Inst.Data {
+    const diag_ref = try self.diagnostics.add(self.shared_alloc, .{
+        .stage = .optimizer,
+        .severity = .err,
+        .tag = tag,
+        .span = null,
+    });
     return .{ .a = @enumFromInt(@intFromEnum(diag_ref)) };
 }
 

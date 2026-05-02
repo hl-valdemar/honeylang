@@ -4,7 +4,8 @@ const ascii = std.ascii;
 
 src: *const Source,
 str_pool: *StringPool,
-diagnostics: ?*Diagnostic,
+diagnostics: *Diagnostic,
+shared_alloc: mem.Allocator,
 pos: Token.Ref,
 tokens: Tokens,
 
@@ -21,7 +22,8 @@ pub const Tokens = std.MultiArrayList(Token);
 pub const Context = struct {
     src: *const Source,
     str_pool: *StringPool,
-    diagnostics: ?*Diagnostic = null,
+    shared_alloc: mem.Allocator,
+    diagnostics: *Diagnostic,
 };
 
 pub fn init(ctx: Context) Self {
@@ -29,6 +31,7 @@ pub fn init(ctx: Context) Self {
         .src = ctx.src,
         .str_pool = ctx.str_pool,
         .diagnostics = ctx.diagnostics,
+        .shared_alloc = ctx.shared_alloc,
         .pos = 0,
         .tokens = .{},
     };
@@ -43,14 +46,12 @@ pub fn scan(self: *Self, alloc: mem.Allocator) !void {
         var tok = nextToken(self.src.contents, &self.pos);
 
         if (tok.err) |err_tag| {
-            if (self.diagnostics) |diagnostics| {
-                _ = try diagnostics.add(alloc, .{
-                    .stage = .lexer,
-                    .severity = .err,
-                    .tag = diagnosticTag(err_tag),
-                    .span = .{ .start = tok.start, .end = tok.end },
-                });
-            }
+            _ = try self.diagnostics.add(self.shared_alloc, .{
+                .stage = .lexer,
+                .severity = .err,
+                .tag = diagnosticTag(err_tag),
+                .span = .{ .start = tok.start, .end = tok.end },
+            });
         }
 
         if (tok.tag == .invalid) continue;
@@ -63,7 +64,7 @@ pub fn scan(self: *Self, alloc: mem.Allocator) !void {
 
         const str_id = str_id: switch (tok.tag) {
             .identifier, .int, .float, .mut, .@"if", .@"else", .@"return", .func, .cc_c => {
-                break :str_id try self.str_pool.intern(alloc, self.src.contents[tok.start..tok.end]);
+                break :str_id try self.str_pool.intern(self.shared_alloc, self.src.contents[tok.start..tok.end]);
             },
             else => break :str_id StringPool.ID.none,
         };

@@ -3,7 +3,8 @@ const mem = std.mem;
 
 ast: *const AST,
 str_pool: *const StringPool,
-diagnostics: ?*Diagnostic,
+diagnostics: *Diagnostic,
+diagnostic_alloc: mem.Allocator,
 /// indexed by Inst.Ref.
 insts: std.MultiArrayList(Inst),
 extra_data: std.ArrayList(Inst.Ref),
@@ -155,7 +156,8 @@ pub const IfElseInfo = struct {
 pub const Context = struct {
     ast: *const AST,
     str_pool: *const StringPool,
-    diagnostics: ?*Diagnostic = null,
+    diagnostic_alloc: mem.Allocator,
+    diagnostics: *Diagnostic,
 };
 
 pub fn init(ctx: Context) Self {
@@ -163,6 +165,7 @@ pub fn init(ctx: Context) Self {
         .ast = ctx.ast,
         .str_pool = ctx.str_pool,
         .diagnostics = ctx.diagnostics,
+        .diagnostic_alloc = ctx.diagnostic_alloc,
         .insts = .{},
         .extra_data = .empty,
         .root_start = @enumFromInt(0),
@@ -367,22 +370,19 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
         },
         .@"error" => return self.emit(alloc, .trap, .{ .a = data.a }),
         else => {
-            const diag_ref = try self.addDiagnostic(alloc, .lowering_unsupported_node);
+            const diag_ref = try self.addDiagnostic(.lowering_unsupported_node);
             return self.emit(alloc, .trap, .{ .a = @enumFromInt(@intFromEnum(diag_ref)) });
         },
     }
 }
 
-fn addDiagnostic(self: *Self, alloc: mem.Allocator, tag: Diagnostic.Tag) !Diagnostic.Ref {
-    if (self.diagnostics) |diagnostics| {
-        return diagnostics.add(alloc, .{
-            .stage = .lowering,
-            .severity = .err,
-            .tag = tag,
-            .span = null,
-        });
-    }
-    return .none;
+fn addDiagnostic(self: *Self, tag: Diagnostic.Tag) !Diagnostic.Ref {
+    return self.diagnostics.add(self.diagnostic_alloc, .{
+        .stage = .lowering,
+        .severity = .err,
+        .tag = tag,
+        .span = null,
+    });
 }
 
 fn emit(self: *Self, alloc: mem.Allocator, tag: Inst.Tag, data: Inst.Data) !Inst.Ref {
