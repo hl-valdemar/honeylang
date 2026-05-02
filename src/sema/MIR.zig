@@ -1,9 +1,12 @@
 const std = @import("std");
 const mem = std.mem;
 
-/// instructions. Indexed by Inst.Ref.
+/// instructions. indexed by inst ref.
 insts: std.MultiArrayList(Inst) = .{},
-extra_data: std.ArrayList(Inst.Ref) = .empty,
+decls: std.MultiArrayList(DeclInfo) = .{},
+funcs: std.MultiArrayList(FuncInfo) = .{},
+branches: std.MultiArrayList(IfElseInfo) = .{},
+ref_lists: std.ArrayList(Inst.Ref) = .empty,
 
 const Self = @This();
 
@@ -26,104 +29,104 @@ pub const Inst = struct {
     pub const Tag = enum {
         // literals
 
-        /// extra-data:
+        /// data:
         /// * a: string pool id (value)
         int_literal,
 
-        /// extra-data:
+        /// data:
         /// * a: string pool id (value)
         float_literal,
 
-        /// extra-data:
+        /// data:
         /// * a: immediate value (0 = false, 1 = true)
         bool_literal,
 
-        /// extra-data:
+        /// data:
         /// * a: string pool id (value)
         str_literal,
 
-        /// extra-data:
+        /// data:
         /// * a: diagnostic ref
         trap,
 
         // binary ops
 
-        /// extra-data:
-        /// * a: left Ref
-        /// * b: right Ref
+        /// data:
+        /// * a: left ref
+        /// * b: right ref
         add,
 
-        /// extra-data:
-        /// * a: left Ref
-        /// * b: right Ref
+        /// data:
+        /// * a: left ref
+        /// * b: right ref
         sub,
 
-        /// extra-data:
-        /// * a: left Ref
-        /// * b: right Ref
+        /// data:
+        /// * a: left ref
+        /// * b: right ref
         mul,
 
-        /// extra-data:
-        /// * a: left Ref
-        /// * b: right Ref
+        /// data:
+        /// * a: left ref
+        /// * b: right ref
         div,
 
         // unary ops
 
-        /// extra-data:
-        /// * a: Ref
+        /// data:
+        /// * a: operand ref
         not,
 
-        /// extra-data:
-        /// * a: Ref
+        /// data:
+        /// * a: operand ref
         negate,
 
-        /// extra-data:
-        /// * a: Ref to the decl/param instruction
+        /// data:
+        /// * a: ref to the decl/param instruction
         ref,
 
         // decls
 
-        /// extra-data:
+        /// data:
         /// * a: string id (name)
-        /// * b: extra_data index → DeclInfo
+        /// * b: decl ref
         decl_const,
 
-        /// extra-data:
+        /// data:
         /// * a: string id (name)
-        /// * b: extra_data index → DeclInfo
+        /// * b: decl ref
         decl_var,
 
         // functions
 
-        /// extra-data:
+        /// data:
         /// * a: string id (name)
-        /// * b: Type (encoded)
+        /// * b: type (encoded)
         param,
 
-        /// extra-data:
-        /// * a: Ref to value (or .none)
+        /// data:
+        /// * a: ref to value (or .none)
         ret,
 
-        /// extra-data:
-        /// * a, b: extra_data range to Ref indices
+        /// data:
+        /// * a, b: ref_lists range to refs
         block,
 
-        /// extra-data:
+        /// data:
         /// * a: string id (name)
-        /// * b: extra_data index → FuncInfo
+        /// * b: func ref
         decl_func,
 
         // if-statements
 
-        /// extra-data:
-        /// * a: condition (Ref)
-        /// * b: body (Ref)
+        /// data:
+        /// * a: condition ref
+        /// * b: body ref
         if_simple,
 
-        /// extra-data:
-        /// * a: condition (Ref)
-        /// * b: extra_data index → IfElseInfo
+        /// data:
+        /// * a: condition ref
+        /// * b: branch ref
         if_else,
     };
 
@@ -136,15 +139,30 @@ pub const Inst = struct {
     };
 };
 
+pub const DeclRef = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+};
+
+pub const FuncRef = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+};
+
+pub const BranchRef = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+};
+
 pub const DeclInfo = struct {
-    value: BaseRef, // Inst.Ref to the value
+    value: BaseRef,
     type: Inst.Type,
 };
 
 pub const FuncInfo = struct {
-    params_start: BaseRef, // range into extra_data
+    params_start: BaseRef,
     params_end: BaseRef,
-    body: Inst.Ref, // ref to block instruction
+    body: Inst.Ref,
     ret_type: Inst.Type,
     flags: u32,
 };
@@ -156,7 +174,10 @@ pub const IfElseInfo = struct {
 
 pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     self.insts.deinit(alloc);
-    self.extra_data.deinit(alloc);
+    self.decls.deinit(alloc);
+    self.funcs.deinit(alloc);
+    self.branches.deinit(alloc);
+    self.ref_lists.deinit(alloc);
 }
 
 pub fn emit(self: *Self, alloc: mem.Allocator, tag: Inst.Tag, data: Inst.Data) !Inst.Ref {
@@ -164,41 +185,76 @@ pub fn emit(self: *Self, alloc: mem.Allocator, tag: Inst.Tag, data: Inst.Data) !
     return @enumFromInt(self.insts.len - 1);
 }
 
-pub fn packExtraData(self: *Self, alloc: mem.Allocator, comptime T: type, data: T) !BaseRef {
-    const start: BaseRef = @enumFromInt(@as(u32, @intCast(self.extra_data.items.len)));
-    const fields = @typeInfo(T).@"struct".fields;
-    inline for (fields) |field| {
-        const val = @field(data, field.name);
-        try self.extra_data.append(alloc, switch (field.type) {
-            BaseRef => val,
-            u32 => @enumFromInt(val),
-            Inst.Type => @enumFromInt(@intFromEnum(val)),
-            StringPool.ID => @enumFromInt(@intFromEnum(val)),
-            else => @compileError("unsupported extra_data field type"),
-        });
-    }
-    return start;
+pub fn emitDeclInfo(self: *Self, alloc: mem.Allocator, info: DeclInfo) !DeclRef {
+    const ref: DeclRef = @enumFromInt(@as(u32, @intCast(self.decls.len)));
+    try self.decls.append(alloc, info);
+    return ref;
 }
 
-/// read a packed struct from extra_data starting from idx.
-pub fn unpackExtraData(self: *const Self, comptime T: type, idx: BaseRef) T {
-    const fields = @typeInfo(T).@"struct".fields;
-    var result: T = undefined;
-    inline for (fields, 0..) |field, i| {
-        const val = self.extra_data.items[@intFromEnum(idx) + i];
-        @field(result, field.name) = switch (field.type) {
-            BaseRef => val,
-            u32 => @intFromEnum(val),
-            Inst.Type => @enumFromInt(@intFromEnum(val)),
-            StringPool.ID => @enumFromInt(@intFromEnum(val)),
-            else => @compileError("unsupported extra_data field type"),
-        };
-    }
-    return result;
+pub fn declInfo(self: *const Self, ref: DeclRef) DeclInfo {
+    return self.decls.get(@intFromEnum(ref));
 }
 
-pub fn extraSlice(self: *const Self, start: BaseRef, end: BaseRef) []const BaseRef {
-    return self.extra_data.items[@intFromEnum(start)..@intFromEnum(end)];
+pub fn emitFuncInfo(self: *Self, alloc: mem.Allocator, info: FuncInfo) !FuncRef {
+    const ref: FuncRef = @enumFromInt(@as(u32, @intCast(self.funcs.len)));
+    try self.funcs.append(alloc, info);
+    return ref;
+}
+
+pub fn funcInfo(self: *const Self, ref: FuncRef) FuncInfo {
+    return self.funcs.get(@intFromEnum(ref));
+}
+
+pub fn emitBranchInfo(self: *Self, alloc: mem.Allocator, info: IfElseInfo) !BranchRef {
+    const ref: BranchRef = @enumFromInt(@as(u32, @intCast(self.branches.len)));
+    try self.branches.append(alloc, info);
+    return ref;
+}
+
+pub fn branchInfo(self: *const Self, ref: BranchRef) IfElseInfo {
+    return self.branches.get(@intFromEnum(ref));
+}
+
+pub fn appendRefList(self: *Self, alloc: mem.Allocator, refs: []const BaseRef) !struct { start: BaseRef, end: BaseRef } {
+    const start: BaseRef = @enumFromInt(@as(u32, @intCast(self.ref_lists.items.len)));
+    try self.ref_lists.appendSlice(alloc, refs);
+    const end: BaseRef = @enumFromInt(@as(u32, @intCast(self.ref_lists.items.len)));
+    return .{ .start = start, .end = end };
+}
+
+pub fn refSlice(self: *const Self, start: BaseRef, end: BaseRef) []const BaseRef {
+    return self.ref_lists.items[@intFromEnum(start)..@intFromEnum(end)];
+}
+
+pub fn asBaseRef(ref: anytype) BaseRef {
+    const Ref = @TypeOf(ref);
+    if (Ref != DeclRef and Ref != FuncRef and Ref != BranchRef)
+        @compileError("expected a typed mir payload ref");
+    return @enumFromInt(@intFromEnum(ref));
+}
+
+pub fn asDeclRef(ref: BaseRef) DeclRef {
+    return @enumFromInt(@intFromEnum(ref));
+}
+
+pub fn asFuncRef(ref: BaseRef) FuncRef {
+    return @enumFromInt(@intFromEnum(ref));
+}
+
+pub fn asBranchRef(ref: BaseRef) BranchRef {
+    return @enumFromInt(@intFromEnum(ref));
+}
+
+pub fn refListStart(self: *const Self) BaseRef {
+    return @enumFromInt(@as(u32, @intCast(self.ref_lists.items.len)));
+}
+
+pub fn appendRef(self: *Self, alloc: mem.Allocator, ref: BaseRef) !void {
+    try self.ref_lists.append(alloc, ref);
+}
+
+pub fn refListEnd(self: *const Self) BaseRef {
+    return @enumFromInt(@as(u32, @intCast(self.ref_lists.items.len)));
 }
 
 pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPool) ![]const u8 {
@@ -240,7 +296,7 @@ pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPo
             .decl_const, .decl_var => {
                 const tag_name = @tagName(inst.tag);
                 const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
-                const info = self.unpackExtraData(DeclInfo, inst.data.b);
+                const info = self.declInfo(asDeclRef(inst.data.b));
 
                 try w.print("%{d: <3} {s}(\"{s}\"", .{ idx, tag_name, name });
                 try w.print(", type={s}", .{@tagName(info.type)});
@@ -261,7 +317,7 @@ pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPo
                     try w.print("%{d: <3} ret()\n", .{idx});
             },
             .block => {
-                const refs = self.extraSlice(inst.data.a, inst.data.b);
+                const refs = self.refSlice(inst.data.a, inst.data.b);
                 try w.print("%{d: <3} block(", .{idx});
                 for (refs, 0..) |ref, i| {
                     if (i > 0) try w.writeAll(", ");
@@ -272,11 +328,11 @@ pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPo
             .decl_func => {
                 const tag_name = @tagName(inst.tag);
                 const name = str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
-                const info = self.unpackExtraData(FuncInfo, inst.data.b);
+                const info = self.funcInfo(asFuncRef(inst.data.b));
                 const cc: AST.FuncDecl.CallingConvention =
                     @enumFromInt((info.flags & AST.FuncDecl.Flag.cc_mask) >> AST.FuncDecl.Flag.cc_shift);
 
-                const param_refs = self.extraSlice(info.params_start, info.params_end);
+                const param_refs = self.refSlice(info.params_start, info.params_end);
 
                 try w.print("%{d: <3} {s}(\"{s}\", cc={s}, params=(", .{
                     idx,
@@ -299,7 +355,7 @@ pub fn render(self: *const Self, alloc: mem.Allocator, str_pool: *const StringPo
                 .{ idx, @intFromEnum(inst.data.a), @intFromEnum(inst.data.b) },
             ),
             .if_else => {
-                const info = self.unpackExtraData(IfElseInfo, inst.data.b);
+                const info = self.branchInfo(asBranchRef(inst.data.b));
                 try w.print(
                     "%{d: <3} if_else(cond=%{d}, body=%{d}, else=%{d})\n",
                     .{ idx, @intFromEnum(inst.data.a), @intFromEnum(info.body), @intFromEnum(info.else_node) },

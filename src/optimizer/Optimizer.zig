@@ -149,7 +149,7 @@ fn analyzeRewrites(self: *Self, alloc: mem.Allocator) !void {
                 break :blk folded;
             },
             .decl_const => blk: {
-                const info = self.mir.unpackExtraData(MIR.DeclInfo, inst.data.b);
+                const info = self.mir.declInfo(MIR.asDeclRef(inst.data.b));
                 break :blk self.values.items[@intFromEnum(info.value)];
             },
             .decl_var,
@@ -177,7 +177,7 @@ fn computeConstMap(self: *Self, const_map: []BaseRef) void {
         const inst = self.mir.insts.get(idx);
         if (inst.tag != .decl_const) continue;
 
-        const info = self.mir.unpackExtraData(MIR.DeclInfo, inst.data.b);
+        const info = self.mir.declInfo(MIR.asDeclRef(inst.data.b));
         const_map[idx] = resolveAlias(info.value, const_map);
     }
 }
@@ -190,7 +190,7 @@ fn computeAlive(self: *Self, alloc: mem.Allocator, const_map: []const BaseRef, a
     for (0..len) |idx| {
         const inst = self.mir.insts.get(idx);
         if (inst.tag == .block) {
-            const refs = self.mir.extraSlice(inst.data.a, inst.data.b);
+            const refs = self.mir.refSlice(inst.data.a, inst.data.b);
             for (refs) |ref| setRef(&in_block, ref);
         }
     }
@@ -228,7 +228,7 @@ fn markOperandsAlive(self: *Self, idx: usize, const_map: []const BaseRef, alive:
         .not, .negate => setAliasedRef(alive, rewritten_data.a, const_map),
         .ref => setRef(alive, rewritten_data.a),
         .decl_const, .decl_var => {
-            const info = self.mir.unpackExtraData(MIR.DeclInfo, inst.data.b);
+            const info = self.mir.declInfo(MIR.asDeclRef(inst.data.b));
             setAliasedRef(alive, info.value, const_map);
         },
         .ret => {
@@ -239,18 +239,18 @@ fn markOperandsAlive(self: *Self, idx: usize, const_map: []const BaseRef, alive:
             setRef(alive, rewritten_data.b);
         },
         .if_else => {
-            const info = self.mir.unpackExtraData(MIR.IfElseInfo, inst.data.b);
+            const info = self.mir.branchInfo(MIR.asBranchRef(inst.data.b));
             setAliasedRef(alive, inst.data.a, const_map);
             setRef(alive, info.body);
             setRef(alive, info.else_node);
         },
         .block => {
-            const refs = self.mir.extraSlice(inst.data.a, inst.data.b);
+            const refs = self.mir.refSlice(inst.data.a, inst.data.b);
             for (refs) |ref| setRef(alive, ref);
         },
         .decl_func => {
-            const info = self.mir.unpackExtraData(MIR.FuncInfo, inst.data.b);
-            const params = self.mir.extraSlice(info.params_start, info.params_end);
+            const info = self.mir.funcInfo(MIR.asFuncRef(inst.data.b));
+            const params = self.mir.refSlice(info.params_start, info.params_end);
             for (params) |ref| setRef(alive, ref);
             if (info.body != .none) setRef(alive, info.body);
         },
@@ -283,12 +283,12 @@ fn materialize(self: *Self, alloc: mem.Allocator, const_map: []const BaseRef, al
             },
             .ref => rewritten_data,
             .decl_const, .decl_var => blk: {
-                const info = self.mir.unpackExtraData(MIR.DeclInfo, inst.data.b);
-                const extra_idx = try self.mir_optimized.packExtraData(alloc, MIR.DeclInfo, .{
+                const info = self.mir.declInfo(MIR.asDeclRef(inst.data.b));
+                const decl_ref = try self.mir_optimized.emitDeclInfo(alloc, .{
                     .value = remappedAliasedRef(info.value, const_map, remap),
                     .type = info.type,
                 });
-                break :blk .{ .a = inst.data.a, .b = extra_idx };
+                break :blk .{ .a = inst.data.a, .b = MIR.asBaseRef(decl_ref) };
             },
             .ret => if (rewritten_data.a != .none) .{
                 .a = remappedAliasedRef(rewritten_data.a, const_map, remap),
@@ -298,50 +298,50 @@ fn materialize(self: *Self, alloc: mem.Allocator, const_map: []const BaseRef, al
                 .b = remappedRef(rewritten_data.b, remap),
             },
             .if_else => blk: {
-                const info = self.mir.unpackExtraData(MIR.IfElseInfo, inst.data.b);
-                const extra_idx = try self.mir_optimized.packExtraData(alloc, MIR.IfElseInfo, .{
+                const info = self.mir.branchInfo(MIR.asBranchRef(inst.data.b));
+                const branch_ref = try self.mir_optimized.emitBranchInfo(alloc, .{
                     .body = remappedRef(info.body, remap),
                     .else_node = remappedRef(info.else_node, remap),
                 });
                 break :blk .{
                     .a = remappedAliasedRef(inst.data.a, const_map, remap),
-                    .b = extra_idx,
+                    .b = MIR.asBaseRef(branch_ref),
                 };
             },
             .block => blk: {
-                const refs = self.mir.extraSlice(inst.data.a, inst.data.b);
-                const extra_start: BaseRef = @enumFromInt(self.mir_optimized.extra_data.items.len);
+                const refs = self.mir.refSlice(inst.data.a, inst.data.b);
+                const refs_start = self.mir_optimized.refListStart();
                 for (refs) |ref| {
                     if (!alive.isSet(@intFromEnum(ref))) continue;
-                    try self.mir_optimized.extra_data.append(alloc, remappedRef(ref, remap));
+                    try self.mir_optimized.appendRef(alloc, remappedRef(ref, remap));
                 }
-                const extra_end: BaseRef = @enumFromInt(self.mir_optimized.extra_data.items.len);
-                break :blk .{ .a = extra_start, .b = extra_end };
+                const refs_end = self.mir_optimized.refListEnd();
+                break :blk .{ .a = refs_start, .b = refs_end };
             },
             .decl_func => blk: {
-                const info = self.mir.unpackExtraData(MIR.FuncInfo, inst.data.b);
+                const info = self.mir.funcInfo(MIR.asFuncRef(inst.data.b));
 
-                const params = self.mir.extraSlice(info.params_start, info.params_end);
-                const extra_start: BaseRef = @enumFromInt(self.mir_optimized.extra_data.items.len);
+                const params = self.mir.refSlice(info.params_start, info.params_end);
+                const params_start = self.mir_optimized.refListStart();
                 for (params) |ref| {
-                    try self.mir_optimized.extra_data.append(alloc, remappedRef(ref, remap));
+                    try self.mir_optimized.appendRef(alloc, remappedRef(ref, remap));
                 }
-                const extra_end: BaseRef = @enumFromInt(self.mir_optimized.extra_data.items.len);
+                const params_end = self.mir_optimized.refListEnd();
 
                 const body = if (info.body != .none)
                     remappedRef(info.body, remap)
                 else
                     BaseRef.none;
 
-                const extra_idx = try self.mir_optimized.packExtraData(alloc, MIR.FuncInfo, .{
-                    .params_start = extra_start,
-                    .params_end = extra_end,
+                const func_ref = try self.mir_optimized.emitFuncInfo(alloc, .{
+                    .params_start = params_start,
+                    .params_end = params_end,
                     .body = body,
                     .ret_type = info.ret_type,
                     .flags = info.flags,
                 });
 
-                break :blk .{ .a = inst.data.a, .b = extra_idx };
+                break :blk .{ .a = inst.data.a, .b = MIR.asBaseRef(func_ref) };
             },
         };
 

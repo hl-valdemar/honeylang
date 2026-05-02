@@ -7,11 +7,11 @@ diagnostics: ?*Diagnostic,
 mir: MIR,
 scope: Scope,
 type_map: std.AutoHashMapUnmanaged(StringPool.ID, MIR.Inst.Type),
-/// resolved type per MIR inst (parallel to mir.insts). sema-only.
+/// resolved type per mir inst (parallel to mir.insts). sema-only.
 inst_types: std.ArrayList(MIR.Inst.Type),
-/// maps HIR Inst.Ref -> MIR Inst.Ref.
+/// maps hir inst refs to mir inst refs.
 ref_map: std.ArrayList(BaseRef),
-/// tracks HIR instructions already analyzed, including instructions that map to .none.
+/// tracks hir instructions already analyzed, including instructions that map to .none.
 analyzed: std.DynamicBitSetUnmanaged,
 current_ret_type: ?MIR.Inst.Type,
 
@@ -224,7 +224,7 @@ fn analyzeValueDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.I
     if (type_resolution.diagnostic != .none and value_type != .err)
         value = try self.emitTrapRef(alloc, type_resolution.diagnostic);
 
-    const extra_idx = try self.mir.packExtraData(alloc, MIR.DeclInfo, .{
+    const decl_ref = try self.mir.emitDeclInfo(alloc, .{
         .value = value,
         .type = decl_type,
     });
@@ -236,7 +236,7 @@ fn analyzeValueDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.I
     };
     return self.emitTyped(alloc, mir_tag, .{
         .a = inst.data.a,
-        .b = extra_idx,
+        .b = MIR.asBaseRef(decl_ref),
     }, decl_type);
 }
 
@@ -248,12 +248,12 @@ fn analyzeFuncDecl(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.I
     defer func_scope.deinit(alloc);
 
     const hir_params = self.hir.extraSlice(func_info.params_start, func_info.params_end);
-    const extra_start: BaseRef = @enumFromInt(self.mir.extra_data.items.len);
+    const params_start = self.mir.refListStart();
     for (hir_params) |hir_ref| {
         const mir_ref = try self.analyzeParam(alloc, &func_scope, hir_ref);
-        try self.mir.extra_data.append(alloc, mir_ref);
+        try self.mir.appendRef(alloc, mir_ref);
     }
-    const extra_end: BaseRef = @enumFromInt(self.mir.extra_data.items.len);
+    const params_end = self.mir.refListEnd();
 
     const ret_type = (try self.resolveType(alloc, func_info.ret_type)).type;
     const outer_ret_type = self.current_ret_type;
@@ -265,9 +265,9 @@ fn analyzeFuncDecl(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.I
     else
         .none;
 
-    const extra_idx = try self.mir.packExtraData(alloc, MIR.FuncInfo, .{
-        .params_start = extra_start,
-        .params_end = extra_end,
+    const func_ref = try self.mir.emitFuncInfo(alloc, .{
+        .params_start = params_start,
+        .params_end = params_end,
         .body = body,
         .ret_type = ret_type,
         .flags = func_info.flags,
@@ -275,7 +275,7 @@ fn analyzeFuncDecl(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.I
 
     return self.emitTyped(alloc, .decl_func, .{
         .a = inst.data.a,
-        .b = extra_idx,
+        .b = MIR.asBaseRef(func_ref),
     }, .void);
 }
 
@@ -360,13 +360,11 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
                 if (stmt_ref != .none) try stmt_refs.append(alloc, stmt_ref);
             }
 
-            const extra_start: BaseRef = @enumFromInt(self.mir.extra_data.items.len);
-            try self.mir.extra_data.appendSlice(alloc, stmt_refs.items);
-            const extra_end: BaseRef = @enumFromInt(self.mir.extra_data.items.len);
+            const refs = try self.mir.appendRefList(alloc, stmt_refs.items);
 
             break :blk try self.emitTyped(alloc, .block, .{
-                .a = extra_start,
-                .b = extra_end,
+                .a = refs.start,
+                .b = refs.end,
             }, .void);
         },
         .ret => blk: {
@@ -401,13 +399,13 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
             const hir_info = self.hir.unpackExtraData(HIR.IfElseInfo, inst.data.b);
             const body = try self.analyzeInst(alloc, scope, hir_info.body);
             const else_node = try self.analyzeInst(alloc, scope, hir_info.else_node);
-            const extra_idx = try self.mir.packExtraData(alloc, MIR.IfElseInfo, .{
+            const branch_ref = try self.mir.emitBranchInfo(alloc, .{
                 .body = body,
                 .else_node = else_node,
             });
             break :blk try self.emitTyped(alloc, .if_else, .{
                 .a = condition,
-                .b = extra_idx,
+                .b = MIR.asBaseRef(branch_ref),
             }, .void);
         },
         .not, .negate => blk: {

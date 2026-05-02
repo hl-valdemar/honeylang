@@ -103,3 +103,10 @@ test "preserve if else in live function body" {
         \\
     , "if_else");
 }
+
+test "preserve external function params" {
+    try expectOptimizedContains(
+        \\puts :: c func(s int) int
+        \\
+    , "decl_func(\"puts\", cc=c, params=(%0), ret=i32, body=<extern>)");
+}
