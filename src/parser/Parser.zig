@@ -605,18 +605,20 @@ fn addDiagnostic(self: *Self, tag: Diagnostic.Tag, token: Token.Index) !Diagnost
 
 fn tokenSpan(self: *const Self, token: Token.Index) ?Diagnostic.Span {
     if (token >= self.tokens.len) return null;
-    const start = self.tokens.items(.start)[token];
-    var end = start;
-    if (token + 1 < self.tokens.len) {
-        end = self.tokens.items(.start)[token + 1];
-    } else {
-        end = @intCast(self.src.contents.len);
-    }
-    return .{ .start = start, .end = end };
+    var start = self.tokens.items(.start)[token];
+    const scanned = Lexer.nextToken(self.src.contents, &start);
+    return .{ .start = scanned.start, .end = scanned.end };
 }
 
-pub fn lower(alloc: mem.Allocator, ast: *const AST, str_pool: *const StringPool, diagnostics: *Diagnostic, diagnostic_alloc: mem.Allocator) !HIR {
-    var hir = HIR.init(.{ .ast = ast, .str_pool = str_pool, .diagnostics = diagnostics, .diagnostic_alloc = diagnostic_alloc });
+pub fn lower(
+    alloc: mem.Allocator,
+    ast: *const AST,
+    src: []const u8,
+    str_pool: *const StringPool,
+    diagnostics: *Diagnostic,
+    diagnostic_alloc: mem.Allocator,
+) !HIR {
+    var hir = HIR.init(.{ .ast = ast, .src = src, .str_pool = str_pool, .diagnostics = diagnostics, .diagnostic_alloc = diagnostic_alloc });
     const root = Payload.fromIndex(0);
     _ = try hir.lower(alloc, root);
     return hir;

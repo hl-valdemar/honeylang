@@ -16,6 +16,7 @@ ref_map: std.ArrayList(Payload),
 analyzed: std.DynamicBitSetUnmanaged,
 namespaces: NamespaceInfos,
 current_ret_type: ?MIR.Inst.Type,
+current_ref: HIR.Inst.Ref,
 
 const Self = @This();
 
@@ -81,6 +82,7 @@ pub fn init(hir: *const HIR, str_pool: *StringPool, diagnostics: *Diagnostic, sh
         .analyzed = .{},
         .namespaces = .{},
         .current_ret_type = null,
+        .current_ref = .none,
     };
 }
 
@@ -162,6 +164,10 @@ fn analyzeDecls(self: *Self, alloc: mem.Allocator, scope: *Scope, refs: []const 
 
 fn analyzeDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
     if (self.analyzed.isSet(@intFromEnum(ref))) return self.ref_map.items[@intFromEnum(ref)];
+
+    const previous_ref = self.current_ref;
+    self.current_ref = ref;
+    defer self.current_ref = previous_ref;
 
     const inst = self.hir.insts.get(@intFromEnum(ref));
     const name: StringPool.ID = switch (inst.tag) {
@@ -338,6 +344,10 @@ fn analyzeParam(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.
 fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
     if (ref == .none) return .none;
     if (self.analyzed.isSet(@intFromEnum(ref))) return self.ref_map.items[@intFromEnum(ref)];
+
+    const previous_ref = self.current_ref;
+    self.current_ref = ref;
+    defer self.current_ref = previous_ref;
 
     const inst = self.hir.insts.get(@intFromEnum(ref));
     const mir_ref = switch (inst.tag) {
@@ -596,7 +606,7 @@ fn resolveType(self: *Self, hir_type_ref: Payload) anyerror!TypeResolution {
         .diagnostic = hir_inst.data.a.to(Diagnostic.Ref),
     };
     if (hir_inst.tag != .ref) {
-        const diagnostic = try self.addDiagnostic(.sema_undefined_type);
+        const diagnostic = try self.addDiagnosticAt(.sema_undefined_type, hir_type_ref);
         return .{ .type = .err, .diagnostic = diagnostic };
     }
 
@@ -604,7 +614,7 @@ fn resolveType(self: *Self, hir_type_ref: Payload) anyerror!TypeResolution {
     if (self.type_map.get(name)) |resolved_type|
         return .{ .type = resolved_type };
 
-    const diagnostic = try self.addDiagnostic(.sema_undefined_type);
+    const diagnostic = try self.addDiagnosticAt(.sema_undefined_type, hir_type_ref);
     return .{ .type = .err, .diagnostic = diagnostic };
 }
 
@@ -653,10 +663,14 @@ fn emitTrapRef(self: *Self, alloc: mem.Allocator, diag_ref: Diagnostic.Ref) anye
 }
 
 fn addDiagnostic(self: *Self, tag: Diagnostic.Tag) !Diagnostic.Ref {
+    return self.addDiagnosticAt(tag, self.current_ref);
+}
+
+fn addDiagnosticAt(self: *Self, tag: Diagnostic.Tag, ref: HIR.Inst.Ref) !Diagnostic.Ref {
     return self.diagnostics.add(self.shared_alloc, .{
         .stage = .sema,
         .severity = .err,
         .tag = tag,
-        .span = null,
+        .span = self.hir.span(ref),
     });
 }

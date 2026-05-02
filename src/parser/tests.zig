@@ -177,7 +177,7 @@ fn lowerToTags(alloc: mem.Allocator, src_str: []const u8) ![]const HIR.Inst.Tag 
 
     const ast = try parser.parse(alloc);
 
-    var hir = HIR.init(.{ .ast = &ast, .str_pool = &str_pool, .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
+    var hir = HIR.init(.{ .ast = &ast, .src = src.contents, .str_pool = &str_pool, .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
     defer hir.deinit(alloc);
 
     const root: HIR.Inst.Ref = @enumFromInt(0);
@@ -324,7 +324,7 @@ test "hir typed payload accessors cover decls funcs branches and ref lists" {
     defer parser.deinit(alloc);
     const ast = try parser.parse(alloc);
 
-    var hir = HIR.init(.{ .ast = &ast, .str_pool = &str_pool, .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
+    var hir = HIR.init(.{ .ast = &ast, .src = src.contents, .str_pool = &str_pool, .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
     defer hir.deinit(alloc);
     const root: HIR.Inst.Ref = @enumFromInt(0);
     _ = try hir.lower(alloc, root);

@@ -43,7 +43,7 @@ fn analyzeResult(alloc: mem.Allocator, src_str: []const u8) !AnalyzeResult {
     defer parser.deinit(alloc);
 
     const ast = try parser.parse(alloc);
-    var hir = try Parser.lower(alloc, &ast, &str_pool, &diagnostics, alloc);
+    var hir = try Parser.lower(alloc, &ast, src.contents, &str_pool, &diagnostics, alloc);
     defer hir.deinit(alloc);
 
     var sema = Sema.init(&hir, &str_pool, &diagnostics, alloc);
@@ -79,6 +79,26 @@ fn expectDiagnostic(src: []const u8, tag: Diagnostic.Tag) !void {
 
     try std.testing.expect(found_diagnostic);
     try std.testing.expect(found_trap);
+}
+
+test "semantic diagnostics keep source spans" {
+    var result = try analyzeResult(std.testing.allocator,
+        \\x :: missing
+        \\
+    );
+    defer result.deinit(std.testing.allocator);
+
+    for (0..result.diagnostics.len()) |idx| {
+        const diag = result.diagnostics.get(idx);
+        if (diag.tag == .sema_undefined_name) {
+            const span = diag.span orelse return error.ExpectedDiagnosticSpan;
+            try std.testing.expectEqual(@as(Source.Offset, 5), span.start);
+            try std.testing.expectEqual(@as(Source.Offset, 12), span.end);
+            return;
+        }
+    }
+
+    return error.ExpectedDiagnosticNotFound;
 }
 
 test "analyze namespace decl" {

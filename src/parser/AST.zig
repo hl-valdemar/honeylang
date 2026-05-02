@@ -240,9 +240,14 @@ pub fn asBranchRef(ref: Payload) BranchRef {
 }
 
 pub fn tokenSlice(self: *const Self, tok: Token.Index, src: []const u8) []const u8 {
+    const span = self.tokenSpan(tok, src);
+    return src[span.start..span.end];
+}
+
+pub fn tokenSpan(self: *const Self, tok: Token.Index, src: []const u8) struct { start: Source.Offset, end: Source.Offset } {
     var start = self.tokens.items(.start)[tok];
     const scanned = Lexer.nextToken(src, &start);
-    return src[scanned.start..scanned.end];
+    return .{ .start = scanned.start, .end = scanned.end };
 }
 
 const Writer = std.Io.Writer;

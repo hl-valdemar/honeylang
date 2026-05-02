@@ -1,0 +1,9 @@
+# diagnostic-errors.hon
+
+missing_type BogusType :: 1
+
+main :: func() int {
+    value :: unknown_name
+    return "strings are not semantically supported yet"
+}
+

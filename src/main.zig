@@ -39,5 +39,5 @@ pub fn main(init: std.process.Init) !void {
         .dump_pipeline = args.dump_pipeline,
     });
 
-    if (diagnostics.hasErrors()) std.process.exit(1);
+    if (diagnostics.hasProblems()) std.process.exit(1);
 }

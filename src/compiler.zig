@@ -173,7 +173,7 @@ const ImportLoader = struct {
             render.printRendered("Rendered AST", ast_render);
         }
 
-        return Parser.lower(hir_alloc, &ast, self.ctx.str_pool, self.ctx.diagnostics, self.ctx.alloc);
+        return Parser.lower(hir_alloc, &ast, src.contents, self.ctx.str_pool, self.ctx.diagnostics, self.ctx.alloc);
     }
 
     fn expandImports(self: *ImportLoader, hir_alloc: mem.Allocator, hir: *HIR, importer_path: ?[]const u8) anyerror!void {

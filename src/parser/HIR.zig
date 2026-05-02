@@ -2,11 +2,13 @@ const std = @import("std");
 const mem = std.mem;
 
 ast: *const AST,
+src: []const u8,
 str_pool: *const StringPool,
 diagnostics: *Diagnostic,
 diagnostic_alloc: mem.Allocator,
 /// indexed by Inst.Ref.
 insts: std.MultiArrayList(Inst),
+spans: std.ArrayList(?Diagnostic.Span),
 decls: std.MultiArrayList(DeclInfo),
 funcs: std.MultiArrayList(FuncInfo),
 branches: std.MultiArrayList(IfElseInfo),
@@ -183,6 +185,7 @@ pub const IfElseInfo = struct {
 
 pub const Context = struct {
     ast: *const AST,
+    src: []const u8,
     str_pool: *const StringPool,
     diagnostic_alloc: mem.Allocator,
     diagnostics: *Diagnostic,
@@ -191,10 +194,12 @@ pub const Context = struct {
 pub fn init(ctx: Context) Self {
     return .{
         .ast = ctx.ast,
+        .src = ctx.src,
         .str_pool = ctx.str_pool,
         .diagnostics = ctx.diagnostics,
         .diagnostic_alloc = ctx.diagnostic_alloc,
         .insts = .{},
+        .spans = .empty,
         .decls = .{},
         .funcs = .{},
         .branches = .{},
@@ -206,6 +211,7 @@ pub fn init(ctx: Context) Self {
 
 pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     self.insts.deinit(alloc);
+    self.spans.deinit(alloc);
     self.decls.deinit(alloc);
     self.funcs.deinit(alloc);
     self.branches.deinit(alloc);
@@ -243,7 +249,7 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
                 .value = value,
             });
 
-            return self.emit(alloc, .decl_const, .{
+            return self.emitNode(alloc, node, .decl_const, .{
                 .a = Payload.from(name),
                 .b = asPayload(decl_ref),
             });
@@ -260,7 +266,7 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
                 .value = value,
             });
 
-            return self.emit(alloc, .decl_var, .{
+            return self.emitNode(alloc, node, .decl_var, .{
                 .a = Payload.from(name),
                 .b = asPayload(decl_ref),
             });
@@ -292,7 +298,7 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
                 .flags = func_decl.flags,
             });
 
-            return self.emit(alloc, .decl_func, .{
+            return self.emitNode(alloc, node, .decl_func, .{
                 .a = Payload.from(name),
                 .b = asPayload(func_ref),
             });
@@ -304,7 +310,7 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
             const block_ref = data.a.to(AST.Node.Ref);
             const block = try self.lower(alloc, block_ref);
 
-            return self.emit(alloc, .decl_namespace, .{
+            return self.emitNode(alloc, node, .decl_namespace, .{
                 .a = Payload.from(name),
                 .b = block,
             });
@@ -322,7 +328,7 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
             else
                 StringPool.ID.none;
 
-            return self.emit(alloc, .import_decl, .{
+            return self.emitNode(alloc, node, .import_decl, .{
                 .a = Payload.from(name),
                 .b = Payload.from(path),
             });
@@ -330,7 +336,7 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
         .if_simple => {
             const condition = try self.lower(alloc, data.a);
             const body = try self.lower(alloc, data.b);
-            return self.emit(alloc, .if_simple, .{ .a = condition, .b = body });
+            return self.emitNode(alloc, node, .if_simple, .{ .a = condition, .b = body });
         },
         .if_else => {
             const condition = try self.lower(alloc, data.a);
@@ -341,13 +347,13 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
                 .body = body,
                 .else_node = else_node,
             });
-            return self.emit(alloc, .if_else, .{ .a = condition, .b = asPayload(branch_ref) });
+            return self.emitNode(alloc, node, .if_else, .{ .a = condition, .b = asPayload(branch_ref) });
         },
         .param => {
             const name_tok = self.ast.nodeMainToken(node);
             const name = self.ast.tokens.items(.str_id)[name_tok];
             const @"type" = try self.lower(alloc, data.a);
-            return self.emit(alloc, .param, .{
+            return self.emitNode(alloc, node, .param, .{
                 .a = Payload.from(name),
                 .b = @"type",
             });
@@ -364,12 +370,12 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
             }
 
             const refs = try self.appendRefList(alloc, stmt_refs.items);
-            return self.emit(alloc, .block, .{ .a = refs.start, .b = refs.end });
+            return self.emitNode(alloc, node, .block, .{ .a = refs.start, .b = refs.end });
         },
         .expr_statement => return self.lower(alloc, data.a),
         .return_val => {
             const expr = if (data.a != .none) try self.lower(alloc, data.a) else .none;
-            return self.emit(alloc, .ret, .{ .a = expr });
+            return self.emitNode(alloc, node, .ret, .{ .a = expr });
         },
         .unary_op => {
             const expr = try self.lower(alloc, data.a);
@@ -379,7 +385,7 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
                 .minus => .negate,
                 else => unreachable,
             };
-            return self.emit(alloc, tag, .{ .a = expr });
+            return self.emitNode(alloc, node, tag, .{ .a = expr });
         },
         .binary_op => {
             const left = try self.lower(alloc, data.a);
@@ -392,12 +398,12 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
                 .slash => .div,
                 else => unreachable,
             };
-            return self.emit(alloc, tag, .{ .a = left, .b = right });
+            return self.emitNode(alloc, node, tag, .{ .a = left, .b = right });
         },
         .identifier => {
             const tok = self.ast.nodeMainToken(node);
             const name = self.ast.tokens.items(.str_id)[tok];
-            return try self.emit(alloc, .ref, .{
+            return try self.emitNode(alloc, node, .ref, .{
                 .a = Payload.from(name),
             });
         },
@@ -406,7 +412,7 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
             const right_node = data.b.to(AST.Node.Ref);
             const right_tok = self.ast.nodeMainToken(right_node);
             const name = self.ast.tokens.items(.str_id)[right_tok];
-            return try self.emit(alloc, .qualified_ref, .{
+            return try self.emitNode(alloc, node, .qualified_ref, .{
                 .a = left,
                 .b = Payload.from(name),
             });
@@ -414,44 +420,72 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
         .int_literal => {
             const tok = self.ast.nodeMainToken(node);
             const name = self.ast.tokens.items(.str_id)[tok];
-            return try self.emit(alloc, .int_literal, .{
+            return try self.emitNode(alloc, node, .int_literal, .{
                 .a = Payload.from(name),
             });
         },
         .float_literal => {
             const tok = self.ast.nodeMainToken(node);
             const name = self.ast.tokens.items(.str_id)[tok];
-            return try self.emit(alloc, .float_literal, .{
+            return try self.emitNode(alloc, node, .float_literal, .{
                 .a = Payload.from(name),
             });
         },
         .string_literal => {
             const tok = self.ast.nodeMainToken(node);
             const name = self.ast.tokens.items(.str_id)[tok];
-            return try self.emit(alloc, .str_literal, .{
+            return try self.emitNode(alloc, node, .str_literal, .{
                 .a = Payload.from(name),
             });
         },
-        .@"error" => return self.emit(alloc, .trap, .{ .a = data.a }),
+        .@"error" => return self.emitNode(alloc, node, .trap, .{ .a = data.a }),
         else => {
-            const diag_ref = try self.addDiagnostic(.lowering_unsupported_node);
-            return self.emit(alloc, .trap, .{ .a = Payload.from(diag_ref) });
+            const diag_ref = try self.addDiagnostic(.lowering_unsupported_node, self.nodeSpan(node));
+            return self.emitNode(alloc, node, .trap, .{ .a = Payload.from(diag_ref) });
         },
     }
 }
 
-fn addDiagnostic(self: *Self, tag: Diagnostic.Tag) !Diagnostic.Ref {
+fn addDiagnostic(self: *Self, tag: Diagnostic.Tag, diagnostic_span: ?Diagnostic.Span) !Diagnostic.Ref {
     return self.diagnostics.add(self.diagnostic_alloc, .{
         .stage = .lowering,
         .severity = .err,
         .tag = tag,
-        .span = null,
+        .span = diagnostic_span,
     });
 }
 
 pub fn emit(self: *Self, alloc: mem.Allocator, tag: Inst.Tag, data: Inst.Data) !Inst.Ref {
     try self.insts.append(alloc, .{ .tag = tag, .data = data });
+    try self.spans.append(alloc, null);
     return Payload.fromIndex(self.insts.len - 1);
+}
+
+pub fn emitNode(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref, tag: Inst.Tag, data: Inst.Data) !Inst.Ref {
+    const ref = try self.emit(alloc, tag, data);
+    self.setSpan(ref, self.nodeSpan(node));
+    return ref;
+}
+
+pub fn setSpan(self: *Self, ref: Inst.Ref, diagnostic_span: ?Diagnostic.Span) void {
+    self.spans.items[@intFromEnum(ref)] = diagnostic_span;
+}
+
+pub fn span(self: *const Self, ref: Inst.Ref) ?Diagnostic.Span {
+    if (ref == .none) return null;
+    return self.spans.items[@intFromEnum(ref)];
+}
+
+fn nodeSpan(self: *const Self, node: AST.Node.Ref) ?Diagnostic.Span {
+    const token = self.ast.nodeMainToken(node);
+    if (token >= self.ast.tokens.len) return null;
+
+    const token_span = self.ast.tokenSpan(token, self.src);
+
+    return .{
+        .start = token_span.start,
+        .end = if (token_span.end > token_span.start) token_span.end else token_span.start + 1,
+    };
 }
 
 pub fn emitDeclInfo(self: *Self, alloc: mem.Allocator, info: DeclInfo) !DeclRef {
