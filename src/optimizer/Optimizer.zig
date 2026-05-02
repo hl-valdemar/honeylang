@@ -15,7 +15,7 @@ rewritten_data: std.ArrayList(MIR.Inst.Data),
 
 const Self = @This();
 
-const BaseRef = @import("../root.zig").BaseRef;
+const Payload = @import("../root.zig").Payload;
 const StringPool = @import("../util/StringPool.zig");
 const Diagnostic = @import("../diagnostic/Store.zig");
 const MIR = @import("../sema/MIR.zig");
@@ -60,7 +60,7 @@ pub fn optimize(self: *Self, alloc: mem.Allocator) !void {
     try self.analyzeRewrites(alloc);
 
     const len = self.mir.insts.len;
-    const const_map = try alloc.alloc(BaseRef, len);
+    const const_map = try alloc.alloc(Payload, len);
     defer alloc.free(const_map);
     self.computeConstMap(const_map);
 
@@ -80,13 +80,13 @@ fn analyzeRewrites(self: *Self, alloc: mem.Allocator) !void {
         const value: Value = switch (inst.tag) {
             .bool_literal => .{ .bool = @intFromEnum(inst.data.a) != 0 },
             .int_literal => blk: {
-                const str_id: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
+                const str_id = inst.data.a.to(StringPool.ID);
                 const str = self.str_pool.get(str_id);
                 const value = std.fmt.parseInt(i32, str, 0) catch break :blk .unknown;
                 break :blk .{ .i32 = value };
             },
             .float_literal => blk: {
-                const str_id: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
+                const str_id = inst.data.a.to(StringPool.ID);
                 const str = self.str_pool.get(str_id);
                 const value = std.fmt.parseFloat(f32, str) catch break :blk .unknown;
                 break :blk .{ .f32 = value };
@@ -173,7 +173,7 @@ fn analyzeRewrites(self: *Self, alloc: mem.Allocator) !void {
     }
 }
 
-fn computeConstMap(self: *Self, const_map: []BaseRef) void {
+fn computeConstMap(self: *Self, const_map: []Payload) void {
     for (const_map, 0..) |*entry, idx| entry.* = @enumFromInt(idx);
 
     for (0..self.mir.insts.len) |idx| {
@@ -185,7 +185,7 @@ fn computeConstMap(self: *Self, const_map: []BaseRef) void {
     }
 }
 
-fn computeAlive(self: *Self, alloc: mem.Allocator, const_map: []const BaseRef, alive: *std.DynamicBitSetUnmanaged) !void {
+fn computeAlive(self: *Self, alloc: mem.Allocator, const_map: []const Payload, alive: *std.DynamicBitSetUnmanaged) !void {
     const len = self.mir.insts.len;
 
     var in_block = try std.DynamicBitSetUnmanaged.initEmpty(alloc, len);
@@ -216,7 +216,7 @@ fn computeAlive(self: *Self, alloc: mem.Allocator, const_map: []const BaseRef, a
     }
 }
 
-fn markOperandsAlive(self: *Self, idx: usize, const_map: []const BaseRef, alive: *std.DynamicBitSetUnmanaged) void {
+fn markOperandsAlive(self: *Self, idx: usize, const_map: []const Payload, alive: *std.DynamicBitSetUnmanaged) void {
     const rewritten_tag = self.rewritten_tags.items[idx];
     const rewritten_data = self.rewritten_data.items[idx];
     const inst = self.mir.insts.get(idx);
@@ -260,10 +260,10 @@ fn markOperandsAlive(self: *Self, idx: usize, const_map: []const BaseRef, alive:
     }
 }
 
-fn materialize(self: *Self, alloc: mem.Allocator, const_map: []const BaseRef, alive: *const std.DynamicBitSetUnmanaged) !void {
+fn materialize(self: *Self, alloc: mem.Allocator, const_map: []const Payload, alive: *const std.DynamicBitSetUnmanaged) !void {
     const len = self.mir.insts.len;
 
-    var remap = try alloc.alloc(BaseRef, len);
+    var remap = try alloc.alloc(Payload, len);
     defer alloc.free(remap);
     @memset(remap, .none);
 
@@ -291,7 +291,7 @@ fn materialize(self: *Self, alloc: mem.Allocator, const_map: []const BaseRef, al
                     .value = remappedAliasedRef(info.value, const_map, remap),
                     .type = info.type,
                 });
-                break :blk .{ .a = inst.data.a, .b = MIR.asBaseRef(decl_ref) };
+                break :blk .{ .a = inst.data.a, .b = MIR.asPayload(decl_ref) };
             },
             .ret => if (rewritten_data.a != .none) .{
                 .a = remappedAliasedRef(rewritten_data.a, const_map, remap),
@@ -308,7 +308,7 @@ fn materialize(self: *Self, alloc: mem.Allocator, const_map: []const BaseRef, al
                 });
                 break :blk .{
                     .a = remappedAliasedRef(inst.data.a, const_map, remap),
-                    .b = MIR.asBaseRef(branch_ref),
+                    .b = MIR.asPayload(branch_ref),
                 };
             },
             .block => blk: {
@@ -334,7 +334,7 @@ fn materialize(self: *Self, alloc: mem.Allocator, const_map: []const BaseRef, al
                 const body = if (info.body != .none)
                     remappedRef(info.body, remap)
                 else
-                    BaseRef.none;
+                    Payload.none;
 
                 const func_ref = try self.mir_optimized.emitFuncInfo(alloc, .{
                     .params_start = params_start,
@@ -344,7 +344,7 @@ fn materialize(self: *Self, alloc: mem.Allocator, const_map: []const BaseRef, al
                     .flags = info.flags,
                 });
 
-                break :blk .{ .a = inst.data.a, .b = MIR.asBaseRef(func_ref) };
+                break :blk .{ .a = inst.data.a, .b = MIR.asPayload(func_ref) };
             },
         };
 
@@ -362,7 +362,7 @@ fn literalInst(self: *Self, alloc: mem.Allocator, value: Value) !InstRewrite {
     return switch (value) {
         .bool => |v| .{
             .tag = .bool_literal,
-            .data = .{ .a = @enumFromInt(@as(u32, if (v) 1 else 0)) },
+            .data = .{ .a = Payload.fromIndex(if (v) 1 else 0) },
         },
         .i32 => |v| blk: {
             const result_str = try std.fmt.allocPrint(alloc, "{d}", .{v});
@@ -370,7 +370,7 @@ fn literalInst(self: *Self, alloc: mem.Allocator, value: Value) !InstRewrite {
             const result_str_id = try self.str_pool.intern(self.shared_alloc, result_str);
             break :blk .{
                 .tag = .int_literal,
-                .data = .{ .a = @enumFromInt(@intFromEnum(result_str_id)) },
+                .data = .{ .a = Payload.from(result_str_id) },
             };
         },
         .f32 => |v| blk: {
@@ -379,7 +379,7 @@ fn literalInst(self: *Self, alloc: mem.Allocator, value: Value) !InstRewrite {
             const result_str_id = try self.str_pool.intern(self.shared_alloc, result_str);
             break :blk .{
                 .tag = .float_literal,
-                .data = .{ .a = @enumFromInt(@intFromEnum(result_str_id)) },
+                .data = .{ .a = Payload.from(result_str_id) },
             };
         },
         else => unreachable,
@@ -393,7 +393,7 @@ fn trapData(self: *Self, tag: Diagnostic.Tag) !MIR.Inst.Data {
         .tag = tag,
         .span = null,
     });
-    return .{ .a = @enumFromInt(@intFromEnum(diag_ref)) };
+    return .{ .a = Payload.from(diag_ref) };
 }
 
 fn isZero(value: Value) bool {
@@ -404,7 +404,7 @@ fn isZero(value: Value) bool {
     };
 }
 
-fn resolveAlias(ref: BaseRef, const_map: []const BaseRef) BaseRef {
+fn resolveAlias(ref: Payload, const_map: []const Payload) Payload {
     if (ref == .none) return .none;
 
     var current = ref;
@@ -419,19 +419,19 @@ fn resolveAlias(ref: BaseRef, const_map: []const BaseRef) BaseRef {
     return current;
 }
 
-fn setRef(set: *std.DynamicBitSetUnmanaged, ref: BaseRef) void {
+fn setRef(set: *std.DynamicBitSetUnmanaged, ref: Payload) void {
     if (ref != .none) set.set(@intFromEnum(ref));
 }
 
-fn setAliasedRef(set: *std.DynamicBitSetUnmanaged, ref: BaseRef, const_map: []const BaseRef) void {
+fn setAliasedRef(set: *std.DynamicBitSetUnmanaged, ref: Payload, const_map: []const Payload) void {
     setRef(set, resolveAlias(ref, const_map));
 }
 
-fn remappedRef(ref: BaseRef, remap: []const BaseRef) BaseRef {
+fn remappedRef(ref: Payload, remap: []const Payload) Payload {
     if (ref == .none) return .none;
     return remap[@intFromEnum(ref)];
 }
 
-fn remappedAliasedRef(ref: BaseRef, const_map: []const BaseRef, remap: []const BaseRef) BaseRef {
+fn remappedAliasedRef(ref: Payload, const_map: []const Payload, remap: []const Payload) Payload {
     return remappedRef(resolveAlias(ref, const_map), remap);
 }

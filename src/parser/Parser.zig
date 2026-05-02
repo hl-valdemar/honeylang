@@ -5,7 +5,7 @@ src: *const Source,
 tokens: Lexer.Tokens.Slice,
 diagnostics: *Diagnostic,
 diagnostic_alloc: mem.Allocator,
-pos: Token.Ref,
+pos: Token.Index,
 nodes: AST.Nodes,
 funcs: AST.Funcs,
 branches: AST.Branches,
@@ -15,7 +15,7 @@ errors: AST.Errors,
 
 const Self = @This();
 
-const BaseRef = @import("../root.zig").BaseRef;
+const Payload = @import("../root.zig").Payload;
 const StringPool = @import("../util/StringPool.zig");
 const Source = @import("../source/Source.zig");
 const Diagnostic = @import("../diagnostic/Store.zig");
@@ -132,7 +132,7 @@ fn parseTopLevelDecl(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
     }
 }
 
-fn parseNamespace(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref) mem.Allocator.Error!AST.Node.Ref {
+fn parseNamespace(self: *Self, alloc: mem.Allocator, name_tok: Token.Index) mem.Allocator.Error!AST.Node.Ref {
     const block = try self.parseDeclBlock(alloc);
     return self.addNode(alloc, .{
         .tag = .namespace_decl,
@@ -141,13 +141,13 @@ fn parseNamespace(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref) mem.Al
     });
 }
 
-fn parseConstOrFunc(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_expr: AST.Node.Ref) !AST.Node.Ref {
+fn parseConstOrFunc(self: *Self, alloc: mem.Allocator, name_tok: Token.Index, type_expr: AST.Node.Ref) !AST.Node.Ref {
     if (self.tokenTag(self.pos + 1) == .func or self.tokenTag(self.pos + 1) == .cc_c)
         return try self.parseFuncDecl(alloc, name_tok);
     return try self.parseConstDecl(alloc, name_tok, type_expr);
 }
 
-fn parseConstDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_expr: AST.Node.Ref) !AST.Node.Ref {
+fn parseConstDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Index, type_expr: AST.Node.Ref) !AST.Node.Ref {
     try self.expect(alloc, .double_colon);
     const value = try self.parseExpr(alloc, 0);
     try self.expect(alloc, .newline);
@@ -159,7 +159,7 @@ fn parseConstDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_e
     });
 }
 
-fn parseVarDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_expr: AST.Node.Ref) !AST.Node.Ref {
+fn parseVarDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Index, type_expr: AST.Node.Ref) !AST.Node.Ref {
     try self.expect(alloc, .equal);
     const value = try self.parseExpr(alloc, 0);
     try self.expect(alloc, .newline);
@@ -171,7 +171,7 @@ fn parseVarDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref, type_exp
     });
 }
 
-fn parseFuncDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref) !AST.Node.Ref {
+fn parseFuncDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Index) !AST.Node.Ref {
     try self.expect(alloc, .double_colon);
 
     // optional calling convention
@@ -217,7 +217,7 @@ fn parseFuncDecl(self: *Self, alloc: mem.Allocator, name_tok: Token.Ref) !AST.No
     return self.addNode(alloc, .{
         .tag = .func_decl,
         .main_tok = name_tok,
-        .data = .{ .b = AST.asBaseRef(func_ref) },
+        .data = .{ .b = AST.asPayload(func_ref) },
     });
 }
 
@@ -357,7 +357,7 @@ fn parseIfStatement(self: *Self, alloc: mem.Allocator) !AST.Node.Ref {
         return self.addNode(alloc, .{
             .tag = .if_else,
             .main_tok = tok,
-            .data = .{ .a = condition, .b = AST.asBaseRef(branch_ref) },
+            .data = .{ .a = condition, .b = AST.asPayload(branch_ref) },
         });
     }
 
@@ -491,38 +491,37 @@ fn advance(self: *Self) void {
     if (self.tokenTag(self.pos) != .eof) self.pos += 1;
 }
 
-fn advanceN(self: *Self, offset: Token.Ref) void {
+fn advanceN(self: *Self, offset: Token.Index) void {
     self.pos += offset;
 }
 
 /// get the tag for a token, treating out-of-bounds recovery lookahead as eof.
-fn tokenTag(self: *const Self, pos: Token.Ref) Token.Tag {
+fn tokenTag(self: *const Self, pos: Token.Index) Token.Tag {
     if (pos >= self.tokens.len) return .eof;
     return self.tokens.items(.tag)[pos];
 }
 
 fn addNode(self: *Self, alloc: mem.Allocator, node: AST.Node) !AST.Node.Ref {
-    const idx: u32 = @intCast(self.nodes.len);
     try self.nodes.append(alloc, node);
-    return @enumFromInt(idx);
+    return Payload.fromIndex(self.nodes.len - 1);
 }
 
 fn emitFuncInfo(self: *Self, alloc: mem.Allocator, info: AST.FuncDecl) !AST.FuncRef {
-    const ref: AST.FuncRef = @enumFromInt(@as(u32, @intCast(self.funcs.len)));
+    const ref: AST.FuncRef = Payload.fromIndex(self.funcs.len).to(AST.FuncRef);
     try self.funcs.append(alloc, info);
     return ref;
 }
 
 fn emitBranchInfo(self: *Self, alloc: mem.Allocator, info: AST.ElseIfInfo) !AST.BranchRef {
-    const ref: AST.BranchRef = @enumFromInt(@as(u32, @intCast(self.branches.len)));
+    const ref: AST.BranchRef = Payload.fromIndex(self.branches.len).to(AST.BranchRef);
     try self.branches.append(alloc, info);
     return ref;
 }
 
-fn appendRefList(self: *Self, alloc: mem.Allocator, refs: []const BaseRef) !struct { start: BaseRef, end: BaseRef } {
-    const start: BaseRef = @enumFromInt(@as(u32, @intCast(self.ref_lists.items.len)));
+fn appendRefList(self: *Self, alloc: mem.Allocator, refs: []const Payload) !struct { start: Payload, end: Payload } {
+    const start = Payload.fromIndex(self.ref_lists.items.len);
     try self.ref_lists.appendSlice(alloc, refs);
-    const end: BaseRef = @enumFromInt(@as(u32, @intCast(self.ref_lists.items.len)));
+    const end = Payload.fromIndex(self.ref_lists.items.len);
     return .{ .start = start, .end = end };
 }
 
@@ -539,11 +538,11 @@ fn addError(self: *Self, alloc: mem.Allocator, tag: AST.Error.Tag) !AST.Node.Ref
     return self.addNode(alloc, .{
         .tag = .@"error",
         .main_tok = err_tok,
-        .data = .{ .a = @enumFromInt(@intFromEnum(diag_ref)) },
+        .data = .{ .a = Payload.from(diag_ref) },
     });
 }
 
-fn addDiagnostic(self: *Self, tag: Diagnostic.Tag, token: Token.Ref) !Diagnostic.Ref {
+fn addDiagnostic(self: *Self, tag: Diagnostic.Tag, token: Token.Index) !Diagnostic.Ref {
     return self.diagnostics.add(self.diagnostic_alloc, .{
         .stage = .parser,
         .severity = .err,
@@ -552,7 +551,7 @@ fn addDiagnostic(self: *Self, tag: Diagnostic.Tag, token: Token.Ref) !Diagnostic
     });
 }
 
-fn tokenSpan(self: *const Self, token: Token.Ref) ?Diagnostic.Span {
+fn tokenSpan(self: *const Self, token: Token.Index) ?Diagnostic.Span {
     if (token >= self.tokens.len) return null;
     const start = self.tokens.items(.start)[token];
     var end = start;
@@ -566,7 +565,7 @@ fn tokenSpan(self: *const Self, token: Token.Ref) ?Diagnostic.Span {
 
 pub fn lower(alloc: mem.Allocator, ast: *const AST, str_pool: *const StringPool, diagnostics: *Diagnostic, diagnostic_alloc: mem.Allocator) !HIR {
     var hir = HIR.init(.{ .ast = ast, .str_pool = str_pool, .diagnostics = diagnostics, .diagnostic_alloc = diagnostic_alloc });
-    const root: HIR.Inst.Ref = @enumFromInt(0);
+    const root = Payload.fromIndex(0);
     _ = try hir.lower(alloc, root);
     return hir;
 }

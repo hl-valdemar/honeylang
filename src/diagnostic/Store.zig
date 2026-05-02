@@ -53,8 +53,8 @@ pub const Tag = enum {
 };
 
 pub const Span = struct {
-    start: Source.Ref,
-    end: Source.Ref,
+    start: Source.Offset,
+    end: Source.Offset,
 };
 
 pub const Diagnostic = struct {

@@ -1,8 +1,8 @@
 const std = @import("std");
 
 tag: Tag,
-start: Token.Ref,
-end: Token.Ref,
+start: Token.Index,
+end: Token.Index,
 
 const ErrorInfo = @import("../root.zig").ErrorInfo;
 

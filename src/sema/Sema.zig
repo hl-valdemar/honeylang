@@ -11,7 +11,7 @@ type_map: std.AutoHashMapUnmanaged(StringPool.ID, MIR.Inst.Type),
 /// resolved type per mir inst (parallel to mir.insts). sema-only.
 inst_types: std.ArrayList(MIR.Inst.Type),
 /// maps hir inst refs to mir inst refs.
-ref_map: std.ArrayList(BaseRef),
+ref_map: std.ArrayList(Payload),
 /// tracks hir instructions already analyzed, including instructions that map to .none.
 analyzed: std.DynamicBitSetUnmanaged,
 current_ret_type: ?MIR.Inst.Type,
@@ -19,7 +19,7 @@ current_ret_type: ?MIR.Inst.Type,
 const Self = @This();
 
 const StringPool = @import("../util/StringPool.zig");
-const BaseRef = @import("../root.zig").BaseRef;
+const Payload = @import("../root.zig").Payload;
 const Diagnostic = @import("../diagnostic/Store.zig");
 const HIR = @import("../parser/HIR.zig");
 const MIR = @import("MIR.zig");
@@ -109,24 +109,24 @@ fn seedBuiltins(self: *Self, alloc: mem.Allocator) !void {
     try self.type_map.put(alloc, int_str_id, .i32);
     try self.type_map.put(alloc, float_str_id, .f32);
 
-    const true_ref = try self.emitTyped(alloc, .bool_literal, .{ .a = @enumFromInt(1) }, .bool);
-    const false_ref = try self.emitTyped(alloc, .bool_literal, .{ .a = @enumFromInt(0) }, .bool);
+    const true_ref = try self.emitTyped(alloc, .bool_literal, .{ .a = Payload.fromIndex(1) }, .bool);
+    const false_ref = try self.emitTyped(alloc, .bool_literal, .{ .a = Payload.fromIndex(0) }, .bool);
 
     try self.scope.bindings.put(alloc, true_str_id, .{ .value = true_ref });
     try self.scope.bindings.put(alloc, false_str_id, .{ .value = false_ref });
 }
 
-fn predeclareDecls(self: *Self, alloc: mem.Allocator, scope: *Scope, refs: []const BaseRef) anyerror!void {
+fn predeclareDecls(self: *Self, alloc: mem.Allocator, scope: *Scope, refs: []const Payload) anyerror!void {
     for (refs) |ref| {
         const inst = self.hir.insts.get(@intFromEnum(ref));
         switch (inst.tag) {
             .decl_const, .decl_var, .decl_func => {
-                const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
+                const name = inst.data.a.to(StringPool.ID);
                 if (!try self.bind(scope, alloc, name, .{ .pending_decl = ref }))
                     _ = try self.emitTrap(alloc, .sema_duplicate_declaration);
             },
             .decl_namespace => {
-                const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
+                const name = inst.data.a.to(StringPool.ID);
                 if (!try self.bind(scope, alloc, name, .namespace))
                     _ = try self.emitTrap(alloc, .sema_duplicate_declaration);
             },
@@ -135,7 +135,7 @@ fn predeclareDecls(self: *Self, alloc: mem.Allocator, scope: *Scope, refs: []con
     }
 }
 
-fn analyzeDecls(self: *Self, alloc: mem.Allocator, scope: *Scope, refs: []const BaseRef) anyerror!void {
+fn analyzeDecls(self: *Self, alloc: mem.Allocator, scope: *Scope, refs: []const Payload) anyerror!void {
     for (refs) |ref| _ = try self.analyzeDecl(alloc, scope, ref);
 }
 
@@ -144,7 +144,7 @@ fn analyzeDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
 
     const inst = self.hir.insts.get(@intFromEnum(ref));
     const name: StringPool.ID = switch (inst.tag) {
-        .decl_const, .decl_var, .decl_func, .decl_namespace => @enumFromInt(@intFromEnum(inst.data.a)),
+        .decl_const, .decl_var, .decl_func, .decl_namespace => inst.data.a.to(StringPool.ID),
         else => return self.analyzeInst(alloc, scope, ref),
     };
 
@@ -232,7 +232,7 @@ fn analyzeValueDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.I
     };
     return self.emitTyped(alloc, mir_tag, .{
         .a = inst.data.a,
-        .b = MIR.asBaseRef(decl_ref),
+        .b = MIR.asPayload(decl_ref),
     }, decl_type);
 }
 
@@ -271,7 +271,7 @@ fn analyzeFuncDecl(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.I
 
     return self.emitTyped(alloc, .decl_func, .{
         .a = inst.data.a,
-        .b = MIR.asBaseRef(func_ref),
+        .b = MIR.asPayload(func_ref),
     }, .void);
 }
 
@@ -281,11 +281,11 @@ fn analyzeParam(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.
     const inst = self.hir.insts.get(@intFromEnum(ref));
     std.debug.assert(inst.tag == .param);
 
-    const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
+    const name = inst.data.a.to(StringPool.ID);
     const param_type = (try self.resolveType(inst.data.b)).type;
     const param_ref = try self.emitTyped(alloc, .param, .{
         .a = inst.data.a,
-        .b = @enumFromInt(@intFromEnum(param_type)),
+        .b = Payload.from(param_type),
     }, param_type);
 
     if (!try self.bind(scope, alloc, name, .{ .value = param_ref }))
@@ -308,7 +308,7 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
                 else => unreachable,
             };
             break :blk try self.emitTyped(alloc, mir_tag, .{
-                .a = @enumFromInt(@intFromEnum(inst.data.a)),
+                .a = inst.data.a,
             }, mir_type);
         },
         .trap => try self.emitTyped(alloc, .trap, .{ .a = inst.data.a }, .err),
@@ -335,7 +335,7 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
             }, left_type);
         },
         .ref => blk: {
-            const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
+            const name = inst.data.a.to(StringPool.ID);
             break :blk try self.resolveValue(alloc, scope, name);
         },
         .decl_const, .decl_var, .decl_func => try self.analyzeLocalOrPredeclaredDecl(alloc, scope, ref),
@@ -348,7 +348,7 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
             defer block_scope.deinit(alloc);
 
             const hir_stmts = self.hir.refSlice(inst.data.a, inst.data.b);
-            var stmt_refs: std.ArrayList(BaseRef) = .empty;
+            var stmt_refs: std.ArrayList(Payload) = .empty;
             defer stmt_refs.deinit(alloc);
 
             for (hir_stmts) |hir_ref| {
@@ -401,7 +401,7 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
             });
             break :blk try self.emitTyped(alloc, .if_else, .{
                 .a = condition,
-                .b = MIR.asBaseRef(branch_ref),
+                .b = MIR.asPayload(branch_ref),
             }, .void);
         },
         .not, .negate => blk: {
@@ -432,7 +432,7 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
 
 fn analyzeLocalOrPredeclaredDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
     const inst = self.hir.insts.get(@intFromEnum(ref));
-    const name: StringPool.ID = @enumFromInt(@intFromEnum(inst.data.a));
+    const name = inst.data.a.to(StringPool.ID);
 
     if (scope.localBinding(name)) |binding| {
         switch (binding.*) {
@@ -497,20 +497,20 @@ fn resolveBinding(_: *Self, scope: *Scope, name: StringPool.ID) ?ResolvedBinding
     return null;
 }
 
-fn resolveType(self: *Self, hir_type_ref: BaseRef) anyerror!TypeResolution {
+fn resolveType(self: *Self, hir_type_ref: Payload) anyerror!TypeResolution {
     if (hir_type_ref == .none) return .{ .type = .void };
 
     const hir_inst = self.hir.insts.get(@intFromEnum(hir_type_ref));
     if (hir_inst.tag == .trap) return .{
         .type = .err,
-        .diagnostic = @enumFromInt(@intFromEnum(hir_inst.data.a)),
+        .diagnostic = hir_inst.data.a.to(Diagnostic.Ref),
     };
     if (hir_inst.tag != .ref) {
         const diagnostic = try self.addDiagnostic(.sema_undefined_type);
         return .{ .type = .err, .diagnostic = diagnostic };
     }
 
-    const name: StringPool.ID = @enumFromInt(@intFromEnum(hir_inst.data.a));
+    const name = hir_inst.data.a.to(StringPool.ID);
     if (self.type_map.get(name)) |resolved_type|
         return .{ .type = resolved_type };
 
@@ -559,7 +559,7 @@ fn emitTrap(self: *Self, alloc: mem.Allocator, tag: Diagnostic.Tag) anyerror!MIR
 }
 
 fn emitTrapRef(self: *Self, alloc: mem.Allocator, diag_ref: Diagnostic.Ref) anyerror!MIR.Inst.Ref {
-    return self.emitTyped(alloc, .trap, .{ .a = @enumFromInt(@intFromEnum(diag_ref)) }, .err);
+    return self.emitTyped(alloc, .trap, .{ .a = Payload.from(diag_ref) }, .err);
 }
 
 fn addDiagnostic(self: *Self, tag: Diagnostic.Tag) !Diagnostic.Ref {

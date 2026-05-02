@@ -4,13 +4,13 @@ const mem = std.mem;
 nodes: Nodes.Slice,
 funcs: Funcs.Slice,
 branches: Branches.Slice,
-ref_lists: []const BaseRef,
+ref_lists: []const Payload,
 errors: Errors.Slice,
 tokens: Lexer.Tokens.Slice,
 
 const Self = @This();
 
-pub const BaseRef = @import("../root.zig").BaseRef;
+pub const Payload = @import("../root.zig").Payload;
 
 const StringPool = @import("../root.zig").StringPool;
 const Source = @import("../source/Source.zig");
@@ -20,19 +20,19 @@ const Lexer = @import("../lexer/Lexer.zig");
 pub const Nodes = std.MultiArrayList(Node);
 pub const Funcs = std.MultiArrayList(FuncDecl);
 pub const Branches = std.MultiArrayList(ElseIfInfo);
-pub const Refs = std.ArrayList(BaseRef);
+pub const Refs = std.ArrayList(Payload);
 pub const Errors = std.MultiArrayList(Error);
 
 pub const Node = struct {
     tag: Tag,
-    main_tok: Token.Ref, // anchor in source
+    main_tok: Token.Index, // anchor in source
     data: Data,
 
-    pub const Ref = BaseRef;
+    pub const Ref = Payload;
 
     pub const Data = struct {
-        a: BaseRef = @enumFromInt(0),
-        b: BaseRef = @enumFromInt(0),
+        a: Payload = @enumFromInt(0),
+        b: Payload = @enumFromInt(0),
     };
 
     pub const Tag = enum {
@@ -153,8 +153,8 @@ pub const BranchRef = enum(u32) {
 };
 
 pub const FuncDecl = struct {
-    params_start: BaseRef,
-    params_end: BaseRef,
+    params_start: Payload,
+    params_end: Payload,
     ret_type: Node.Ref, // .none for void
     body: Node.Ref,
     flags: u32,
@@ -178,7 +178,7 @@ pub const ElseIfInfo = struct {
 
 pub const Error = struct {
     tag: Tag,
-    token: Token.Ref,
+    token: Token.Index,
     expected: Token.Tag = .eof,
 
     pub const Tag = enum {
@@ -196,7 +196,7 @@ pub fn nodeTag(self: *const Self, node: Node.Ref) Node.Tag {
     return self.nodes.items(.tag)[@intFromEnum(node)];
 }
 
-pub fn nodeMainToken(self: *const Self, node: Node.Ref) Token.Ref {
+pub fn nodeMainToken(self: *const Self, node: Node.Ref) Token.Index {
     return self.nodes.items(.main_tok)[@intFromEnum(node)];
 }
 
@@ -208,26 +208,26 @@ pub fn branchInfo(self: *const Self, ref: BranchRef) ElseIfInfo {
     return self.branches.get(@intFromEnum(ref));
 }
 
-pub fn refSlice(self: *const Self, start: BaseRef, end: BaseRef) []const BaseRef {
+pub fn refSlice(self: *const Self, start: Payload, end: Payload) []const Payload {
     return self.ref_lists[@intFromEnum(start)..@intFromEnum(end)];
 }
 
-pub fn asBaseRef(ref: anytype) BaseRef {
+pub fn asPayload(ref: anytype) Payload {
     const Ref = @TypeOf(ref);
     if (Ref != FuncRef and Ref != BranchRef)
         @compileError("expected a typed ast payload ref");
-    return @enumFromInt(@intFromEnum(ref));
+    return Payload.from(ref);
 }
 
-pub fn asFuncRef(ref: BaseRef) FuncRef {
-    return @enumFromInt(@intFromEnum(ref));
+pub fn asFuncRef(ref: Payload) FuncRef {
+    return ref.to(FuncRef);
 }
 
-pub fn asBranchRef(ref: BaseRef) BranchRef {
-    return @enumFromInt(@intFromEnum(ref));
+pub fn asBranchRef(ref: Payload) BranchRef {
+    return ref.to(BranchRef);
 }
 
-pub fn tokenSlice(self: *const Self, tok: Token.Ref, src: []const u8) []const u8 {
+pub fn tokenSlice(self: *const Self, tok: Token.Index, src: []const u8) []const u8 {
     var start = self.tokens.items(.start)[tok];
     const scanned = Lexer.nextToken(src, &start);
     return src[scanned.start..scanned.end];
@@ -384,7 +384,7 @@ fn renderNode(self: *const Self, w: *Writer, node: Node.Ref, src: []const u8, st
 }
 
 /// render a list of declarations and insert blank lines before func_decl nodes.
-fn renderDeclList(self: *const Self, w: *Writer, decls: []const BaseRef, src: []const u8, str_pool: *const StringPool, indent: u32) Writer.Error!void {
+fn renderDeclList(self: *const Self, w: *Writer, decls: []const Payload, src: []const u8, str_pool: *const StringPool, indent: u32) Writer.Error!void {
     for (decls, 0..) |decl, i| {
         if (i > 0 and (self.nodeTag(decl) == .func_decl or self.nodeTag(decl) == .namespace_decl))
             try w.writeByte('\n');

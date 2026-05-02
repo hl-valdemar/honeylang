@@ -10,10 +10,10 @@ pub const keywords = std.StaticStringMap(Tag).initComptime(.{
 });
 
 tag: Tag,
-start: Ref,
+start: Index,
 str_id: StringPool.ID,
 
-pub const Ref = u32;
+pub const Index = u32;
 
 pub const Tag = enum {
     // complex tokens

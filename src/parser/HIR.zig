@@ -11,12 +11,12 @@ decls: std.MultiArrayList(DeclInfo),
 funcs: std.MultiArrayList(FuncInfo),
 branches: std.MultiArrayList(IfElseInfo),
 ref_lists: std.ArrayList(Inst.Ref),
-root_start: BaseRef,
-root_end: BaseRef,
+root_start: Payload,
+root_end: Payload,
 
 const Self = @This();
 
-const BaseRef = @import("../root.zig").BaseRef;
+const Payload = @import("../root.zig").Payload;
 const StringPool = @import("../util/StringPool.zig");
 const Diagnostic = @import("../diagnostic/Store.zig");
 const AST = @import("../parser/AST.zig");
@@ -25,11 +25,11 @@ pub const Inst = struct {
     tag: Tag,
     data: Data,
 
-    pub const Ref = BaseRef;
+    pub const Ref = Payload;
 
     pub const Data = struct {
-        a: BaseRef = @enumFromInt(0),
-        b: BaseRef = @enumFromInt(0),
+        a: Payload = @enumFromInt(0),
+        b: Payload = @enumFromInt(0),
     };
 
     pub const Tag = enum {
@@ -159,8 +159,8 @@ pub const DeclInfo = struct {
 };
 
 pub const FuncInfo = struct {
-    params_start: BaseRef,
-    params_end: BaseRef,
+    params_start: Payload,
+    params_end: Payload,
     ret_type: Inst.Ref, // .none when void
     body: Inst.Ref, // ref to block instruction
     flags: u32,
@@ -208,7 +208,7 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
     const data = self.ast.nodeData(node);
     switch (self.ast.nodeTag(node)) {
         .root => {
-            var decl_refs: std.ArrayList(BaseRef) = .empty;
+            var decl_refs: std.ArrayList(Payload) = .empty;
             defer decl_refs.deinit(alloc);
 
             for (self.ast.refSlice(data.a, data.b)) |decl_ref| {
@@ -234,8 +234,8 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
             });
 
             return self.emit(alloc, .decl_const, .{
-                .a = @enumFromInt(@intFromEnum(name)),
-                .b = asBaseRef(decl_ref),
+                .a = Payload.from(name),
+                .b = asPayload(decl_ref),
             });
         },
         .var_decl => {
@@ -251,8 +251,8 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
             });
 
             return self.emit(alloc, .decl_var, .{
-                .a = @enumFromInt(@intFromEnum(name)),
-                .b = asBaseRef(decl_ref),
+                .a = Payload.from(name),
+                .b = asPayload(decl_ref),
             });
         },
         .func_decl => {
@@ -262,7 +262,7 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
             const func_decl = self.ast.funcInfo(AST.asFuncRef(data.b));
 
             const params = self.ast.refSlice(func_decl.params_start, func_decl.params_end);
-            var param_refs: std.ArrayList(BaseRef) = .empty;
+            var param_refs: std.ArrayList(Payload) = .empty;
             defer param_refs.deinit(alloc);
             for (params) |param| {
                 const ref = try self.lower(alloc, param);
@@ -283,19 +283,19 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
             });
 
             return self.emit(alloc, .decl_func, .{
-                .a = @enumFromInt(@intFromEnum(name)),
-                .b = asBaseRef(func_ref),
+                .a = Payload.from(name),
+                .b = asPayload(func_ref),
             });
         },
         .namespace_decl => {
             const name_tok = self.ast.nodeMainToken(node);
             const name = self.ast.tokens.items(.str_id)[name_tok];
 
-            const block_ref: AST.Node.Ref = @enumFromInt(@intFromEnum(data.a));
+            const block_ref = data.a.to(AST.Node.Ref);
             const block = try self.lower(alloc, block_ref);
 
             return self.emit(alloc, .decl_namespace, .{
-                .a = @enumFromInt(@intFromEnum(name)),
+                .a = Payload.from(name),
                 .b = block,
             });
         },
@@ -313,24 +313,24 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
                 .body = body,
                 .else_node = else_node,
             });
-            return self.emit(alloc, .if_else, .{ .a = condition, .b = asBaseRef(branch_ref) });
+            return self.emit(alloc, .if_else, .{ .a = condition, .b = asPayload(branch_ref) });
         },
         .param => {
             const name_tok = self.ast.nodeMainToken(node);
             const name = self.ast.tokens.items(.str_id)[name_tok];
             const @"type" = try self.lower(alloc, data.a);
             return self.emit(alloc, .param, .{
-                .a = @enumFromInt(@intFromEnum(name)),
+                .a = Payload.from(name),
                 .b = @"type",
             });
         },
         .block => {
             const statements = self.ast.refSlice(data.a, data.b);
 
-            var stmt_refs: std.ArrayList(BaseRef) = .empty;
+            var stmt_refs: std.ArrayList(Payload) = .empty;
             defer stmt_refs.deinit(alloc);
             for (statements) |stmt| {
-                const node_ref: AST.Node.Ref = @enumFromInt(@intFromEnum(stmt));
+                const node_ref = stmt.to(AST.Node.Ref);
                 const ref = try self.lower(alloc, node_ref);
                 try stmt_refs.append(alloc, ref);
             }
@@ -370,27 +370,27 @@ pub fn lower(self: *Self, alloc: mem.Allocator, node: AST.Node.Ref) !Inst.Ref {
             const tok = self.ast.nodeMainToken(node);
             const name = self.ast.tokens.items(.str_id)[tok];
             return try self.emit(alloc, .ref, .{
-                .a = @enumFromInt(@intFromEnum(name)),
+                .a = Payload.from(name),
             });
         },
         .int_literal => {
             const tok = self.ast.nodeMainToken(node);
             const name = self.ast.tokens.items(.str_id)[tok];
             return try self.emit(alloc, .int_literal, .{
-                .a = @enumFromInt(@intFromEnum(name)),
+                .a = Payload.from(name),
             });
         },
         .float_literal => {
             const tok = self.ast.nodeMainToken(node);
             const name = self.ast.tokens.items(.str_id)[tok];
             return try self.emit(alloc, .float_literal, .{
-                .a = @enumFromInt(@intFromEnum(name)),
+                .a = Payload.from(name),
             });
         },
         .@"error" => return self.emit(alloc, .trap, .{ .a = data.a }),
         else => {
             const diag_ref = try self.addDiagnostic(.lowering_unsupported_node);
-            return self.emit(alloc, .trap, .{ .a = @enumFromInt(@intFromEnum(diag_ref)) });
+            return self.emit(alloc, .trap, .{ .a = Payload.from(diag_ref) });
         },
     }
 }
@@ -406,11 +406,11 @@ fn addDiagnostic(self: *Self, tag: Diagnostic.Tag) !Diagnostic.Ref {
 
 pub fn emit(self: *Self, alloc: mem.Allocator, tag: Inst.Tag, data: Inst.Data) !Inst.Ref {
     try self.insts.append(alloc, .{ .tag = tag, .data = data });
-    return @enumFromInt(self.insts.len - 1);
+    return Payload.fromIndex(self.insts.len - 1);
 }
 
 pub fn emitDeclInfo(self: *Self, alloc: mem.Allocator, info: DeclInfo) !DeclRef {
-    const ref: DeclRef = @enumFromInt(@as(u32, @intCast(self.decls.len)));
+    const ref: DeclRef = Payload.fromIndex(self.decls.len).to(DeclRef);
     try self.decls.append(alloc, info);
     return ref;
 }
@@ -420,7 +420,7 @@ pub fn declInfo(self: *const Self, ref: DeclRef) DeclInfo {
 }
 
 pub fn emitFuncInfo(self: *Self, alloc: mem.Allocator, info: FuncInfo) !FuncRef {
-    const ref: FuncRef = @enumFromInt(@as(u32, @intCast(self.funcs.len)));
+    const ref: FuncRef = Payload.fromIndex(self.funcs.len).to(FuncRef);
     try self.funcs.append(alloc, info);
     return ref;
 }
@@ -430,7 +430,7 @@ pub fn funcInfo(self: *const Self, ref: FuncRef) FuncInfo {
 }
 
 pub fn emitBranchInfo(self: *Self, alloc: mem.Allocator, info: IfElseInfo) !BranchRef {
-    const ref: BranchRef = @enumFromInt(@as(u32, @intCast(self.branches.len)));
+    const ref: BranchRef = Payload.fromIndex(self.branches.len).to(BranchRef);
     try self.branches.append(alloc, info);
     return ref;
 }
@@ -439,37 +439,37 @@ pub fn branchInfo(self: *const Self, ref: BranchRef) IfElseInfo {
     return self.branches.get(@intFromEnum(ref));
 }
 
-pub fn appendRefList(self: *Self, alloc: mem.Allocator, refs: []const BaseRef) !struct { start: BaseRef, end: BaseRef } {
-    const start: BaseRef = @enumFromInt(@as(u32, @intCast(self.ref_lists.items.len)));
+pub fn appendRefList(self: *Self, alloc: mem.Allocator, refs: []const Payload) !struct { start: Payload, end: Payload } {
+    const start = Payload.fromIndex(self.ref_lists.items.len);
     try self.ref_lists.appendSlice(alloc, refs);
-    const end: BaseRef = @enumFromInt(@as(u32, @intCast(self.ref_lists.items.len)));
+    const end = Payload.fromIndex(self.ref_lists.items.len);
     return .{ .start = start, .end = end };
 }
 
-pub fn refSlice(self: *const Self, start: BaseRef, end: BaseRef) []const BaseRef {
+pub fn refSlice(self: *const Self, start: Payload, end: Payload) []const Payload {
     return self.ref_lists.items[@intFromEnum(start)..@intFromEnum(end)];
 }
 
-pub fn asBaseRef(ref: anytype) BaseRef {
+pub fn asPayload(ref: anytype) Payload {
     const Ref = @TypeOf(ref);
     if (Ref != DeclRef and Ref != FuncRef and Ref != BranchRef)
         @compileError("expected a typed hir payload ref");
-    return @enumFromInt(@intFromEnum(ref));
+    return Payload.from(ref);
 }
 
-pub fn asDeclRef(ref: BaseRef) DeclRef {
-    return @enumFromInt(@intFromEnum(ref));
+pub fn asDeclRef(ref: Payload) DeclRef {
+    return ref.to(DeclRef);
 }
 
-pub fn asFuncRef(ref: BaseRef) FuncRef {
-    return @enumFromInt(@intFromEnum(ref));
+pub fn asFuncRef(ref: Payload) FuncRef {
+    return ref.to(FuncRef);
 }
 
-pub fn asBranchRef(ref: BaseRef) BranchRef {
-    return @enumFromInt(@intFromEnum(ref));
+pub fn asBranchRef(ref: Payload) BranchRef {
+    return ref.to(BranchRef);
 }
 
-pub fn rootDecls(self: *const Self) []const BaseRef {
+pub fn rootDecls(self: *const Self) []const Payload {
     return self.refSlice(self.root_start, self.root_end);
 }
 
@@ -481,15 +481,15 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
         const inst = self.insts.get(idx);
         switch (inst.tag) {
             .int_literal => {
-                const val = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const val = self.str_pool.get(inst.data.a.to(StringPool.ID));
                 try w.print("%{d: <3} int({s})\n", .{ idx, val });
             },
             .float_literal => {
-                const val = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const val = self.str_pool.get(inst.data.a.to(StringPool.ID));
                 try w.print("%{d: <3} float({s})\n", .{ idx, val });
             },
             .str_literal => {
-                const val = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const val = self.str_pool.get(inst.data.a.to(StringPool.ID));
                 try w.print("%{d: <3} str(\"{s}\")\n", .{ idx, val });
             },
             .trap => try w.print("%{d: <3} trap(D{d})\n", .{ idx, @intFromEnum(inst.data.a) }),
@@ -505,12 +505,12 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
                 );
             },
             .ref => {
-                const name = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const name = self.str_pool.get(inst.data.a.to(StringPool.ID));
                 try w.print("%{d: <3} ref(\"{s}\")\n", .{ idx, name });
             },
             .decl_const, .decl_var => {
                 const tag_name = @tagName(inst.tag);
-                const name = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const name = self.str_pool.get(inst.data.a.to(StringPool.ID));
                 const info = self.declInfo(asDeclRef(inst.data.b));
 
                 try w.print("%{d: <3} {s}(\"{s}\"", .{ idx, tag_name, name });
@@ -524,11 +524,11 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
             },
             .decl_namespace => {
                 const tag_name = @tagName(inst.tag);
-                const name = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const name = self.str_pool.get(inst.data.a.to(StringPool.ID));
                 try w.print("%{d: <3} {s}(\"{s}\", body=%{d})\n", .{ idx, tag_name, name, @intFromEnum(inst.data.b) });
             },
             .param => {
-                const name = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const name = self.str_pool.get(inst.data.a.to(StringPool.ID));
                 const hir_type = @intFromEnum(inst.data.b);
                 try w.print(
                     "%{d: <3} param(\"{s}\", type=%{d})\n",
@@ -552,7 +552,7 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
             },
             .decl_func => {
                 const tag_name = @tagName(inst.tag);
-                const name = self.str_pool.get(@enumFromInt(@intFromEnum(inst.data.a)));
+                const name = self.str_pool.get(inst.data.a.to(StringPool.ID));
                 const info = self.funcInfo(asFuncRef(inst.data.b));
                 const cc: AST.FuncDecl.CallingConvention =
                     @enumFromInt((info.flags & AST.FuncDecl.Flag.cc_mask) >> AST.FuncDecl.Flag.cc_shift);

@@ -14,9 +14,21 @@ pub const Optimizer = @import("optimizer/Optimizer.zig");
 const std = @import("std");
 
 // agnostic types
-pub const BaseRef = enum(u32) {
+pub const Payload = enum(u32) {
     none = std.math.maxInt(u32),
     _,
+
+    pub fn from(ref: anytype) Payload {
+        return @enumFromInt(@intFromEnum(ref));
+    }
+
+    pub fn fromIndex(index: usize) Payload {
+        return @enumFromInt(@as(u32, @intCast(index)));
+    }
+
+    pub fn to(ref: Payload, comptime Ref: type) Ref {
+        return @enumFromInt(@intFromEnum(ref));
+    }
 };
 
 pub const Severity = enum {

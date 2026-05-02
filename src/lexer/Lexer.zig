@@ -6,7 +6,7 @@ src: *const Source,
 str_pool: *StringPool,
 diagnostics: *Diagnostic,
 shared_alloc: mem.Allocator,
-pos: Token.Ref,
+pos: Token.Index,
 tokens: Tokens,
 
 const Self = @This();
@@ -85,20 +85,20 @@ fn diagnosticTag(tag: Error.Tag) Diagnostic.Tag {
 
 const ScannedToken = struct {
     tag: Token.Tag,
-    start: Token.Ref,
-    end: Token.Ref,
+    start: Token.Index,
+    end: Token.Index,
     err: ?Error.Tag = null,
 
-    pub fn from(tag: Token.Tag, start: Token.Ref, end: Token.Ref) ScannedToken {
+    pub fn from(tag: Token.Tag, start: Token.Index, end: Token.Index) ScannedToken {
         return .{ .tag = tag, .start = start, .end = end };
     }
 
-    pub fn fromErr(tag: Token.Tag, start: Token.Ref, end: Token.Ref, err: Error.Tag) ScannedToken {
+    pub fn fromErr(tag: Token.Tag, start: Token.Index, end: Token.Index, err: Error.Tag) ScannedToken {
         return .{ .tag = tag, .start = start, .end = end, .err = err };
     }
 };
 
-pub fn nextToken(source: []const u8, pos: *Token.Ref) ScannedToken {
+pub fn nextToken(source: []const u8, pos: *Token.Index) ScannedToken {
     // skip whitespace (except newlines) and comments
     while (pos.* < source.len) {
         const c = source[pos.*];
@@ -168,7 +168,7 @@ pub fn nextToken(source: []const u8, pos: *Token.Ref) ScannedToken {
     };
 }
 
-fn scanNumber(source: []const u8, pos: *Token.Ref) ScannedToken {
+fn scanNumber(source: []const u8, pos: *Token.Index) ScannedToken {
     if (source[pos.*] == '0' and pos.* + 1 < source.len) {
         if (source[pos.* + 1] == 'x') return scanHex(source, pos);
         if (source[pos.* + 1] == 'b') return scanBin(source, pos);
@@ -176,7 +176,7 @@ fn scanNumber(source: []const u8, pos: *Token.Ref) ScannedToken {
     return scanDec(source, pos);
 }
 
-fn scanHex(source: []const u8, pos: *Token.Ref) ScannedToken {
+fn scanHex(source: []const u8, pos: *Token.Index) ScannedToken {
     const start = pos.*;
     pos.* += 2; // skip '0x'
 
@@ -192,7 +192,7 @@ fn scanHex(source: []const u8, pos: *Token.Ref) ScannedToken {
     return .{ .tag = .int, .start = start, .end = pos.*, .err = err };
 }
 
-fn scanBin(source: []const u8, pos: *Token.Ref) ScannedToken {
+fn scanBin(source: []const u8, pos: *Token.Index) ScannedToken {
     const start = pos.*;
     pos.* += 2; // skip '0b'
 
@@ -208,7 +208,7 @@ fn scanBin(source: []const u8, pos: *Token.Ref) ScannedToken {
     return .{ .tag = .int, .start = start, .end = pos.*, .err = err };
 }
 
-fn scanDec(source: []const u8, pos: *Token.Ref) ScannedToken {
+fn scanDec(source: []const u8, pos: *Token.Index) ScannedToken {
     const start = pos.*;
     var has_decimal = false;
     var err: ?Error.Tag = null;
