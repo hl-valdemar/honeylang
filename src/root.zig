@@ -1,5 +1,5 @@
 // packages
-pub const compiler = @import("compiler.zig");
+pub const compiler = @import("compiler/compiler.zig");
 
 // types
 pub const Args = @import("util/Args.zig");
@@ -45,7 +45,7 @@ pub const ErrorInfo = struct {
 };
 
 test {
-    _ = @import("compiler.zig");
+    _ = @import("compiler/compiler.zig");
     _ = @import("util/Args.zig");
     _ = @import("util/StringPool.zig");
     _ = @import("lexer/tests.zig");
