@@ -82,11 +82,11 @@ const Renderer = struct {
 
 const HirStage = struct {
     arena: heap.ArenaAllocator,
-    hir: HIR,
+    loader: ImportLoader,
+    module_hirs: []const *const HIR,
 
     fn deinit(self: *HirStage) void {
-        const alloc = self.arena.allocator();
-        self.hir.deinit(alloc);
+        self.loader.deinit();
         self.arena.deinit();
     }
 };
@@ -96,8 +96,6 @@ const SemaStage = struct {
     sema: Sema,
 
     fn deinit(self: *SemaStage) void {
-        const alloc = self.arena.allocator();
-        self.sema.deinit(alloc);
         self.arena.deinit();
     }
 };
@@ -119,7 +117,7 @@ fn buildHir(ctx: Context, render: *Renderer) !HirStage {
     const hir_alloc = hir_arena.allocator();
 
     var loader = ImportLoader.init(ctx);
-    defer loader.deinit();
+    errdefer loader.deinit();
 
     var ast_render: ?[]const u8 = null;
     const ast_dump: ?ImportLoader.AstDump = if (render.enabled) .{
@@ -127,20 +125,20 @@ fn buildHir(ctx: Context, render: *Renderer) !HirStage {
         .rendered = &ast_render,
     } else null;
 
-    var hir = try loader.parseAndLower(hir_alloc, ctx.src, ast_dump);
-    try loader.expandImports(hir_alloc, &hir, ctx.src.path);
+    _ = try loader.loadRoot(ast_dump);
+    const module_hirs = try loader.moduleHirs(hir_alloc);
 
     if (ast_render) |rendered|
         render.printRendered("Rendered AST", rendered);
 
-    return .{ .arena = hir_arena, .hir = hir };
+    return .{ .arena = hir_arena, .loader = loader, .module_hirs = module_hirs };
 }
 
 fn buildSema(ctx: Context, render: *Renderer, hir_stage: *HirStage) !SemaStage {
     defer hir_stage.deinit();
 
     if (render.enabled) {
-        const hir_render = try hir_stage.hir.render(render.alloc());
+        const hir_render = try hir_stage.loader.moduleHir(hir_stage.loader.root_module).render(render.alloc());
         render.printRendered("Rendered HIR", hir_render);
     }
 
@@ -148,7 +146,13 @@ fn buildSema(ctx: Context, render: *Renderer, hir_stage: *HirStage) !SemaStage {
     errdefer sema_arena.deinit();
     const sema_alloc = sema_arena.allocator();
 
-    var sema = Sema.init(&hir_stage.hir, ctx.str_pool, ctx.diagnostics, ctx.alloc);
+    var sema = Sema.initModules(
+        hir_stage.module_hirs,
+        hir_stage.loader.root_module,
+        ctx.str_pool,
+        ctx.diagnostics,
+        ctx.alloc,
+    );
     errdefer sema.deinit(sema_alloc);
     try sema.analyze(sema_alloc);
 
@@ -232,6 +236,81 @@ test "compiler resolves imported constant" {
     var diagnostics = try runFileForTest(alloc, main_path);
     defer diagnostics.deinit(alloc);
     try std.testing.expect(!diagnostics.hasErrors());
+}
+
+test "compiler import loader caches shared modules by canonical path" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "shared.hon", .data = "value :: 1\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "left.hon", .data = "import \"shared.hon\"\nleft_value :: shared.value\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "right.hon", .data = "import \"./shared.hon\"\nright_value :: shared.value\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.hon", .data = "import \"left.hon\"\nimport \"right.hon\"\nx :: left.left_value + right.right_value\n" });
+
+    const main_path = try std.fmt.allocPrint(alloc, ".zig-cache/tmp/{s}/main.hon", .{tmp.sub_path});
+    defer alloc.free(main_path);
+
+    var src = try SourceManager.init.fromFile(alloc, std.testing.io, main_path);
+    defer src.deinit(alloc);
+
+    var str_pool = StringPool.init();
+    defer str_pool.deinit(alloc);
+
+    var diagnostics = Diagnostic.init();
+    defer diagnostics.deinit(alloc);
+
+    var loader = ImportLoader.init(.{
+        .alloc = alloc,
+        .io = std.testing.io,
+        .src = &src,
+        .str_pool = &str_pool,
+        .diagnostics = &diagnostics,
+    });
+    defer loader.deinit();
+
+    _ = try loader.loadRoot(null);
+
+    try std.testing.expect(!diagnostics.hasErrors());
+    try std.testing.expectEqual(@as(usize, 4), loader.moduleCount());
+}
+
+test "compiler root HIR renders module namespace instead of copied import body" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "math.hon", .data = "value :: 1\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.hon", .data = "import \"math.hon\"\nx :: math.value\n" });
+
+    const main_path = try std.fmt.allocPrint(alloc, ".zig-cache/tmp/{s}/main.hon", .{tmp.sub_path});
+    defer alloc.free(main_path);
+
+    var src = try SourceManager.init.fromFile(alloc, std.testing.io, main_path);
+    defer src.deinit(alloc);
+
+    var str_pool = StringPool.init();
+    defer str_pool.deinit(alloc);
+
+    var diagnostics = Diagnostic.init();
+    defer diagnostics.deinit(alloc);
+
+    var loader = ImportLoader.init(.{
+        .alloc = alloc,
+        .io = std.testing.io,
+        .src = &src,
+        .str_pool = &str_pool,
+        .diagnostics = &diagnostics,
+    });
+    defer loader.deinit();
+
+    _ = try loader.loadRoot(null);
+
+    const rendered = try loader.moduleHir(loader.root_module).render(alloc);
+    defer alloc.free(rendered);
+
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "decl_module_namespace(\"math\", module=M1)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "decl_const(\"value\"") == null);
 }
 
 test "compiler reports missing import" {

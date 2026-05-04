@@ -2,7 +2,9 @@ const std = @import("std");
 const mem = std.mem;
 
 str_pool: *StringPool,
-hir: *const HIR,
+root_hir: *const HIR,
+module_hirs: ?[]const *const HIR,
+root_module: HIR.ModuleRef,
 diagnostics: *Diagnostic,
 shared_alloc: mem.Allocator,
 mir: MIR,
@@ -10,13 +12,12 @@ scope: Scope,
 type_map: std.AutoHashMapUnmanaged(StringPool.ID, MIR.Inst.Type),
 /// resolved type per mir inst (parallel to mir.insts). sema-only.
 inst_types: std.ArrayList(MIR.Inst.Type),
-/// maps hir inst refs to mir inst refs.
-ref_map: std.ArrayList(Payload),
-/// tracks hir instructions already analyzed, including instructions that map to .none.
-analyzed: std.DynamicBitSetUnmanaged,
+module_states: ModuleStates,
 namespaces: NamespaceInfos,
 current_ret_type: ?MIR.Inst.Type,
-current_ref: HIR.Inst.Ref,
+current_ref: HirRef,
+true_ref: MIR.Inst.Ref,
+false_ref: MIR.Inst.Ref,
 
 const Self = @This();
 
@@ -26,9 +27,20 @@ const Diagnostic = @import("../diagnostic/Store.zig");
 const HIR = @import("../parser/HIR.zig");
 const MIR = @import("MIR.zig");
 
+const HirRef = struct {
+    module: HIR.ModuleRef,
+    inst: HIR.Inst.Ref,
+
+    const none: HirRef = .{ .module = .none, .inst = .none };
+
+    fn eql(a: HirRef, b: HirRef) bool {
+        return a.module == b.module and a.inst == b.inst;
+    }
+};
+
 const Binding = union(enum) {
-    pending_decl: HIR.Inst.Ref,
-    analyzing_decl: HIR.Inst.Ref,
+    pending_decl: HirRef,
+    analyzing_decl: HirRef,
     value: MIR.Inst.Ref,
     namespace: NamespaceRef,
 };
@@ -40,10 +52,33 @@ const NamespaceRef = enum(u32) {
 
 const NamespaceInfos = std.MultiArrayList(NamespaceInfo);
 
-const NamespaceInfo = struct {
-    ref: HIR.Inst.Ref,
-    scope: *Scope,
+const NamespaceKind = enum {
+    lexical,
+    module,
 };
+
+const NamespaceInfo = struct {
+    ref: HirRef,
+    scope: *Scope,
+    kind: NamespaceKind,
+    owns_scope: bool,
+};
+
+const ModuleStatus = enum {
+    unvisited,
+    predeclared,
+    analyzing,
+    analyzed,
+};
+
+const ModuleState = struct {
+    ref_map: std.ArrayList(Payload) = .empty,
+    analyzed: std.DynamicBitSetUnmanaged = .{},
+    root_scope: ?*Scope = null,
+    status: ModuleStatus = .unvisited,
+};
+
+const ModuleStates = std.MultiArrayList(ModuleState);
 
 const Scope = struct {
     parent: ?*Scope = null,
@@ -68,21 +103,51 @@ const TypeResolution = struct {
     diagnostic: Diagnostic.Ref = .none,
 };
 
-pub fn init(hir: *const HIR, str_pool: *StringPool, diagnostics: *Diagnostic, shared_alloc: mem.Allocator) Self {
+pub fn init(root_hir: *const HIR, str_pool: *StringPool, diagnostics: *Diagnostic, shared_alloc: mem.Allocator) Self {
     return .{
         .str_pool = str_pool,
-        .hir = hir,
+        .root_hir = root_hir,
+        .module_hirs = null,
+        .root_module = Payload.fromIndex(0).to(HIR.ModuleRef),
         .diagnostics = diagnostics,
         .shared_alloc = shared_alloc,
         .mir = .{},
         .scope = .{},
         .type_map = .{},
         .inst_types = .empty,
-        .ref_map = .empty,
-        .analyzed = .{},
+        .module_states = .empty,
         .namespaces = .{},
         .current_ret_type = null,
         .current_ref = .none,
+        .true_ref = .none,
+        .false_ref = .none,
+    };
+}
+
+pub fn initModules(
+    module_hirs: []const *const HIR,
+    root_module: HIR.ModuleRef,
+    str_pool: *StringPool,
+    diagnostics: *Diagnostic,
+    shared_alloc: mem.Allocator,
+) Self {
+    return .{
+        .str_pool = str_pool,
+        .root_hir = module_hirs[@intFromEnum(root_module)],
+        .module_hirs = module_hirs,
+        .root_module = root_module,
+        .diagnostics = diagnostics,
+        .shared_alloc = shared_alloc,
+        .mir = .{},
+        .scope = .{},
+        .type_map = .{},
+        .inst_types = .empty,
+        .module_states = .empty,
+        .namespaces = .{},
+        .current_ret_type = null,
+        .current_ref = .none,
+        .true_ref = .none,
+        .false_ref = .none,
     };
 }
 
@@ -91,25 +156,82 @@ pub fn deinit(self: *Self, alloc: mem.Allocator) void {
     self.scope.deinit(alloc);
     self.type_map.deinit(alloc);
     self.inst_types.deinit(alloc);
-    self.ref_map.deinit(alloc);
-    self.analyzed.deinit(alloc);
-    for (self.namespaces.items(.scope)) |scope| {
-        scope.deinit(alloc);
-        alloc.destroy(scope);
+    const root_scopes = self.module_states.items(.root_scope);
+    const ref_maps = self.module_states.items(.ref_map);
+    const analyzed = self.module_states.items(.analyzed);
+    for (0..self.module_states.len) |idx| {
+        if (root_scopes[idx]) |root_scope| {
+            if (@intFromPtr(root_scope) != @intFromPtr(&self.scope)) {
+                root_scope.deinit(alloc);
+                alloc.destroy(root_scope);
+            }
+        }
+        ref_maps[idx].deinit(alloc);
+        analyzed[idx].deinit(alloc);
+    }
+    self.module_states.deinit(alloc);
+    for (self.namespaces.items(.scope), self.namespaces.items(.owns_scope)) |scope, owns_scope| {
+        if (owns_scope) {
+            scope.deinit(alloc);
+            alloc.destroy(scope);
+        }
     }
     self.namespaces.deinit(alloc);
 }
 
 pub fn analyze(self: *Self, alloc: mem.Allocator) !void {
     try self.seedBuiltins(alloc);
+    try self.initModuleStates(alloc);
+    _ = try self.ensureModuleRootScope(alloc, self.root_module);
 
-    try self.ref_map.resize(alloc, self.hir.insts.len);
-    @memset(self.ref_map.items, .none);
-    self.analyzed = try std.DynamicBitSetUnmanaged.initEmpty(alloc, self.hir.insts.len);
+    const root_decls = self.hir(self.root_module).rootDecls();
+    try self.predeclareDecls(alloc, self.root_module, &self.scope, root_decls);
+    self.moduleStatus(self.root_module).* = .predeclared;
+    try self.analyzeDecls(alloc, self.root_module, &self.scope, root_decls);
+    self.moduleStatus(self.root_module).* = .analyzed;
+}
 
-    const root_decls = self.hir.rootDecls();
-    try self.predeclareDecls(alloc, &self.scope, root_decls);
-    try self.analyzeDecls(alloc, &self.scope, root_decls);
+fn initModuleStates(self: *Self, alloc: mem.Allocator) !void {
+    for (0..self.moduleCount()) |idx| {
+        const module_ref: HIR.ModuleRef = Payload.fromIndex(idx).to(HIR.ModuleRef);
+        var state: ModuleState = .{};
+        const module_hir = self.hir(module_ref);
+        try state.ref_map.resize(alloc, module_hir.insts.len);
+        @memset(state.ref_map.items, .none);
+        state.analyzed = try std.DynamicBitSetUnmanaged.initEmpty(alloc, module_hir.insts.len);
+        try self.module_states.append(alloc, state);
+    }
+}
+
+fn moduleCount(self: *const Self) usize {
+    if (self.module_hirs) |module_hirs| return module_hirs.len;
+    return 1;
+}
+
+fn hir(self: *const Self, module: HIR.ModuleRef) *const HIR {
+    if (self.module_hirs) |module_hirs| return module_hirs[@intFromEnum(module)];
+    std.debug.assert(module == self.root_module);
+    return self.root_hir;
+}
+
+fn moduleRefMap(self: *Self, module: HIR.ModuleRef) *std.ArrayList(Payload) {
+    return &self.module_states.items(.ref_map)[@intFromEnum(module)];
+}
+
+fn moduleAnalyzed(self: *Self, module: HIR.ModuleRef) *std.DynamicBitSetUnmanaged {
+    return &self.module_states.items(.analyzed)[@intFromEnum(module)];
+}
+
+fn moduleRootScope(self: *Self, module: HIR.ModuleRef) *?*Scope {
+    return &self.module_states.items(.root_scope)[@intFromEnum(module)];
+}
+
+fn moduleStatus(self: *Self, module: HIR.ModuleRef) *ModuleStatus {
+    return &self.module_states.items(.status)[@intFromEnum(module)];
+}
+
+fn refMap(self: *Self, module: HIR.ModuleRef) []Payload {
+    return self.moduleRefMap(module).items;
 }
 
 fn seedBuiltins(self: *Self, alloc: mem.Allocator) !void {
@@ -120,9 +242,6 @@ fn seedBuiltins(self: *Self, alloc: mem.Allocator) !void {
     const bool_str_id = try self.str_pool.intern(self.shared_alloc, "bool");
     const void_str_id = try self.str_pool.intern(self.shared_alloc, "void");
 
-    const true_str_id = try self.str_pool.intern(self.shared_alloc, "true");
-    const false_str_id = try self.str_pool.intern(self.shared_alloc, "false");
-
     try self.type_map.put(alloc, i32_str_id, .i32);
     try self.type_map.put(alloc, f32_str_id, .f32);
     try self.type_map.put(alloc, bool_str_id, .bool);
@@ -130,25 +249,80 @@ fn seedBuiltins(self: *Self, alloc: mem.Allocator) !void {
     try self.type_map.put(alloc, int_str_id, .i32);
     try self.type_map.put(alloc, float_str_id, .f32);
 
-    const true_ref = try self.emitTyped(alloc, .bool_literal, .{ .a = Payload.fromIndex(1) }, .bool);
-    const false_ref = try self.emitTyped(alloc, .bool_literal, .{ .a = Payload.fromIndex(0) }, .bool);
-
-    try self.scope.bindings.put(alloc, true_str_id, .{ .value = true_ref });
-    try self.scope.bindings.put(alloc, false_str_id, .{ .value = false_ref });
+    self.true_ref = try self.emitTyped(alloc, .bool_literal, .{ .a = Payload.fromIndex(1) }, .bool);
+    self.false_ref = try self.emitTyped(alloc, .bool_literal, .{ .a = Payload.fromIndex(0) }, .bool);
+    try self.seedBuiltinValues(alloc, &self.scope);
 }
 
-fn predeclareDecls(self: *Self, alloc: mem.Allocator, scope: *Scope, refs: []const Payload) anyerror!void {
+fn seedBuiltinValues(self: *Self, alloc: mem.Allocator, scope: *Scope) !void {
+    const true_str_id = try self.str_pool.intern(self.shared_alloc, "true");
+    const false_str_id = try self.str_pool.intern(self.shared_alloc, "false");
+    try scope.bindings.put(alloc, true_str_id, .{ .value = self.true_ref });
+    try scope.bindings.put(alloc, false_str_id, .{ .value = self.false_ref });
+}
+
+fn ensureModuleRootScope(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef) !*Scope {
+    const root_scope_slot = self.moduleRootScope(module);
+    if (root_scope_slot.*) |root_scope| return root_scope;
+
+    if (module == self.root_module) {
+        root_scope_slot.* = &self.scope;
+        return &self.scope;
+    }
+
+    const root_scope = try alloc.create(Scope);
+    root_scope.* = .{};
+    try self.seedBuiltinValues(alloc, root_scope);
+    root_scope_slot.* = root_scope;
+    return root_scope;
+}
+
+fn ensureModulePredeclared(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef) anyerror!*Scope {
+    const root_scope = try self.ensureModuleRootScope(alloc, module);
+    const status = self.moduleStatus(module);
+    switch (status.*) {
+        .unvisited => {
+            status.* = .predeclared;
+            try self.predeclareDecls(alloc, module, root_scope, self.hir(module).rootDecls());
+        },
+        .predeclared, .analyzing, .analyzed => {},
+    }
+    return root_scope;
+}
+
+fn analyzeModuleRoot(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef) anyerror!*Scope {
+    const root_scope = try self.ensureModulePredeclared(alloc, module);
+    const status = self.moduleStatus(module);
+    switch (status.*) {
+        .analyzed, .analyzing => return root_scope,
+        .unvisited => unreachable,
+        .predeclared => {
+            status.* = .analyzing;
+            try self.analyzeDecls(alloc, module, root_scope, self.hir(module).rootDecls());
+            status.* = .analyzed;
+        },
+    }
+    return root_scope;
+}
+
+fn predeclareDecls(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef, scope: *Scope, refs: []const Payload) anyerror!void {
     for (refs) |ref| {
-        const inst = self.hir.insts.get(@intFromEnum(ref));
+        const inst = self.hir(module).insts.get(@intFromEnum(ref));
         switch (inst.tag) {
             .decl_const, .decl_var, .decl_func => {
                 const name = inst.data.a.to(StringPool.ID);
-                if (!try self.bind(scope, alloc, name, .{ .pending_decl = ref }))
+                if (!try self.bind(scope, alloc, name, .{ .pending_decl = .{ .module = module, .inst = ref } }))
                     _ = try self.emitTrap(alloc, .sema_duplicate_declaration);
             },
             .decl_namespace => {
                 const name = inst.data.a.to(StringPool.ID);
-                const namespace_ref = try self.createNamespace(alloc, scope, ref);
+                const namespace_ref = try self.createNamespace(alloc, module, scope, ref);
+                if (!try self.bind(scope, alloc, name, .{ .namespace = namespace_ref }))
+                    _ = try self.emitTrap(alloc, .sema_duplicate_declaration);
+            },
+            .decl_module_namespace => {
+                const name = inst.data.a.to(StringPool.ID);
+                const namespace_ref = try self.createModuleNamespace(alloc, inst.data.b.to(HIR.ModuleRef));
                 if (!try self.bind(scope, alloc, name, .{ .namespace = namespace_ref }))
                     _ = try self.emitTrap(alloc, .sema_duplicate_declaration);
             },
@@ -158,82 +332,106 @@ fn predeclareDecls(self: *Self, alloc: mem.Allocator, scope: *Scope, refs: []con
     }
 }
 
-fn analyzeDecls(self: *Self, alloc: mem.Allocator, scope: *Scope, refs: []const Payload) anyerror!void {
-    for (refs) |ref| _ = try self.analyzeDecl(alloc, scope, ref);
+fn analyzeDecls(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef, scope: *Scope, refs: []const Payload) anyerror!void {
+    for (refs) |ref| _ = try self.analyzeDecl(alloc, module, scope, ref);
 }
 
-fn analyzeDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
-    if (self.analyzed.isSet(@intFromEnum(ref))) return self.ref_map.items[@intFromEnum(ref)];
+fn analyzeDecl(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
+    const analyzed = self.moduleAnalyzed(module);
+    if (analyzed.isSet(@intFromEnum(ref))) return self.refMap(module)[@intFromEnum(ref)];
 
     const previous_ref = self.current_ref;
-    self.current_ref = ref;
+    self.current_ref = .{ .module = module, .inst = ref };
     defer self.current_ref = previous_ref;
 
-    const inst = self.hir.insts.get(@intFromEnum(ref));
+    const inst = self.hir(module).insts.get(@intFromEnum(ref));
     const name: StringPool.ID = switch (inst.tag) {
-        .decl_const, .decl_var, .decl_func, .decl_namespace => inst.data.a.to(StringPool.ID),
-        else => return self.analyzeInst(alloc, scope, ref),
+        .decl_const, .decl_var, .decl_func, .decl_namespace, .decl_module_namespace => inst.data.a.to(StringPool.ID),
+        else => return self.analyzeInst(alloc, module, scope, ref),
     };
 
     if (inst.tag == .decl_namespace) {
-        try self.analyzeNamespace(alloc, scope, ref);
+        try self.analyzeNamespace(alloc, module, scope, ref);
+        return .none;
+    }
+    if (inst.tag == .decl_module_namespace) {
+        self.refMap(module)[@intFromEnum(ref)] = .none;
+        analyzed.set(@intFromEnum(ref));
         return .none;
     }
 
     const binding = scope.localBinding(name) orelse return self.emitTrap(alloc, .sema_duplicate_declaration);
     switch (binding.*) {
         .value => |mir_ref| {
-            self.ref_map.items[@intFromEnum(ref)] = mir_ref;
-            self.analyzed.set(@intFromEnum(ref));
+            self.refMap(module)[@intFromEnum(ref)] = mir_ref;
+            analyzed.set(@intFromEnum(ref));
             return mir_ref;
         },
         .pending_decl => |pending_ref| {
-            if (pending_ref != ref) return self.emitTrap(alloc, .sema_duplicate_declaration);
+            if (!pending_ref.eql(.{ .module = module, .inst = ref })) return self.emitTrap(alloc, .sema_duplicate_declaration);
         },
         .analyzing_decl => return self.emitTrap(alloc, .sema_declaration_cycle),
         .namespace => return self.emitTrap(alloc, .sema_namespace_not_value),
     }
 
-    binding.* = .{ .analyzing_decl = ref };
+    binding.* = .{ .analyzing_decl = .{ .module = module, .inst = ref } };
     const mir_ref = switch (inst.tag) {
-        .decl_const, .decl_var => try self.analyzeValueDecl(alloc, scope, ref),
-        .decl_func => try self.analyzeFuncDecl(alloc, scope, ref),
+        .decl_const, .decl_var => try self.analyzeValueDecl(alloc, module, scope, ref),
+        .decl_func => try self.analyzeFuncDecl(alloc, module, scope, ref),
         else => unreachable,
     };
     binding.* = .{ .value = mir_ref };
-    self.ref_map.items[@intFromEnum(ref)] = mir_ref;
-    self.analyzed.set(@intFromEnum(ref));
+    self.refMap(module)[@intFromEnum(ref)] = mir_ref;
+    analyzed.set(@intFromEnum(ref));
     return mir_ref;
 }
 
-fn analyzeNamespace(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.Inst.Ref) anyerror!void {
-    if (self.analyzed.isSet(@intFromEnum(ref))) return;
+fn analyzeNamespace(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef, parent: *Scope, ref: HIR.Inst.Ref) anyerror!void {
+    const analyzed = self.moduleAnalyzed(module);
+    if (analyzed.isSet(@intFromEnum(ref))) return;
 
-    const inst = self.hir.insts.get(@intFromEnum(ref));
+    const inst = self.hir(module).insts.get(@intFromEnum(ref));
     std.debug.assert(inst.tag == .decl_namespace);
 
     const name = inst.data.a.to(StringPool.ID);
     const namespace_scope = if (parent.localBinding(name)) |binding| switch (binding.*) {
         .namespace => |namespace| self.namespaceScope(namespace),
         else => return,
-    } else self.namespaceScope(try self.createNamespace(alloc, parent, ref));
+    } else self.namespaceScope(try self.createNamespace(alloc, module, parent, ref));
 
-    const block = self.hir.insts.get(@intFromEnum(inst.data.b));
+    const block = self.hir(module).insts.get(@intFromEnum(inst.data.b));
     std.debug.assert(block.tag == .block);
-    const members = self.hir.refSlice(block.data.a, block.data.b);
+    const members = self.hir(module).refSlice(block.data.a, block.data.b);
 
-    self.ref_map.items[@intFromEnum(ref)] = .none;
-    self.analyzed.set(@intFromEnum(ref));
+    self.refMap(module)[@intFromEnum(ref)] = .none;
+    analyzed.set(@intFromEnum(ref));
 
-    try self.predeclareDecls(alloc, namespace_scope, members);
-    try self.analyzeDecls(alloc, namespace_scope, members);
+    try self.predeclareDecls(alloc, module, namespace_scope, members);
+    try self.analyzeDecls(alloc, module, namespace_scope, members);
 }
 
-fn createNamespace(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.Inst.Ref) !NamespaceRef {
+fn createNamespace(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef, parent: *Scope, ref: HIR.Inst.Ref) !NamespaceRef {
     const scope = try alloc.create(Scope);
     scope.* = .{ .parent = parent };
     const namespace_ref: NamespaceRef = Payload.fromIndex(self.namespaces.len).to(NamespaceRef);
-    try self.namespaces.append(alloc, .{ .ref = ref, .scope = scope });
+    try self.namespaces.append(alloc, .{
+        .ref = .{ .module = module, .inst = ref },
+        .scope = scope,
+        .kind = .lexical,
+        .owns_scope = true,
+    });
+    return namespace_ref;
+}
+
+fn createModuleNamespace(self: *Self, alloc: mem.Allocator, target_module: HIR.ModuleRef) !NamespaceRef {
+    const scope = try self.ensureModuleRootScope(alloc, target_module);
+    const namespace_ref: NamespaceRef = Payload.fromIndex(self.namespaces.len).to(NamespaceRef);
+    try self.namespaces.append(alloc, .{
+        .ref = .{ .module = target_module, .inst = .none },
+        .scope = scope,
+        .kind = .module,
+        .owns_scope = false,
+    });
     return namespace_ref;
 }
 
@@ -245,16 +443,16 @@ fn namespaceInfo(self: *Self, namespace: NamespaceRef) NamespaceInfo {
     return self.namespaces.get(@intFromEnum(namespace));
 }
 
-fn analyzeValueDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
-    const inst = self.hir.insts.get(@intFromEnum(ref));
-    const hir_decl = self.hir.declInfo(HIR.asDeclRef(inst.data.b));
+fn analyzeValueDecl(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
+    const inst = self.hir(module).insts.get(@intFromEnum(ref));
+    const hir_decl = self.hir(module).declInfo(HIR.asDeclRef(inst.data.b));
 
-    var value = try self.analyzeInst(alloc, scope, hir_decl.value);
+    var value = try self.analyzeInst(alloc, module, scope, hir_decl.value);
     if (value == .none) value = try self.emitTrap(alloc, .sema_not_a_value);
 
     const value_type = self.inst_types.items[@intFromEnum(value)];
     const type_resolution: TypeResolution = if (hir_decl.type != .none)
-        try self.resolveType(hir_decl.type)
+        try self.resolveType(module, hir_decl.type)
     else
         .{ .type = value_type };
     var decl_type = type_resolution.type;
@@ -282,28 +480,28 @@ fn analyzeValueDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.I
     }, decl_type);
 }
 
-fn analyzeFuncDecl(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
-    const inst = self.hir.insts.get(@intFromEnum(ref));
-    const func_info = self.hir.funcInfo(HIR.asFuncRef(inst.data.b));
+fn analyzeFuncDecl(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef, parent: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
+    const inst = self.hir(module).insts.get(@intFromEnum(ref));
+    const func_info = self.hir(module).funcInfo(HIR.asFuncRef(inst.data.b));
 
     var func_scope: Scope = .{ .parent = parent };
     defer func_scope.deinit(alloc);
 
-    const hir_params = self.hir.refSlice(func_info.params_start, func_info.params_end);
+    const hir_params = self.hir(module).refSlice(func_info.params_start, func_info.params_end);
     const params_start = self.mir.refListStart();
     for (hir_params) |hir_ref| {
-        const mir_ref = try self.analyzeParam(alloc, &func_scope, hir_ref);
+        const mir_ref = try self.analyzeParam(alloc, module, &func_scope, hir_ref);
         try self.mir.appendRef(alloc, mir_ref);
     }
     const params_end = self.mir.refListEnd();
 
-    const ret_type = (try self.resolveType(func_info.ret_type)).type;
+    const ret_type = (try self.resolveType(module, func_info.ret_type)).type;
     const outer_ret_type = self.current_ret_type;
     self.current_ret_type = ret_type;
     defer self.current_ret_type = outer_ret_type;
 
     const body: MIR.Inst.Ref = if (func_info.body != .none)
-        try self.analyzeInst(alloc, &func_scope, func_info.body)
+        try self.analyzeInst(alloc, module, &func_scope, func_info.body)
     else
         .none;
 
@@ -321,14 +519,15 @@ fn analyzeFuncDecl(self: *Self, alloc: mem.Allocator, parent: *Scope, ref: HIR.I
     }, .void);
 }
 
-fn analyzeParam(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
-    if (self.analyzed.isSet(@intFromEnum(ref))) return self.ref_map.items[@intFromEnum(ref)];
+fn analyzeParam(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
+    const analyzed = self.moduleAnalyzed(module);
+    if (analyzed.isSet(@intFromEnum(ref))) return self.refMap(module)[@intFromEnum(ref)];
 
-    const inst = self.hir.insts.get(@intFromEnum(ref));
+    const inst = self.hir(module).insts.get(@intFromEnum(ref));
     std.debug.assert(inst.tag == .param);
 
     const name = inst.data.a.to(StringPool.ID);
-    const param_type = (try self.resolveType(inst.data.b)).type;
+    const param_type = (try self.resolveType(module, inst.data.b)).type;
     const param_ref = try self.emitTyped(alloc, .param, .{
         .a = inst.data.a,
         .b = Payload.from(param_type),
@@ -336,20 +535,21 @@ fn analyzeParam(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.
 
     if (!try self.bind(scope, alloc, name, .{ .value = param_ref }))
         return self.emitTrap(alloc, .sema_duplicate_declaration);
-    self.ref_map.items[@intFromEnum(ref)] = param_ref;
-    self.analyzed.set(@intFromEnum(ref));
+    self.refMap(module)[@intFromEnum(ref)] = param_ref;
+    analyzed.set(@intFromEnum(ref));
     return param_ref;
 }
 
-fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
+fn analyzeInst(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
     if (ref == .none) return .none;
-    if (self.analyzed.isSet(@intFromEnum(ref))) return self.ref_map.items[@intFromEnum(ref)];
+    const analyzed = self.moduleAnalyzed(module);
+    if (analyzed.isSet(@intFromEnum(ref))) return self.refMap(module)[@intFromEnum(ref)];
 
     const previous_ref = self.current_ref;
-    self.current_ref = ref;
+    self.current_ref = .{ .module = module, .inst = ref };
     defer self.current_ref = previous_ref;
 
-    const inst = self.hir.insts.get(@intFromEnum(ref));
+    const inst = self.hir(module).insts.get(@intFromEnum(ref));
     const mir_ref = switch (inst.tag) {
         .int_literal, .float_literal => blk: {
             const mir_tag: MIR.Inst.Tag, const mir_type: MIR.Inst.Type = switch (inst.tag) {
@@ -363,8 +563,8 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
         },
         .trap => try self.emitTyped(alloc, .trap, .{ .a = inst.data.a }, .err),
         .add, .sub, .mul, .div => blk: {
-            const left = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, scope, inst.data.a));
-            const right = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, scope, inst.data.b));
+            const left = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, module, scope, inst.data.a));
+            const right = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, module, scope, inst.data.b));
 
             const left_type = self.inst_types.items[@intFromEnum(left)];
             const right_type = self.inst_types.items[@intFromEnum(right)];
@@ -388,23 +588,24 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
             const name = inst.data.a.to(StringPool.ID);
             break :blk try self.resolveValue(alloc, scope, name);
         },
-        .qualified_ref => try self.resolveQualifiedValue(alloc, scope, ref),
-        .decl_const, .decl_var, .decl_func => try self.analyzeLocalOrPredeclaredDecl(alloc, scope, ref),
+        .qualified_ref => try self.resolveQualifiedValue(alloc, module, scope, ref),
+        .decl_const, .decl_var, .decl_func => try self.analyzeLocalOrPredeclaredDecl(alloc, module, scope, ref),
         .decl_namespace => blk: {
-            try self.analyzeNamespace(alloc, scope, ref);
+            try self.analyzeNamespace(alloc, module, scope, ref);
             break :blk .none;
         },
+        .decl_module_namespace => .none,
         .import_decl => try self.emitTrap(alloc, .sema_unexpanded_import),
         .block => blk: {
             var block_scope: Scope = .{ .parent = scope };
             defer block_scope.deinit(alloc);
 
-            const hir_stmts = self.hir.refSlice(inst.data.a, inst.data.b);
+            const hir_stmts = self.hir(module).refSlice(inst.data.a, inst.data.b);
             var stmt_refs: std.ArrayList(Payload) = .empty;
             defer stmt_refs.deinit(alloc);
 
             for (hir_stmts) |hir_ref| {
-                const stmt_ref = try self.analyzeInst(alloc, &block_scope, hir_ref);
+                const stmt_ref = try self.analyzeInst(alloc, module, &block_scope, hir_ref);
                 if (stmt_ref != .none) try stmt_refs.append(alloc, stmt_ref);
             }
 
@@ -421,32 +622,32 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
                 break :blk try self.emitTyped(alloc, .ret, .{ .a = trap }, .void);
             };
             const val = if (inst.data.a != .none)
-                try self.valueOrTrap(alloc, try self.analyzeInst(alloc, scope, inst.data.a))
+                try self.valueOrTrap(alloc, try self.analyzeInst(alloc, module, scope, inst.data.a))
             else
                 .none;
             const ret_val = try self.checkReturnType(alloc, ret_type, val);
             break :blk try self.emitTyped(alloc, .ret, .{ .a = ret_val }, .void);
         },
         .if_simple => blk: {
-            var condition = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, scope, inst.data.a));
+            var condition = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, module, scope, inst.data.a));
             const condition_type = self.inst_types.items[@intFromEnum(condition)];
             if (condition_type != .err and condition_type != .bool)
                 condition = try self.emitTrap(alloc, .sema_type_mismatch);
-            const body = try self.analyzeInst(alloc, scope, inst.data.b);
+            const body = try self.analyzeInst(alloc, module, scope, inst.data.b);
             break :blk try self.emitTyped(alloc, .if_simple, .{
                 .a = condition,
                 .b = body,
             }, .void);
         },
         .if_else => blk: {
-            var condition = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, scope, inst.data.a));
+            var condition = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, module, scope, inst.data.a));
             const condition_type = self.inst_types.items[@intFromEnum(condition)];
             if (condition_type != .err and condition_type != .bool)
                 condition = try self.emitTrap(alloc, .sema_type_mismatch);
 
-            const hir_info = self.hir.branchInfo(HIR.asBranchRef(inst.data.b));
-            const body = try self.analyzeInst(alloc, scope, hir_info.body);
-            const else_node = try self.analyzeInst(alloc, scope, hir_info.else_node);
+            const hir_info = self.hir(module).branchInfo(HIR.asBranchRef(inst.data.b));
+            const body = try self.analyzeInst(alloc, module, scope, hir_info.body);
+            const else_node = try self.analyzeInst(alloc, module, scope, hir_info.else_node);
             const branch_ref = try self.mir.emitBranchInfo(alloc, .{
                 .body = body,
                 .else_node = else_node,
@@ -457,7 +658,7 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
             }, .void);
         },
         .not, .negate => blk: {
-            const operand = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, scope, inst.data.a));
+            const operand = try self.valueOrTrap(alloc, try self.analyzeInst(alloc, module, scope, inst.data.a));
             const operand_type = self.inst_types.items[@intFromEnum(operand)];
             if (operand_type == .err) break :blk operand;
             const mir_tag: MIR.Inst.Tag = switch (inst.tag) {
@@ -473,31 +674,31 @@ fn analyzeInst(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.R
             };
             break :blk try self.emitTyped(alloc, mir_tag, .{ .a = operand }, operand_type);
         },
-        .param => try self.analyzeParam(alloc, scope, ref),
+        .param => try self.analyzeParam(alloc, module, scope, ref),
         .str_literal => try self.emitTrap(alloc, .sema_unsupported_string_literal),
     };
 
-    self.ref_map.items[@intFromEnum(ref)] = mir_ref;
-    self.analyzed.set(@intFromEnum(ref));
+    self.refMap(module)[@intFromEnum(ref)] = mir_ref;
+    analyzed.set(@intFromEnum(ref));
     return mir_ref;
 }
 
-fn analyzeLocalOrPredeclaredDecl(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
-    const inst = self.hir.insts.get(@intFromEnum(ref));
+fn analyzeLocalOrPredeclaredDecl(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
+    const inst = self.hir(module).insts.get(@intFromEnum(ref));
     const name = inst.data.a.to(StringPool.ID);
 
     if (scope.localBinding(name)) |binding| {
         switch (binding.*) {
-            .pending_decl, .analyzing_decl, .value => return self.analyzeDecl(alloc, scope, ref),
+            .pending_decl, .analyzing_decl, .value => return self.analyzeDecl(alloc, module, scope, ref),
             .namespace => return self.emitTrap(alloc, .sema_namespace_not_value),
         }
     }
 
-    if (!try self.bind(scope, alloc, name, .{ .analyzing_decl = ref }))
+    if (!try self.bind(scope, alloc, name, .{ .analyzing_decl = .{ .module = module, .inst = ref } }))
         return self.emitTrap(alloc, .sema_duplicate_declaration);
     const mir_ref = switch (inst.tag) {
-        .decl_const, .decl_var => try self.analyzeValueDecl(alloc, scope, ref),
-        .decl_func => try self.analyzeFuncDecl(alloc, scope, ref),
+        .decl_const, .decl_var => try self.analyzeValueDecl(alloc, module, scope, ref),
+        .decl_func => try self.analyzeFuncDecl(alloc, module, scope, ref),
         else => unreachable,
     };
     const binding = scope.localBinding(name) orelse return error.InternalMissingDeclarationBinding;
@@ -534,33 +735,33 @@ fn resolveValue(self: *Self, alloc: mem.Allocator, scope: *Scope, name: StringPo
     const resolved = self.resolveBinding(scope, name) orelse return self.emitTrap(alloc, .sema_undefined_name);
     return switch (resolved.binding.*) {
         .value => |mir_ref| mir_ref,
-        .pending_decl => |ref| try self.analyzeDecl(alloc, resolved.scope, ref),
+        .pending_decl => |ref| try self.analyzeDecl(alloc, ref.module, resolved.scope, ref.inst),
         .analyzing_decl => try self.emitTrap(alloc, .sema_declaration_cycle),
         .namespace => try self.emitTrap(alloc, .sema_namespace_not_value),
     };
 }
 
-fn resolveQualifiedValue(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
-    const inst = self.hir.insts.get(@intFromEnum(ref));
+fn resolveQualifiedValue(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef, scope: *Scope, ref: HIR.Inst.Ref) anyerror!MIR.Inst.Ref {
+    const inst = self.hir(module).insts.get(@intFromEnum(ref));
     std.debug.assert(inst.tag == .qualified_ref);
 
-    const namespace_scope = try self.resolveNamespaceRef(alloc, scope, inst.data.a);
+    const namespace_scope = try self.resolveNamespaceRef(alloc, module, scope, inst.data.a);
     if (namespace_scope == null) return self.emitTrap(alloc, .sema_expected_namespace);
     const name = inst.data.b.to(StringPool.ID);
     const binding = namespace_scope.?.localBinding(name) orelse return self.emitTrap(alloc, .sema_undefined_name);
 
     return switch (binding.*) {
         .value => |mir_ref| mir_ref,
-        .pending_decl => |pending_ref| try self.analyzeDecl(alloc, namespace_scope.?, pending_ref),
+        .pending_decl => |pending_ref| try self.analyzeDecl(alloc, pending_ref.module, namespace_scope.?, pending_ref.inst),
         .analyzing_decl => try self.emitTrap(alloc, .sema_declaration_cycle),
         .namespace => try self.emitTrap(alloc, .sema_namespace_not_value),
     };
 }
 
-fn resolveNamespaceRef(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HIR.Inst.Ref) anyerror!?*Scope {
+fn resolveNamespaceRef(self: *Self, alloc: mem.Allocator, module: HIR.ModuleRef, scope: *Scope, ref: HIR.Inst.Ref) anyerror!?*Scope {
     if (ref == .none) return null;
 
-    const inst = self.hir.insts.get(@intFromEnum(ref));
+    const inst = self.hir(module).insts.get(@intFromEnum(ref));
     switch (inst.tag) {
         .ref => {
             const name = inst.data.a.to(StringPool.ID);
@@ -568,7 +769,7 @@ fn resolveNamespaceRef(self: *Self, alloc: mem.Allocator, scope: *Scope, ref: HI
             return try self.namespaceScopeFromBinding(alloc, resolved.binding);
         },
         .qualified_ref => {
-            const parent_scope = try self.resolveNamespaceRef(alloc, scope, inst.data.a) orelse return null;
+            const parent_scope = try self.resolveNamespaceRef(alloc, module, scope, inst.data.a) orelse return null;
             const name = inst.data.b.to(StringPool.ID);
             const binding = parent_scope.localBinding(name) orelse return null;
             return try self.namespaceScopeFromBinding(alloc, binding);
@@ -581,7 +782,10 @@ fn namespaceScopeFromBinding(self: *Self, alloc: mem.Allocator, binding: *Bindin
     return switch (binding.*) {
         .namespace => |namespace| blk: {
             const info = self.namespaceInfo(namespace);
-            try self.analyzeNamespace(alloc, info.scope.parent orelse &self.scope, info.ref);
+            switch (info.kind) {
+                .lexical => try self.analyzeNamespace(alloc, info.ref.module, info.scope.parent orelse try self.ensureModuleRootScope(alloc, info.ref.module), info.ref.inst),
+                .module => _ = try self.analyzeModuleRoot(alloc, info.ref.module),
+            }
             break :blk info.scope;
         },
         else => null,
@@ -597,16 +801,16 @@ fn resolveBinding(_: *Self, scope: *Scope, name: StringPool.ID) ?ResolvedBinding
     return null;
 }
 
-fn resolveType(self: *Self, hir_type_ref: Payload) anyerror!TypeResolution {
+fn resolveType(self: *Self, module: HIR.ModuleRef, hir_type_ref: Payload) anyerror!TypeResolution {
     if (hir_type_ref == .none) return .{ .type = .void };
 
-    const hir_inst = self.hir.insts.get(@intFromEnum(hir_type_ref));
+    const hir_inst = self.hir(module).insts.get(@intFromEnum(hir_type_ref));
     if (hir_inst.tag == .trap) return .{
         .type = .err,
         .diagnostic = hir_inst.data.a.to(Diagnostic.Ref),
     };
     if (hir_inst.tag != .ref) {
-        const diagnostic = try self.addDiagnosticAt(.sema_undefined_type, hir_type_ref);
+        const diagnostic = try self.addDiagnosticAt(.sema_undefined_type, .{ .module = module, .inst = hir_type_ref });
         return .{ .type = .err, .diagnostic = diagnostic };
     }
 
@@ -614,7 +818,7 @@ fn resolveType(self: *Self, hir_type_ref: Payload) anyerror!TypeResolution {
     if (self.type_map.get(name)) |resolved_type|
         return .{ .type = resolved_type };
 
-    const diagnostic = try self.addDiagnosticAt(.sema_undefined_type, hir_type_ref);
+    const diagnostic = try self.addDiagnosticAt(.sema_undefined_type, .{ .module = module, .inst = hir_type_ref });
     return .{ .type = .err, .diagnostic = diagnostic };
 }
 
@@ -666,11 +870,11 @@ fn addDiagnostic(self: *Self, tag: Diagnostic.Tag) !Diagnostic.Ref {
     return self.addDiagnosticAt(tag, self.current_ref);
 }
 
-fn addDiagnosticAt(self: *Self, tag: Diagnostic.Tag, ref: HIR.Inst.Ref) !Diagnostic.Ref {
+fn addDiagnosticAt(self: *Self, tag: Diagnostic.Tag, ref: HirRef) !Diagnostic.Ref {
     return self.diagnostics.add(self.shared_alloc, .{
         .stage = .sema,
         .severity = .err,
         .tag = tag,
-        .span = self.hir.span(ref),
+        .span = if (ref.module != .none and ref.inst != .none) self.hir(ref.module).span(ref.inst) else null,
     });
 }

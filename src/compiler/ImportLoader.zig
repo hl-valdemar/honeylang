@@ -19,6 +19,20 @@ pub const AstDump = struct {
     rendered: *?[]const u8,
 };
 
+pub const LoadState = enum {
+    loading,
+    loaded,
+};
+
+pub const Module = struct {
+    arena: *heap.ArenaAllocator,
+    source: Source,
+    path_id: StringPool.ID,
+    hir: HIR,
+    state: LoadState,
+    source_owned: bool,
+};
+
 const Context = struct {
     alloc: mem.Allocator,
     io: std.Io,
@@ -28,7 +42,9 @@ const Context = struct {
 };
 
 ctx: Context,
-stack: std.ArrayList(StringPool.ID),
+root_module: HIR.ModuleRef,
+modules: std.MultiArrayList(Module),
+path_map: std.AutoHashMapUnmanaged(StringPool.ID, HIR.ModuleRef),
 
 pub fn init(ctx: anytype) Self {
     return .{
@@ -39,12 +55,81 @@ pub fn init(ctx: anytype) Self {
             .str_pool = ctx.str_pool,
             .diagnostics = ctx.diagnostics,
         },
-        .stack = .empty,
+        .root_module = .none,
+        .modules = .empty,
+        .path_map = .{},
     };
 }
 
 pub fn deinit(self: *Self) void {
-    self.stack.deinit(self.ctx.alloc);
+    const arenas = self.modules.items(.arena);
+    const sources = self.modules.items(.source);
+    const hirs = self.modules.items(.hir);
+    const source_owned = self.modules.items(.source_owned);
+
+    for (0..self.modules.len) |idx| {
+        const module_alloc = arenas[idx].allocator();
+        hirs[idx].deinit(module_alloc);
+        if (source_owned[idx])
+            sources[idx].deinit(module_alloc);
+        arenas[idx].deinit();
+        self.ctx.alloc.destroy(arenas[idx]);
+    }
+    self.modules.deinit(self.ctx.alloc);
+    self.path_map.deinit(self.ctx.alloc);
+}
+
+pub fn loadRoot(self: *Self, ast_dump: ?AstDump) !HIR.ModuleRef {
+    const path_id = if (self.ctx.root_src.path) |path|
+        try self.resolvePathId(null, path)
+    else
+        try self.ctx.str_pool.intern(self.ctx.alloc, "<root>");
+
+    const arena = try self.createModuleArena();
+    var module_owned_by_loader = false;
+    errdefer if (!module_owned_by_loader) self.destroyModuleArena(arena);
+    const module_alloc = arena.allocator();
+
+    var hir = try self.parseAndLower(module_alloc, self.ctx.root_src, ast_dump);
+    errdefer if (!module_owned_by_loader) hir.deinit(module_alloc);
+
+    const module_ref = try self.appendModule(.{
+        .arena = arena,
+        .source = self.ctx.root_src.*,
+        .path_id = path_id,
+        .hir = hir,
+        .state = .loading,
+        .source_owned = false,
+    });
+    module_owned_by_loader = true;
+    self.root_module = module_ref;
+    try self.path_map.put(self.ctx.alloc, path_id, module_ref);
+    errdefer _ = self.path_map.remove(path_id);
+
+    try self.resolveModuleImports(module_ref);
+    self.setModuleState(module_ref, .loaded);
+    return module_ref;
+}
+
+pub fn moduleHir(self: *const Self, module_ref: HIR.ModuleRef) *const HIR {
+    return &self.modules.items(.hir)[@intFromEnum(module_ref)];
+}
+
+pub fn modulePathId(self: *const Self, module_ref: HIR.ModuleRef) StringPool.ID {
+    return self.modules.items(.path_id)[@intFromEnum(module_ref)];
+}
+
+pub fn moduleCount(self: *const Self) usize {
+    return self.modules.len;
+}
+
+pub fn moduleHirs(self: *const Self, alloc: mem.Allocator) ![]const *const HIR {
+    var hirs = try alloc.alloc(*const HIR, self.modules.len);
+    const module_hirs_slice = self.modules.items(.hir);
+    for (0..self.modules.len) |idx| {
+        hirs[idx] = &module_hirs_slice[idx];
+    }
+    return hirs;
 }
 
 pub fn parseAndLower(self: *Self, hir_alloc: mem.Allocator, src: *const Source, ast_dump: ?AstDump) !HIR {
@@ -78,123 +163,139 @@ pub fn parseAndLower(self: *Self, hir_alloc: mem.Allocator, src: *const Source, 
     return Parser.lower(hir_alloc, &ast, src.contents, self.ctx.str_pool, self.ctx.diagnostics, self.ctx.alloc);
 }
 
-pub fn expandImports(self: *Self, hir_alloc: mem.Allocator, hir: *HIR, importer_path: ?[]const u8) anyerror!void {
-    const stack_top = self.stack.items.len;
-    if (importer_path) |path| {
-        if (self.resolvePathId(null, path)) |resolved| {
-            var already_active = false;
-            for (self.stack.items) |active_path| {
-                if (active_path == resolved) {
-                    already_active = true;
-                    break;
-                }
-            }
-            if (!already_active)
-                try self.stack.append(self.ctx.alloc, resolved);
-        } else |_| {}
-    }
-    defer {
-        self.stack.items.len = stack_top;
-    }
-
-    const root_refs = hir.rootDecls();
-    const expanded = try self.expandDeclList(hir_alloc, hir, root_refs, importer_path);
-    hir.root_start = expanded.start;
-    hir.root_end = expanded.end;
+fn appendModule(self: *Self, module_value: Module) !HIR.ModuleRef {
+    const module_ref: HIR.ModuleRef = Payload.fromIndex(self.modules.len).to(HIR.ModuleRef);
+    try self.modules.append(self.ctx.alloc, module_value);
+    return module_ref;
 }
 
-fn expandDeclList(
-    self: *Self,
-    hir_alloc: mem.Allocator,
-    hir: *HIR,
-    refs: []const Payload,
-    importer_path: ?[]const u8,
-) anyerror!struct { start: Payload, end: Payload } {
-    var expanded: std.ArrayList(Payload) = .empty;
-    defer expanded.deinit(hir_alloc);
+fn createModuleArena(self: *Self) !*heap.ArenaAllocator {
+    const arena = try self.ctx.alloc.create(heap.ArenaAllocator);
+    arena.* = heap.ArenaAllocator.init(self.ctx.alloc);
+    return arena;
+}
 
+fn destroyModuleArena(self: *Self, arena: *heap.ArenaAllocator) void {
+    arena.deinit();
+    self.ctx.alloc.destroy(arena);
+}
+
+fn moduleHirMut(self: *Self, module_ref: HIR.ModuleRef) *HIR {
+    return &self.modules.items(.hir)[@intFromEnum(module_ref)];
+}
+
+fn moduleAlloc(self: *Self, module_ref: HIR.ModuleRef) mem.Allocator {
+    return self.modules.items(.arena)[@intFromEnum(module_ref)].allocator();
+}
+
+fn moduleSourcePath(self: *Self, module_ref: HIR.ModuleRef) ?[]const u8 {
+    return self.modules.items(.source)[@intFromEnum(module_ref)].path;
+}
+
+fn moduleState(self: *Self, module_ref: HIR.ModuleRef) LoadState {
+    return self.modules.items(.state)[@intFromEnum(module_ref)];
+}
+
+fn setModuleState(self: *Self, module_ref: HIR.ModuleRef, state: LoadState) void {
+    self.modules.items(.state)[@intFromEnum(module_ref)] = state;
+}
+
+fn resolveModuleImports(self: *Self, module_ref: HIR.ModuleRef) anyerror!void {
+    const root_refs = self.moduleHir(module_ref).rootDecls();
+    try self.resolveDeclList(module_ref, root_refs);
+}
+
+fn resolveDeclList(self: *Self, module_ref: HIR.ModuleRef, refs: []const Payload) anyerror!void {
     for (refs) |ref| {
-        const inst = hir.insts.get(@intFromEnum(ref));
+        const inst = self.moduleHir(module_ref).insts.get(@intFromEnum(ref));
         switch (inst.tag) {
-            .import_decl => {
-                const namespace_ref = try self.expandImport(hir_alloc, hir, inst, importer_path);
-                try expanded.append(hir_alloc, namespace_ref);
-            },
-            .decl_namespace => {
-                try self.expandNamespaceImports(hir_alloc, hir, ref, importer_path);
-                try expanded.append(hir_alloc, ref);
-            },
-            else => try expanded.append(hir_alloc, ref),
+            .import_decl => try self.resolveImportInst(module_ref, ref, inst),
+            .decl_namespace => try self.resolveNamespaceImports(module_ref, ref),
+            else => {},
         }
     }
-
-    const range = try hir.appendRefList(hir_alloc, expanded.items);
-    return .{ .start = range.start, .end = range.end };
 }
 
-fn expandNamespaceImports(
-    self: *Self,
-    hir_alloc: mem.Allocator,
-    hir: *HIR,
-    namespace_ref: HIR.Inst.Ref,
-    importer_path: ?[]const u8,
-) anyerror!void {
-    const namespace = hir.insts.get(@intFromEnum(namespace_ref));
+fn resolveNamespaceImports(self: *Self, module_ref: HIR.ModuleRef, namespace_ref: HIR.Inst.Ref) anyerror!void {
+    const namespace = self.moduleHir(module_ref).insts.get(@intFromEnum(namespace_ref));
     const block_ref = namespace.data.b;
-    const block = hir.insts.get(@intFromEnum(block_ref));
+    const block = self.moduleHir(module_ref).insts.get(@intFromEnum(block_ref));
     std.debug.assert(block.tag == .block);
 
-    const refs = hir.refSlice(block.data.a, block.data.b);
-    const expanded = try self.expandDeclList(hir_alloc, hir, refs, importer_path);
-    hir.insts.items(.data)[@intFromEnum(block_ref)] = .{ .a = expanded.start, .b = expanded.end };
+    const refs = self.moduleHir(module_ref).refSlice(block.data.a, block.data.b);
+    try self.resolveDeclList(module_ref, refs);
 }
 
-fn expandImport(
-    self: *Self,
-    hir_alloc: mem.Allocator,
-    hir: *HIR,
-    inst: HIR.Inst,
-    importer_path: ?[]const u8,
-) anyerror!HIR.Inst.Ref {
+fn resolveImportInst(self: *Self, importer_ref: HIR.ModuleRef, inst_ref: HIR.Inst.Ref, inst: HIR.Inst) anyerror!void {
     const namespace_name = try self.importNamespaceName(inst);
     if (!isValidNamespaceName(namespace_name))
         _ = try self.addDiagnostic(.sema_import_invalid_namespace_name);
 
-    if (inst.data.b.to(StringPool.ID) == .none)
-        return self.emitImportTrapNamespace(hir_alloc, hir, namespace_name, .sema_import_file_not_found);
+    const name_id = try self.ctx.str_pool.intern(self.ctx.alloc, namespace_name);
+    if (inst.data.b.to(StringPool.ID) == .none) {
+        try self.replaceWithTrapNamespace(importer_ref, inst_ref, name_id, .sema_import_file_not_found);
+        return;
+    }
 
     const import_path = self.ctx.str_pool.get(inst.data.b.to(StringPool.ID));
-    const resolved_path_id = self.resolvePathId(importer_path, import_path) catch
-        return self.emitImportTrapNamespace(hir_alloc, hir, namespace_name, .sema_import_file_not_found);
+    const target_ref = self.loadImportedModule(importer_ref, import_path) catch |err| switch (err) {
+        error.ImportFileNotFound => {
+            try self.replaceWithTrapNamespace(importer_ref, inst_ref, name_id, .sema_import_file_not_found);
+            return;
+        },
+        error.ImportCycle => {
+            try self.replaceWithTrapNamespace(importer_ref, inst_ref, name_id, .sema_import_cycle);
+            return;
+        },
+        else => return err,
+    };
+
+    const hir = self.moduleHirMut(importer_ref);
+    hir.insts.items(.tag)[@intFromEnum(inst_ref)] = .decl_module_namespace;
+    hir.insts.items(.data)[@intFromEnum(inst_ref)] = .{
+        .a = Payload.from(name_id),
+        .b = Payload.from(target_ref),
+    };
+}
+
+fn loadImportedModule(self: *Self, importer_ref: HIR.ModuleRef, import_path: []const u8) anyerror!HIR.ModuleRef {
+    const importer_path = self.moduleSourcePath(importer_ref);
+    const resolved_path_id = self.resolvePathId(importer_path, import_path) catch return error.ImportFileNotFound;
+
+    if (self.path_map.get(resolved_path_id)) |cached_ref| {
+        return switch (self.moduleState(cached_ref)) {
+            .loaded => cached_ref,
+            .loading => error.ImportCycle,
+        };
+    }
+
     const resolved_path = self.ctx.str_pool.get(resolved_path_id);
+    const arena = try self.createModuleArena();
+    var module_owned_by_loader = false;
+    errdefer if (!module_owned_by_loader) self.destroyModuleArena(arena);
+    const import_alloc = arena.allocator();
 
-    for (self.stack.items) |active_path| {
-        if (active_path == resolved_path_id)
-            return self.emitImportTrapNamespace(hir_alloc, hir, namespace_name, .sema_import_cycle);
-    }
+    var src = SourceManager.init.fromFile(import_alloc, self.ctx.io, resolved_path) catch return error.ImportFileNotFound;
+    errdefer if (!module_owned_by_loader) src.deinit(import_alloc);
 
-    try self.stack.append(self.ctx.alloc, resolved_path_id);
-    defer {
-        _ = self.stack.pop();
-    }
+    var hir = try self.parseAndLower(import_alloc, &src, null);
+    errdefer if (!module_owned_by_loader) hir.deinit(import_alloc);
 
-    var import_arena = heap.ArenaAllocator.init(self.ctx.alloc);
-    defer import_arena.deinit();
-    const import_alloc = import_arena.allocator();
-
-    var src = SourceManager.init.fromFile(import_alloc, self.ctx.io, resolved_path) catch
-        return self.emitImportTrapNamespace(hir_alloc, hir, namespace_name, .sema_import_file_not_found);
-    defer src.deinit(import_alloc);
-
-    var imported_hir = try self.parseAndLower(import_alloc, &src, null);
-    defer imported_hir.deinit(import_alloc);
-    try self.expandImports(import_alloc, &imported_hir, src.path);
-
-    const body = try self.copyImportedRootAsBlock(hir_alloc, hir, &imported_hir);
-    return hir.emit(hir_alloc, .decl_namespace, .{
-        .a = Payload.from(try self.ctx.str_pool.intern(self.ctx.alloc, namespace_name)),
-        .b = body,
+    const module_ref = try self.appendModule(.{
+        .arena = arena,
+        .source = src,
+        .path_id = resolved_path_id,
+        .hir = hir,
+        .state = .loading,
+        .source_owned = true,
     });
+    module_owned_by_loader = true;
+    try self.path_map.put(self.ctx.alloc, resolved_path_id, module_ref);
+    errdefer _ = self.path_map.remove(resolved_path_id);
+
+    try self.resolveModuleImports(module_ref);
+    self.setModuleState(module_ref, .loaded);
+    return module_ref;
 }
 
 fn importNamespaceName(self: *Self, inst: HIR.Inst) ![]const u8 {
@@ -224,136 +325,25 @@ fn resolvePathId(self: *Self, importer_path: ?[]const u8, import_path: []const u
     return self.ctx.str_pool.intern(self.ctx.alloc, resolved);
 }
 
-fn emitImportTrapNamespace(
+fn replaceWithTrapNamespace(
     self: *Self,
-    hir_alloc: mem.Allocator,
-    hir: *HIR,
-    namespace_name: []const u8,
+    module_ref: HIR.ModuleRef,
+    inst_ref: HIR.Inst.Ref,
+    namespace_name: StringPool.ID,
     tag: Diagnostic.Tag,
-) !HIR.Inst.Ref {
+) !void {
+    const hir = self.moduleHirMut(module_ref);
+    const module_alloc = self.moduleAlloc(module_ref);
     const diag_ref = try self.addDiagnostic(tag);
-    const trap = try hir.emit(hir_alloc, .trap, .{ .a = Payload.from(diag_ref) });
-    const refs = try hir.appendRefList(hir_alloc, &.{trap});
-    const block = try hir.emit(hir_alloc, .block, .{ .a = refs.start, .b = refs.end });
-    const name = try self.ctx.str_pool.intern(self.ctx.alloc, namespace_name);
-    return hir.emit(hir_alloc, .decl_namespace, .{
-        .a = Payload.from(name),
+    const trap = try hir.emit(module_alloc, .trap, .{ .a = Payload.from(diag_ref) });
+    const refs = try hir.appendRefList(module_alloc, &.{trap});
+    const block = try hir.emit(module_alloc, .block, .{ .a = refs.start, .b = refs.end });
+
+    hir.insts.items(.tag)[@intFromEnum(inst_ref)] = .decl_namespace;
+    hir.insts.items(.data)[@intFromEnum(inst_ref)] = .{
+        .a = Payload.from(namespace_name),
         .b = block,
-    });
-}
-
-fn copyImportedRootAsBlock(self: *Self, hir_alloc: mem.Allocator, dst: *HIR, src: *const HIR) !HIR.Inst.Ref {
-    const map = try hir_alloc.alloc(Payload, src.insts.len);
-    defer hir_alloc.free(map);
-    @memset(map, .none);
-
-    var copied_refs: std.ArrayList(Payload) = .empty;
-    defer copied_refs.deinit(hir_alloc);
-
-    for (src.rootDecls()) |ref| {
-        const copied = try self.copyInst(hir_alloc, dst, src, map, ref);
-        try copied_refs.append(hir_alloc, copied);
-    }
-
-    const refs = try dst.appendRefList(hir_alloc, copied_refs.items);
-    return dst.emit(hir_alloc, .block, .{ .a = refs.start, .b = refs.end });
-}
-
-fn copyInst(
-    self: *Self,
-    hir_alloc: mem.Allocator,
-    dst: *HIR,
-    src: *const HIR,
-    map: []Payload,
-    ref: HIR.Inst.Ref,
-) anyerror!HIR.Inst.Ref {
-    if (ref == .none) return .none;
-    const idx = @intFromEnum(ref);
-    if (map[idx] != .none) return map[idx];
-
-    const inst = src.insts.get(idx);
-    const copied: HIR.Inst.Ref = switch (inst.tag) {
-        .int_literal, .float_literal, .str_literal, .trap, .ref => try dst.emit(hir_alloc, inst.tag, inst.data),
-        .not, .negate => try dst.emit(hir_alloc, inst.tag, .{
-            .a = try self.copyInst(hir_alloc, dst, src, map, inst.data.a),
-        }),
-        .qualified_ref => try dst.emit(hir_alloc, .qualified_ref, .{
-            .a = try self.copyInst(hir_alloc, dst, src, map, inst.data.a),
-            .b = inst.data.b,
-        }),
-        .add, .sub, .mul, .div => try dst.emit(hir_alloc, inst.tag, .{
-            .a = try self.copyInst(hir_alloc, dst, src, map, inst.data.a),
-            .b = try self.copyInst(hir_alloc, dst, src, map, inst.data.b),
-        }),
-        .decl_const, .decl_var => blk: {
-            const info = src.declInfo(HIR.asDeclRef(inst.data.b));
-            const decl_ref = try dst.emitDeclInfo(hir_alloc, .{
-                .type = try self.copyInst(hir_alloc, dst, src, map, info.type),
-                .value = try self.copyInst(hir_alloc, dst, src, map, info.value),
-            });
-            break :blk try dst.emit(hir_alloc, inst.tag, .{
-                .a = inst.data.a,
-                .b = HIR.asPayload(decl_ref),
-            });
-        },
-        .decl_namespace => try dst.emit(hir_alloc, .decl_namespace, .{
-            .a = inst.data.a,
-            .b = try self.copyInst(hir_alloc, dst, src, map, inst.data.b),
-        }),
-        .param => try dst.emit(hir_alloc, .param, .{
-            .a = inst.data.a,
-            .b = try self.copyInst(hir_alloc, dst, src, map, inst.data.b),
-        }),
-        .ret => try dst.emit(hir_alloc, .ret, .{
-            .a = try self.copyInst(hir_alloc, dst, src, map, inst.data.a),
-        }),
-        .block => blk: {
-            const refs = src.refSlice(inst.data.a, inst.data.b);
-            var copied_refs: std.ArrayList(Payload) = .empty;
-            defer copied_refs.deinit(hir_alloc);
-            for (refs) |item| try copied_refs.append(hir_alloc, try self.copyInst(hir_alloc, dst, src, map, item));
-            const range = try dst.appendRefList(hir_alloc, copied_refs.items);
-            break :blk try dst.emit(hir_alloc, .block, .{ .a = range.start, .b = range.end });
-        },
-        .decl_func => blk: {
-            const info = src.funcInfo(HIR.asFuncRef(inst.data.b));
-            const params = src.refSlice(info.params_start, info.params_end);
-            var copied_params: std.ArrayList(Payload) = .empty;
-            defer copied_params.deinit(hir_alloc);
-            for (params) |param| try copied_params.append(hir_alloc, try self.copyInst(hir_alloc, dst, src, map, param));
-            const param_range = try dst.appendRefList(hir_alloc, copied_params.items);
-            const func_ref = try dst.emitFuncInfo(hir_alloc, .{
-                .params_start = param_range.start,
-                .params_end = param_range.end,
-                .ret_type = try self.copyInst(hir_alloc, dst, src, map, info.ret_type),
-                .body = try self.copyInst(hir_alloc, dst, src, map, info.body),
-                .flags = info.flags,
-            });
-            break :blk try dst.emit(hir_alloc, .decl_func, .{
-                .a = inst.data.a,
-                .b = HIR.asPayload(func_ref),
-            });
-        },
-        .if_simple => try dst.emit(hir_alloc, .if_simple, .{
-            .a = try self.copyInst(hir_alloc, dst, src, map, inst.data.a),
-            .b = try self.copyInst(hir_alloc, dst, src, map, inst.data.b),
-        }),
-        .if_else => blk: {
-            const info = src.branchInfo(HIR.asBranchRef(inst.data.b));
-            const branch_ref = try dst.emitBranchInfo(hir_alloc, .{
-                .body = try self.copyInst(hir_alloc, dst, src, map, info.body),
-                .else_node = try self.copyInst(hir_alloc, dst, src, map, info.else_node),
-            });
-            break :blk try dst.emit(hir_alloc, .if_else, .{
-                .a = try self.copyInst(hir_alloc, dst, src, map, inst.data.a),
-                .b = HIR.asPayload(branch_ref),
-            });
-        },
-        .import_decl => try self.emitImportTrapNamespace(hir_alloc, dst, "<import>", .sema_import_file_not_found),
     };
-
-    map[idx] = copied;
-    return copied;
 }
 
 fn addDiagnostic(self: *Self, tag: Diagnostic.Tag) !Diagnostic.Ref {

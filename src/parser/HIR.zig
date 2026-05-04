@@ -112,6 +112,11 @@ pub const Inst = struct {
         decl_namespace,
 
         /// data:
+        /// * a: string id (name)
+        /// * b: module ref
+        decl_module_namespace,
+
+        /// data:
         /// * a: string id (explicit namespace name) or .none for implicit file-stem name
         /// * b: string id (path)
         import_decl,
@@ -161,6 +166,11 @@ pub const FuncRef = enum(u32) {
 };
 
 pub const BranchRef = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+};
+
+pub const ModuleRef = enum(u32) {
     none = std.math.maxInt(u32),
     _,
 };
@@ -609,6 +619,11 @@ pub fn render(self: *const Self, alloc: mem.Allocator) ![]const u8 {
                 const tag_name = @tagName(inst.tag);
                 const name = self.str_pool.get(inst.data.a.to(StringPool.ID));
                 try w.print("%{d: <3} {s}(\"{s}\", body=%{d})\n", .{ idx, tag_name, name, @intFromEnum(inst.data.b) });
+            },
+            .decl_module_namespace => {
+                const tag_name = @tagName(inst.tag);
+                const name = self.str_pool.get(inst.data.a.to(StringPool.ID));
+                try w.print("%{d: <3} {s}(\"{s}\", module=M{d})\n", .{ idx, tag_name, name, @intFromEnum(inst.data.b) });
             },
             .import_decl => {
                 const path = if (inst.data.b.to(StringPool.ID) != .none)
