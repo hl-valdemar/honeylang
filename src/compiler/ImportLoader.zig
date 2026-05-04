@@ -326,7 +326,10 @@ fn resolvePathId(self: *Self, importer_path: ?[]const u8, import_path: []const u
 
     const resolved = try fs.path.resolve(alloc, &.{joined});
     defer alloc.free(resolved);
-    return self.ctx.str_pool.intern(self.ctx.alloc, resolved);
+
+    const canonical = try std.Io.Dir.cwd().realPathFileAlloc(self.ctx.io, resolved, alloc);
+    defer alloc.free(canonical);
+    return self.ctx.str_pool.intern(self.ctx.alloc, canonical);
 }
 
 fn replaceWithTrapNamespace(

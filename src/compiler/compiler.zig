@@ -273,6 +273,47 @@ test "compiler import loader caches shared modules by canonical path" {
     try std.testing.expectEqual(@as(usize, 4), loader.moduleCount());
 }
 
+test "compiler import loader caches symlinked modules by real path" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "shared.hon", .data = "value :: 1\n" });
+    tmp.dir.symLink(std.testing.io, "shared.hon", "shared_link.hon", .{}) catch |err| switch (err) {
+        error.AccessDenied, error.PermissionDenied => return error.SkipZigTest,
+        else => return err,
+    };
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "left.hon", .data = "import \"shared.hon\"\nleft_value :: shared.value\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "right.hon", .data = "import \"shared_link.hon\"\nright_value :: shared_link.value\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.hon", .data = "import \"left.hon\"\nimport \"right.hon\"\nx :: left.left_value + right.right_value\n" });
+
+    const main_path = try std.fmt.allocPrint(alloc, ".zig-cache/tmp/{s}/main.hon", .{tmp.sub_path});
+    defer alloc.free(main_path);
+
+    var src = try SourceManager.init.fromFile(alloc, std.testing.io, main_path);
+    defer src.deinit(alloc);
+
+    var str_pool = StringPool.init();
+    defer str_pool.deinit(alloc);
+
+    var diagnostics = Diagnostic.init();
+    defer diagnostics.deinit(alloc);
+
+    var loader = ImportLoader.init(.{
+        .alloc = alloc,
+        .io = std.testing.io,
+        .src = &src,
+        .str_pool = &str_pool,
+        .diagnostics = &diagnostics,
+    });
+    defer loader.deinit();
+
+    _ = try loader.loadRoot(null);
+
+    try std.testing.expect(!diagnostics.hasErrors());
+    try std.testing.expectEqual(@as(usize, 4), loader.moduleCount());
+}
+
 test "compiler root HIR renders module namespace instead of copied import body" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
