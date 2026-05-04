@@ -8,7 +8,7 @@ const Lexer = @import("Lexer.zig");
 test "scan const decl" {
     const alloc = std.testing.allocator;
 
-    var src = try Source.init.fromStr(alloc, "pi :: 3.14", 0);
+    var src = try Source.init.fromStr(alloc, "pi :: 3.14", Source.ID.fromInt(0));
     defer src.deinit(alloc);
 
     var str_pool = StringPool.init();
@@ -31,7 +31,7 @@ test "scan const decl" {
 test "scan arithmetic expression" {
     const alloc = std.testing.allocator;
 
-    var src = try Source.init.fromStr(alloc, "a + 2", 0);
+    var src = try Source.init.fromStr(alloc, "a + 2", Source.ID.fromInt(0));
     defer src.deinit(alloc);
 
     var str_pool = StringPool.init();

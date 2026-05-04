@@ -3,6 +3,7 @@ const mem = std.mem;
 
 ast: *const AST,
 src: []const u8,
+source_id: Source.ID,
 str_pool: *const StringPool,
 diagnostics: *Diagnostic,
 diagnostic_alloc: mem.Allocator,
@@ -20,6 +21,7 @@ const Self = @This();
 
 const Payload = @import("../root.zig").Payload;
 const StringPool = @import("../util/StringPool.zig");
+const Source = @import("../source/Source.zig");
 const Diagnostic = @import("../diagnostic/Store.zig");
 const AST = @import("../parser/AST.zig");
 
@@ -196,6 +198,7 @@ pub const IfElseInfo = struct {
 pub const Context = struct {
     ast: *const AST,
     src: []const u8,
+    source_id: Source.ID,
     str_pool: *const StringPool,
     diagnostic_alloc: mem.Allocator,
     diagnostics: *Diagnostic,
@@ -205,6 +208,7 @@ pub fn init(ctx: Context) Self {
     return .{
         .ast = ctx.ast,
         .src = ctx.src,
+        .source_id = ctx.source_id,
         .str_pool = ctx.str_pool,
         .diagnostics = ctx.diagnostics,
         .diagnostic_alloc = ctx.diagnostic_alloc,
@@ -493,6 +497,7 @@ fn nodeSpan(self: *const Self, node: AST.Node.Ref) ?Diagnostic.Span {
     const token_span = self.ast.tokenSpan(token, self.src);
 
     return .{
+        .source_id = self.source_id,
         .start = token_span.start,
         .end = if (token_span.end > token_span.start) token_span.end else token_span.start + 1,
     };

@@ -10,7 +10,7 @@ const Sema = @import("../sema/Sema.zig");
 const Optimizer = @import("Optimizer.zig");
 
 fn optimizedMirRender(alloc: mem.Allocator, src_str: []const u8) ![]const u8 {
-    var src = try Source.init.fromStr(alloc, src_str, 0);
+    var src = try Source.init.fromStr(alloc, src_str, Source.ID.fromInt(0));
     defer src.deinit(alloc);
 
     var str_pool = StringPool.init();
@@ -27,7 +27,7 @@ fn optimizedMirRender(alloc: mem.Allocator, src_str: []const u8) ![]const u8 {
     defer parser.deinit(alloc);
     const ast = try parser.parse(alloc);
 
-    var hir = try Parser.lower(alloc, &ast, src.contents, &str_pool, &diagnostics, alloc);
+    var hir = try Parser.lower(alloc, &ast, &src, &str_pool, &diagnostics, alloc);
     defer hir.deinit(alloc);
 
     var sema = Sema.init(&hir, &str_pool, &diagnostics, alloc);

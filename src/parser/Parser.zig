@@ -607,18 +607,18 @@ fn tokenSpan(self: *const Self, token: Token.Index) ?Diagnostic.Span {
     if (token >= self.tokens.len) return null;
     var start = self.tokens.items(.start)[token];
     const scanned = Lexer.nextToken(self.src.contents, &start);
-    return .{ .start = scanned.start, .end = scanned.end };
+    return .{ .source_id = self.src.id, .start = scanned.start, .end = scanned.end };
 }
 
 pub fn lower(
     alloc: mem.Allocator,
     ast: *const AST,
-    src: []const u8,
+    src: *const Source,
     str_pool: *const StringPool,
     diagnostics: *Diagnostic,
     diagnostic_alloc: mem.Allocator,
 ) !HIR {
-    var hir = HIR.init(.{ .ast = ast, .src = src, .str_pool = str_pool, .diagnostics = diagnostics, .diagnostic_alloc = diagnostic_alloc });
+    var hir = HIR.init(.{ .ast = ast, .src = src.contents, .source_id = src.id, .str_pool = str_pool, .diagnostics = diagnostics, .diagnostic_alloc = diagnostic_alloc });
     const root = Payload.fromIndex(0);
     _ = try hir.lower(alloc, root);
     return hir;

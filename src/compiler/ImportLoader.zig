@@ -132,6 +132,10 @@ pub fn moduleHirs(self: *const Self, alloc: mem.Allocator) ![]const *const HIR {
     return hirs;
 }
 
+pub fn moduleSources(self: *const Self) []const Source {
+    return self.modules.items(.source);
+}
+
 pub fn parseAndLower(self: *Self, hir_alloc: mem.Allocator, src: *const Source, ast_dump: ?AstDump) !HIR {
     var parse_arena = heap.ArenaAllocator.init(self.ctx.alloc);
     defer parse_arena.deinit();
@@ -160,7 +164,7 @@ pub fn parseAndLower(self: *Self, hir_alloc: mem.Allocator, src: *const Source, 
             dump.rendered.* = try ast.render(dump.alloc, src.contents, self.ctx.str_pool);
     }
 
-    return Parser.lower(hir_alloc, &ast, src.contents, self.ctx.str_pool, self.ctx.diagnostics, self.ctx.alloc);
+    return Parser.lower(hir_alloc, &ast, src, self.ctx.str_pool, self.ctx.diagnostics, self.ctx.alloc);
 }
 
 fn appendModule(self: *Self, module_value: Module) !HIR.ModuleRef {
@@ -229,7 +233,7 @@ fn resolveNamespaceImports(self: *Self, module_ref: HIR.ModuleRef, namespace_ref
 fn resolveImportInst(self: *Self, importer_ref: HIR.ModuleRef, inst_ref: HIR.Inst.Ref, inst: HIR.Inst) anyerror!void {
     const namespace_name = try self.importNamespaceName(inst);
     if (!isValidNamespaceName(namespace_name))
-        _ = try self.addDiagnostic(.sema_import_invalid_namespace_name);
+        _ = try self.addDiagnosticAt(.sema_import_invalid_namespace_name, importer_ref, inst_ref);
 
     const name_id = try self.ctx.str_pool.intern(self.ctx.alloc, namespace_name);
     if (inst.data.b.to(StringPool.ID) == .none) {
@@ -334,7 +338,7 @@ fn replaceWithTrapNamespace(
 ) !void {
     const hir = self.moduleHirMut(module_ref);
     const module_alloc = self.moduleAlloc(module_ref);
-    const diag_ref = try self.addDiagnostic(tag);
+    const diag_ref = try self.addDiagnosticAt(tag, module_ref, inst_ref);
     const trap = try hir.emit(module_alloc, .trap, .{ .a = Payload.from(diag_ref) });
     const refs = try hir.appendRefList(module_alloc, &.{trap});
     const block = try hir.emit(module_alloc, .block, .{ .a = refs.start, .b = refs.end });
@@ -346,12 +350,13 @@ fn replaceWithTrapNamespace(
     };
 }
 
-fn addDiagnostic(self: *Self, tag: Diagnostic.Tag) !Diagnostic.Ref {
+fn addDiagnosticAt(self: *Self, tag: Diagnostic.Tag, module_ref: HIR.ModuleRef, inst_ref: HIR.Inst.Ref) !Diagnostic.Ref {
+    const hir = self.moduleHir(module_ref);
     return self.ctx.diagnostics.add(self.ctx.alloc, .{
         .stage = .sema,
         .severity = .err,
         .tag = tag,
-        .span = null,
+        .span = hir.span(inst_ref),
     });
 }
 

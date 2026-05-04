@@ -50,7 +50,7 @@ pub fn scan(self: *Self, alloc: mem.Allocator) !void {
                 .stage = .lexer,
                 .severity = .err,
                 .tag = diagnosticTag(err_tag),
-                .span = .{ .start = tok.start, .end = tok.end },
+                .span = .{ .source_id = self.src.id, .start = tok.start, .end = tok.end },
             });
         }
 

@@ -26,7 +26,7 @@ fn analyze(alloc: mem.Allocator, src_str: []const u8) !void {
 }
 
 fn analyzeResult(alloc: mem.Allocator, src_str: []const u8) !AnalyzeResult {
-    var src = try Source.init.fromStr(alloc, src_str, 0);
+    var src = try Source.init.fromStr(alloc, src_str, Source.ID.fromInt(0));
     defer src.deinit(alloc);
 
     var str_pool = StringPool.init();
@@ -43,7 +43,7 @@ fn analyzeResult(alloc: mem.Allocator, src_str: []const u8) !AnalyzeResult {
     defer parser.deinit(alloc);
 
     const ast = try parser.parse(alloc);
-    var hir = try Parser.lower(alloc, &ast, src.contents, &str_pool, &diagnostics, alloc);
+    var hir = try Parser.lower(alloc, &ast, &src, &str_pool, &diagnostics, alloc);
     defer hir.deinit(alloc);
 
     var sema = Sema.init(&hir, &str_pool, &diagnostics, alloc);

@@ -28,7 +28,9 @@ pub fn run(ctx: Context) !void {
     try render.printStatic("Source Code", ctx.src.contents);
 
     var hir_stage = try buildHir(ctx, &render);
+    defer hir_stage.deinit();
     var sema_stage = try buildSema(ctx, &render, &hir_stage);
+    defer sema_stage.deinit();
     var opt_stage = try buildOptimized(ctx, &render, &sema_stage);
     defer opt_stage.deinit();
 
@@ -38,7 +40,7 @@ pub fn run(ctx: Context) !void {
     }
 
     if (ctx.print_diagnostics)
-        try render.printDiagnostics(ctx.diagnostics, ctx.src);
+        try render.printDiagnostics(ctx.diagnostics, hir_stage.loader.moduleSources(), ctx.src);
 }
 
 const Renderer = struct {
@@ -72,10 +74,10 @@ const Renderer = struct {
         _ = self.arena.reset(.free_all);
     }
 
-    fn printDiagnostics(self: *Renderer, diagnostics: *const Diagnostic, src: *const Source) !void {
+    fn printDiagnostics(self: *Renderer, diagnostics: *const Diagnostic, sources: []const Source, fallback_src: *const Source) !void {
         if (diagnostics.len() == 0) return;
 
-        const diag_render = try diagnostics.render(self.alloc(), src);
+        const diag_render = try diagnostics.renderWithSources(self.alloc(), sources, fallback_src);
         printSection("Diagnostics", diag_render);
     }
 };
@@ -135,8 +137,6 @@ fn buildHir(ctx: Context, render: *Renderer) !HirStage {
 }
 
 fn buildSema(ctx: Context, render: *Renderer, hir_stage: *HirStage) !SemaStage {
-    defer hir_stage.deinit();
-
     if (render.enabled) {
         const hir_render = try hir_stage.loader.moduleHir(hir_stage.loader.root_module).render(render.alloc());
         render.printRendered("Rendered HIR", hir_render);
@@ -160,8 +160,6 @@ fn buildSema(ctx: Context, render: *Renderer, hir_stage: *HirStage) !SemaStage {
 }
 
 fn buildOptimized(ctx: Context, render: *Renderer, sema_stage: *SemaStage) !OptimizerStage {
-    defer sema_stage.deinit();
-
     if (render.enabled) {
         const mir_render = try sema_stage.sema.mir.render(render.alloc(), ctx.str_pool);
         render.printRendered("Rendered MIR (unoptimized)", mir_render);
@@ -311,6 +309,50 @@ test "compiler root HIR renders module namespace instead of copied import body" 
 
     try std.testing.expect(std.mem.indexOf(u8, rendered, "decl_module_namespace(\"math\", module=M1)") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "decl_const(\"value\"") == null);
+}
+
+test "compiler renders diagnostics from imported files" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "lib.hon", .data = "value :: missing\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.hon", .data = "import \"lib.hon\"\nx :: lib.value\n" });
+
+    const main_path = try std.fmt.allocPrint(alloc, ".zig-cache/tmp/{s}/main.hon", .{tmp.sub_path});
+    defer alloc.free(main_path);
+
+    var src = try SourceManager.init.fromFile(alloc, std.testing.io, main_path);
+    defer src.deinit(alloc);
+
+    var str_pool = StringPool.init();
+    defer str_pool.deinit(alloc);
+
+    var diagnostics = Diagnostic.init();
+    defer diagnostics.deinit(alloc);
+
+    var loader = ImportLoader.init(.{
+        .alloc = alloc,
+        .io = std.testing.io,
+        .src = &src,
+        .str_pool = &str_pool,
+        .diagnostics = &diagnostics,
+    });
+    defer loader.deinit();
+
+    const root_module = try loader.loadRoot(null);
+    const module_hirs = try loader.moduleHirs(alloc);
+    defer alloc.free(module_hirs);
+
+    var sema = Sema.initModules(module_hirs, root_module, &str_pool, &diagnostics, alloc);
+    defer sema.deinit(alloc);
+    try sema.analyze(alloc);
+
+    const rendered = try diagnostics.renderWithSources(alloc, loader.moduleSources(), &src);
+    defer alloc.free(rendered);
+
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "lib.hon:1:10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "1 | value :: missing") != null);
 }
 
 test "compiler reports missing import" {

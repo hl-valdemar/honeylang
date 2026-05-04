@@ -11,7 +11,7 @@ const Parser = @import("Parser.zig");
 
 /// helper: parse source code and return ast render.
 fn parse(alloc: mem.Allocator, src_str: []const u8) ![]const u8 {
-    var src = try Source.init.fromStr(alloc, src_str, 0);
+    var src = try Source.init.fromStr(alloc, src_str, Source.ID.fromInt(0));
     defer src.deinit(alloc);
 
     var str_pool = StringPool.init();
@@ -120,7 +120,7 @@ test "ast typed payload accessors cover funcs branches and ref lists" {
         \\    }
         \\}
         \\
-    , 0);
+    , Source.ID.fromInt(0));
     defer src.deinit(alloc);
 
     var str_pool = StringPool.init();
@@ -157,7 +157,7 @@ const HIR = @import("HIR.zig");
 
 /// helper: parse source and lower to HIR, return instruction tags.
 fn lowerToTags(alloc: mem.Allocator, src_str: []const u8) ![]const HIR.Inst.Tag {
-    var src = try Source.init.fromStr(alloc, src_str, 0);
+    var src = try Source.init.fromStr(alloc, src_str, Source.ID.fromInt(0));
     defer src.deinit(alloc);
 
     var str_pool = StringPool.init();
@@ -177,7 +177,7 @@ fn lowerToTags(alloc: mem.Allocator, src_str: []const u8) ![]const HIR.Inst.Tag 
 
     const ast = try parser.parse(alloc);
 
-    var hir = HIR.init(.{ .ast = &ast, .src = src.contents, .str_pool = &str_pool, .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
+    var hir = HIR.init(.{ .ast = &ast, .src = src.contents, .source_id = src.id, .str_pool = &str_pool, .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
     defer hir.deinit(alloc);
 
     const root: HIR.Inst.Ref = @enumFromInt(0);
@@ -307,7 +307,7 @@ test "hir typed payload accessors cover decls funcs branches and ref lists" {
         \\    }
         \\}
         \\
-    , 0);
+    , Source.ID.fromInt(0));
     defer src.deinit(alloc);
 
     var str_pool = StringPool.init();
@@ -324,7 +324,7 @@ test "hir typed payload accessors cover decls funcs branches and ref lists" {
     defer parser.deinit(alloc);
     const ast = try parser.parse(alloc);
 
-    var hir = HIR.init(.{ .ast = &ast, .src = src.contents, .str_pool = &str_pool, .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
+    var hir = HIR.init(.{ .ast = &ast, .src = src.contents, .source_id = src.id, .str_pool = &str_pool, .diagnostic_alloc = alloc, .diagnostics = &diagnostics });
     defer hir.deinit(alloc);
     const root: HIR.Inst.Ref = @enumFromInt(0);
     _ = try hir.lower(alloc, root);

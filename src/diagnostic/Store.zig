@@ -61,6 +61,7 @@ pub const Tag = enum {
 };
 
 pub const Span = struct {
+    source_id: Source.ID = .none,
     start: Source.Offset,
     end: Source.Offset,
 };
@@ -213,13 +214,23 @@ pub fn help(tag: Tag) []const u8 {
 }
 
 pub fn render(self: *const Self, alloc: mem.Allocator, src: *const Source) ![]const u8 {
+    const sources = [_]Source{src.*};
+    return self.renderWithSources(alloc, &sources, src);
+}
+
+pub fn renderWithSources(self: *const Self, alloc: mem.Allocator, sources: []const Source, fallback_src: *const Source) ![]const u8 {
     var aw: std.Io.Writer.Allocating = .init(alloc);
     const w = &aw.writer;
 
+    const source_resolver: SourceResolver = .{
+        .sources = sources,
+        .fallback = fallback_src,
+    };
+
     var wrote_diagnostic = false;
-    try writeDiagnostics(w, src, &self.warnings, .warning, &wrote_diagnostic);
-    try writeDiagnostics(w, src, &self.errors, .err, &wrote_diagnostic);
-    try writeDiagnostics(w, src, &self.fatals, .fatal, &wrote_diagnostic);
+    try writeDiagnostics(w, source_resolver, &self.warnings, .warning, &wrote_diagnostic);
+    try writeDiagnostics(w, source_resolver, &self.errors, .err, &wrote_diagnostic);
+    try writeDiagnostics(w, source_resolver, &self.fatals, .fatal, &wrote_diagnostic);
 
     try w.writeByte('\n');
 
@@ -228,9 +239,27 @@ pub fn render(self: *const Self, alloc: mem.Allocator, src: *const Source) ![]co
     return aw.toOwnedSlice();
 }
 
+const SourceResolver = struct {
+    sources: []const Source,
+    fallback: *const Source,
+
+    fn get(self: SourceResolver, source_id: Source.ID) *const Source {
+        if (source_id != .none) {
+            const source_idx = source_id.toInt();
+            if (source_idx < self.sources.len and self.sources[source_idx].id == source_id)
+                return &self.sources[source_idx];
+
+            for (self.sources) |*src| {
+                if (src.id == source_id) return src;
+            }
+        }
+        return self.fallback;
+    }
+};
+
 fn writeDiagnostics(
     w: *std.Io.Writer,
-    src: *const Source,
+    source_resolver: SourceResolver,
     diagnostics: *const Diagnostics,
     severity: Severity,
     wrote_diagnostic: *bool,
@@ -244,13 +273,13 @@ fn writeDiagnostics(
         } else {
             wrote_diagnostic.* = true;
         }
-        try writeDiagnostic(w, src, severity, tags[idx], spans[idx]);
+        try writeDiagnostic(w, source_resolver, severity, tags[idx], spans[idx]);
     }
 }
 
 fn writeDiagnostic(
     w: *std.Io.Writer,
-    src: *const Source,
+    source_resolver: SourceResolver,
     severity: Severity,
     tag: Tag,
     span: ?Span,
@@ -258,6 +287,7 @@ fn writeDiagnostic(
     try w.print("{s}[{s}]: {s}\n", .{ severityName(severity), code(tag), message(tag) });
 
     if (span) |s| {
+        const src = source_resolver.get(s.source_id);
         const lc = src.lineCol(s.start);
         const path = src.path orelse "<source>";
         try w.print("  --> {s}:{d}:{d}\n", .{ path, lc.line, lc.col });
@@ -395,7 +425,7 @@ fn plural(count: usize) []const u8 {
 test "render expands span into source context" {
     const alloc = std.testing.allocator;
 
-    var src = try Source.init.fromStr(alloc, "answer ::\n", 0);
+    var src = try Source.init.fromStr(alloc, "answer ::\n", Source.ID.fromInt(0));
     defer src.deinit(alloc);
 
     var diagnostics = init();
@@ -405,7 +435,7 @@ test "render expands span into source context" {
         .stage = .parser,
         .severity = .err,
         .tag = .parser_expected_expression,
-        .span = .{ .start = 8, .end = 8 },
+        .span = .{ .source_id = src.id, .start = 8, .end = 8 },
     });
 
     const rendered = try diagnostics.render(alloc, &src);
@@ -416,6 +446,32 @@ test "render expands span into source context" {
     try std.testing.expect(mem.indexOf(u8, rendered, "1 | answer ::") != null);
     try std.testing.expect(mem.indexOf(u8, rendered, "^ insert an expression here") != null);
     try std.testing.expect(mem.indexOf(u8, rendered, "Reported 1 error") != null);
+}
+
+test "render resolves spans against non-root sources" {
+    const alloc = std.testing.allocator;
+
+    var root_src = try Source.init.fromStr(alloc, "import \"lib.hon\"\n", Source.ID.fromInt(0));
+    defer root_src.deinit(alloc);
+    var lib_src = try Source.init.fromStr(alloc, "value :: missing\n", Source.ID.fromInt(1));
+    defer lib_src.deinit(alloc);
+
+    var diagnostics = init();
+    defer diagnostics.deinit(alloc);
+
+    _ = try diagnostics.add(alloc, .{
+        .stage = .sema,
+        .severity = .err,
+        .tag = .sema_undefined_name,
+        .span = .{ .source_id = lib_src.id, .start = 9, .end = 16 },
+    });
+
+    const sources = [_]Source{ root_src, lib_src };
+    const rendered = try diagnostics.renderWithSources(alloc, &sources, &root_src);
+    defer alloc.free(rendered);
+
+    try std.testing.expect(mem.indexOf(u8, rendered, "--> <source>:1:10") != null);
+    try std.testing.expect(mem.indexOf(u8, rendered, "1 | value :: missing") != null);
 }
 
 test "warnings count as problems but not hard errors" {
@@ -440,7 +496,7 @@ test "warnings count as problems but not hard errors" {
 test "render places warnings before errors" {
     const alloc = std.testing.allocator;
 
-    var src = try Source.init.fromStr(alloc, "x :: 1\n", 0);
+    var src = try Source.init.fromStr(alloc, "x :: 1\n", Source.ID.fromInt(0));
     defer src.deinit(alloc);
 
     var diagnostics = init();

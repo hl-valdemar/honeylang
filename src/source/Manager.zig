@@ -5,13 +5,13 @@ const Self = @This();
 
 const Source = @import("Source.zig");
 
-var next_id: Source.ID = 0;
+var next_id: u16 = 0;
 
 pub const init = struct {
     pub fn fromStr(alloc: mem.Allocator, str: []const u8) !Source {
-        next_id += 1;
+        const source_id = nextSourceId();
         return .{
-            .id = next_id - 1,
+            .id = source_id,
             .path = null,
             .contents = try alloc.dupe(u8, str),
         };
@@ -20,11 +20,17 @@ pub const init = struct {
     pub fn fromFile(alloc: mem.Allocator, io: std.Io, path: []const u8) !Source {
         const contents = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .limited(std.math.maxInt(usize)));
 
-        next_id += 1;
+        const source_id = nextSourceId();
         return .{
-            .id = next_id - 1,
+            .id = source_id,
             .path = path,
             .contents = contents,
         };
     }
 };
+
+fn nextSourceId() Source.ID {
+    const source_id = Source.ID.fromInt(next_id);
+    next_id += 1;
+    return source_id;
+}

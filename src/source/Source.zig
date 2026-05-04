@@ -8,7 +8,19 @@ contents: []const u8,
 
 const Self = @This();
 
-pub const ID = u16;
+pub const ID = enum(u16) {
+    none = std.math.maxInt(u16),
+    _,
+
+    pub fn fromInt(id: u16) ID {
+        std.debug.assert(id != @intFromEnum(ID.none));
+        return @enumFromInt(id);
+    }
+
+    pub fn toInt(id: ID) u16 {
+        return @intFromEnum(id);
+    }
+};
 pub const Offset = u32;
 
 pub const LineCol = struct {
